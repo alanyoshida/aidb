@@ -25,14 +25,18 @@ def register() -> None:
             return
 
         render_header(user)
-        ui.label(system.name).classes("text-2xl font-bold m-4")
+        with ui.row().classes("mx-4 mt-4 items-center gap-1 text-sm"):
+            ui.link("Sistemas", "/").classes("text-gray-500")
+            ui.icon("chevron_right").classes("text-gray-500 text-sm")
+            ui.label(system.name).classes("text-gray-300")
+        ui.label(system.name).classes("text-2xl font-bold mx-4 mt-1")
         with ui.row().classes("mx-4 items-center"):
             ui.label(f"/{system.slug}").classes("text-gray-500")
             status_badge = ui.badge(_STATUS_LABEL.get(system.status.value, system.status.value))
             if can_manage_system(user, system):
                 ui.label(f"provedor: {system.provider} / modelo: {system.model}").classes("text-sm text-gray-600")
 
-        open_btn = ui.button("Abrir app", on_click=lambda: ui.navigate.to(f"/entry/{system.slug}", new_tab=True)).props("data-testid=open-app")
+        open_btn = ui.button("Abrir app", icon="open_in_new", on_click=lambda: ui.navigate.to(f"/entry/{system.slug}", new_tab=True)).props("data-testid=open-app")
         open_btn.set_visibility(system.status.value == "active")
 
         def refresh_status() -> None:
@@ -59,7 +63,7 @@ def register() -> None:
                 archive_system(system)
                 ui.navigate.to("/")
 
-            ui.button("Arquivar sistema", on_click=archive).props("color=warning outline data-testid=archive-system")
+            ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
 
             if user.is_admin and system.status.value == "archived":
 
@@ -69,87 +73,114 @@ def register() -> None:
                     delete_system(system)
                     ui.navigate.to("/")
 
-                ui.button("Excluir definitivamente", on_click=delete).props("color=negative data-testid=delete-system")
+                ui.button("Excluir definitivamente", icon="delete_forever", on_click=delete).props("color=negative data-testid=delete-system")
 
-        ui.label("Conexões de banco").classes("text-lg font-semibold mx-4 mt-4")
-        conns_box = ui.column().classes("mx-4 w-full max-w-3xl")
+        with ui.tabs().classes("mx-4 w-full") as tabs:
+            chat_tab = ui.tab("chat", label="Chat", icon="chat")
+            conn_tab = ui.tab("conn", label="Conexões", icon="storage")
+            ckpt_tab = ui.tab("ckpt", label="Checkpoints", icon="history")
+            audit_tab = ui.tab("audit", label="Auditoria", icon="shield")
 
-        def refresh_conns() -> None:
-            conns_box.clear()
-            for c in connections.list_connections(system.id):
-                with conns_box:
-                    with ui.card().classes("w-full"):
-                        ui.label(f"{c['name']}").classes("font-semibold")
-                        ui.label(f"{c['kind']} · {c['username']}@{c['host']}:{c['port']}/{c['database']}").classes("text-sm text-gray-600")
+        with ui.tab_panels(tabs, value=chat_tab).classes("mx-4 w-full"):
+            with ui.tab_panel(chat_tab):
+                from .chat import render_chat
 
-        with ui.card().classes("mx-4 w-full max-w-3xl"):
-            ui.label("Nova conexão PostgreSQL").classes("font-semibold")
-            cname = ui.input("Nome").props("data-testid=conn-name")
-            chost = ui.input("Host").props("data-testid=conn-host")
-            cport = ui.number("Porta", value=5432).props("data-testid=conn-port")
-            cdb = ui.input("Banco").props("data-testid=conn-database")
-            cuser = ui.input("Usuário").props("data-testid=conn-user")
-            cpass = ui.input("Senha", password=True).props("data-testid=conn-password")
-            feedback = ui.label("").classes("text-sm")
+                render_chat(system, user)
+            with ui.tab_panel(conn_tab):
+                _render_connections(system)
+            with ui.tab_panel(ckpt_tab):
+                _render_checkpoints(system)
+            with ui.tab_panel(audit_tab):
+                _render_gate_history(system)
+                _render_usage(system)
 
-            def add_conn() -> None:
-                try:
-                    connections.register_connection(
-                        system, cname.value, chost.value, int(cport.value or 5432), cdb.value, cuser.value, cpass.value,
-                    )
-                except connections.ConnectionFailed as exc:
-                    feedback.classes("text-red-600 text-sm").set_text(f"teste de conexão falhou: {exc}")
-                    return
-                except connections.NameTaken:
-                    feedback.classes("text-red-600 text-sm").set_text(f"conexão '{cname.value}' já existe")
-                    return
-                feedback.classes("text-green-600 text-sm").set_text("conexão cadastrada")
-                for field in (cname, chost, cdb, cuser, cpass):
-                    field.set_value("")
-                refresh_conns()
 
-            ui.button("Testar e salvar", on_click=add_conn).props("data-testid=save-connection")
-        refresh_conns()
+def _render_connections(system) -> None:
+    """Conexões de banco: lista + formulário de nova conexão (spec db-connections)."""
+    ui.label("Bancos de dados que o agente e a app podem acessar").classes("text-sm text-gray-500 mb-2")
 
-        ui.label("Chat de geração").classes("text-lg font-semibold mx-4 mt-6")
-        from .chat import render_chat
+    with ui.dialog() as conn_dialog, ui.card().classes("w-96"):
+        ui.label("Nova conexão PostgreSQL").classes("font-semibold text-lg")
+        cname = ui.input("Nome").classes("w-full").props("data-testid=conn-name")
+        chost = ui.input("Host").classes("w-full").props("data-testid=conn-host")
+        cport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=conn-port")
+        cdb = ui.input("Banco").classes("w-full").props("data-testid=conn-database")
+        cuser = ui.input("Usuário").classes("w-full").props("data-testid=conn-user")
+        cpass = ui.input("Senha", password=True).classes("w-full").props("data-testid=conn-password")
+        feedback = ui.label("").classes("text-sm")
 
-        with ui.card().classes("mx-4 w-full max-w-3xl"):
-            render_chat(system, user)
+        def add_conn() -> None:
+            try:
+                connections.register_connection(
+                    system, cname.value, chost.value, int(cport.value or 5432), cdb.value, cuser.value, cpass.value,
+                )
+            except connections.ConnectionFailed as exc:
+                feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
+                return
+            except connections.NameTaken:
+                feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"conexão '{cname.value}' já existe")
+                return
+            feedback.classes(remove="text-red-600", add="text-green-600").set_text("conexão cadastrada")
+            refresh_conns()
+            conn_dialog.close()
 
-        if can_manage_system(user, system):
-            _render_checkpoints(system)
-            _render_gate_history(system)
-            _render_usage(system)
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=conn_dialog.close).props("flat")
+            ui.button("Testar e salvar", icon="check_circle", on_click=add_conn).props("data-testid=save-connection")
+
+    def open_conn_dialog() -> None:
+        for field in (cname, chost, cdb, cuser, cpass):
+            field.set_value("")
+        cport.set_value(5432)
+        feedback.set_text("")
+        conn_dialog.open()
+
+    ui.button("Nova conexão", icon="add", on_click=open_conn_dialog).classes("mb-3")
+
+    conns_box = ui.column().classes("w-full max-w-3xl")
+
+    def refresh_conns() -> None:
+        conns_box.clear()
+        conns = connections.list_connections(system.id)
+        with conns_box:
+            if not conns:
+                ui.label("Nenhuma conexão cadastrada ainda.").classes("text-gray-500 text-sm")
+            for c in conns:
+                with ui.card().classes("w-full"):
+                    ui.label(f"{c['name']}").classes("font-semibold")
+                    ui.label(f"{c['kind']} · {c['username']}@{c['host']}:{c['port']}/{c['database']}").classes("text-sm text-gray-600")
+
+    refresh_conns()
 
 
 def _render_checkpoints(system) -> None:
     from .. import checkpoints as cp_service
 
-    listing = ui.column().classes("mx-4 w-full max-w-3xl")
+    ui.label("Pontos salvos do código da app — restaure a qualquer um deles").classes("text-sm text-gray-500 mb-2")
+    ui.button("Criar checkpoint agora", icon="add", on_click=lambda: (cp_service.record_checkpoint(system, None, "checkpoint manual"), refresh_cps())).props("outline dense")
+    timeline_container = ui.column().classes("w-full max-w-3xl mt-2")
 
     def refresh_cps() -> None:
-        listing.clear()
+        timeline_container.clear()
         try:
             cps = cp_service.list_checkpoints(system)
         except Exception:
             cps = []
-        with listing:
+        with timeline_container:
             if not cps:
                 ui.label("Nenhum checkpoint ainda.").classes("text-gray-500 text-sm")
-            for cp in cps:
-                with ui.row().classes("w-full items-center"):
-                    ui.label(f"{cp['git_sha'][:8]} — {cp['message'][:70]}").classes("text-sm")
-                    ui.space()
+                return
+            with ui.timeline(side="right"):
+                for cp in cps:
 
                     def do_rollback(sha=cp["git_sha"]) -> None:
                         cp_service.rollback(system, sha)
                         ui.notify(f"workspace restaurado para {sha[:8]}", type="positive")
 
-                    ui.button("Restaurar", on_click=do_rollback).props("dense outline")
+                    with ui.timeline_entry(title=cp["git_sha"][:8], icon="commit"):
+                        ui.label(cp["message"][:140]).classes("text-sm")
+                        ui.button("Restaurar", icon="restore", on_click=do_rollback).props("dense outline")
 
-    ui.label("Checkpoints").classes("text-lg font-semibold mx-4 mt-6")
-    ui.button("Criar checkpoint agora", on_click=lambda: (cp_service.record_checkpoint(system, None, "checkpoint manual"), refresh_cps())).props("outline dense mx-4")
     refresh_cps()
     ui.timer(2.0, refresh_cps)
 
@@ -158,25 +189,55 @@ def _render_usage(system) -> None:
     from sqlalchemy import select
 
     from ..db import session_scope
-    from ..models import TokenUsage
+    from ..models import AgentRun, TokenUsage, User
 
-    ui.label("Uso de tokens").classes("text-lg font-semibold mx-4 mt-6")
-    total_label = ui.label("").classes("mx-4 text-sm")
-    detail_box = ui.column().classes("mx-4")
+    ui.label("Uso de tokens").classes("text-lg font-semibold mt-6")
+    ui.label("Consumo de LLM agrupado por execução, para acompanhar custo").classes("text-sm text-gray-500 mb-2")
+    total_label = ui.label("").classes("text-sm font-semibold")
+    detail_box = ui.column().classes("w-full max-w-3xl gap-2")
 
     def refresh_usage() -> None:
         with session_scope() as s:
             rows = s.execute(
-                select(TokenUsage.provider, TokenUsage.model, TokenUsage.user_id, TokenUsage.input_tokens, TokenUsage.output_tokens)
+                select(TokenUsage, User.email, AgentRun.prompt)
+                .outerjoin(User, User.id == TokenUsage.user_id)
+                .outerjoin(AgentRun, AgentRun.id == TokenUsage.run_id)
                 .where(TokenUsage.system_id == system.id)
+                .order_by(TokenUsage.created_at.desc())
             ).all()
-        total_in = sum(r[3] for r in rows)
-        total_out = sum(r[4] for r in rows)
+        total_in = sum(usage.input_tokens for usage, _, _ in rows)
+        total_out = sum(usage.output_tokens for usage, _, _ in rows)
         total_label.set_text(f"total: {total_in:,} entrada / {total_out:,} saída")
+
+        execs: dict[str, dict] = {}
+        for usage, email, prompt in rows:
+            group = execs.setdefault(
+                usage.run_id,
+                {"provider": usage.provider, "model": usage.model, "email": email, "prompt": prompt, "tin": 0, "tout": 0},
+            )
+            group["tin"] += usage.input_tokens
+            group["tout"] += usage.output_tokens
+
+        grand_total = total_in + total_out
         detail_box.clear()
         with detail_box:
-            for provider, model, user_id, tin, tout in rows:
-                ui.label(f"{provider}/{model} · {user_id[:8]}… · {tin:,}/{tout:,}").classes("text-xs text-gray-500")
+            if not execs:
+                ui.label("Nenhum uso registrado ainda.").classes("text-gray-500 text-sm")
+                return
+            for run_id, group in execs.items():
+                used = group["tin"] + group["tout"]
+                share = (used / grand_total) if grand_total else 0.0
+                with ui.card().classes("w-full"):
+                    with ui.row().classes("w-full items-center gap-2"):
+                        ui.icon("bolt").classes("text-gray-500")
+                        ui.label(f"{group['provider']}/{group['model']}").classes("font-semibold text-sm")
+                        ui.label((group["prompt"] or run_id)[:80]).classes("text-sm text-gray-600")
+                        ui.label(f"{used:,} tokens").classes("text-sm")
+                    ui.linear_progress(value=share).classes("w-full")
+                    ui.label(
+                        f"{group['tin']:,} entrada / {group['tout']:,} saída · {share * 100:.0f}% do total · "
+                        f"{group['email'] or 'usuário removido'}"
+                    ).classes("text-xs text-gray-500")
 
     refresh_usage()
     ui.timer(2.0, refresh_usage)
@@ -186,8 +247,9 @@ def _render_gate_history(system) -> None:
     """Histórico de decisões do gate (spec destructive-gate: auditoria)."""
     from .. import gate as gate_service
 
-    ui.label("Gate de destrutivas").classes("text-lg font-semibold mx-4 mt-6")
-    rows_box = ui.column().classes("mx-4 w-full max-w-3xl")
+    ui.label("Gate de destrutivas").classes("text-lg font-semibold")
+    ui.label("Decisões sobre comandos SQL que alteram ou apagam dados").classes("text-sm text-gray-500 mb-2")
+    rows_box = ui.column().classes("w-full max-w-3xl")
 
     def refresh_gate() -> None:
         decisions = gate_service.list_decisions(system.id, limit=20)
@@ -197,7 +259,7 @@ def _render_gate_history(system) -> None:
                 ui.label("Nenhuma decisão do gate ainda.").classes("text-gray-500 text-sm")
             for d in decisions:
                 color = {"bloqueada": "text-red-600", "recusada": "text-orange-600", "aprovada": "text-green-700"}.get(d["decision"], "")
-                autor = d["author_id"][:8] + "…" if d["author_id"] else "—"
+                autor = d["author_email"] or "sistema"
                 with ui.row().classes("w-full items-center"):
                     ui.label(f"[{d['decision']}] {d['sql'][:70]}").classes(f"text-sm {color}")
                     ui.label(f"({d['origin']} · autor: {autor})").classes("text-xs text-gray-500")

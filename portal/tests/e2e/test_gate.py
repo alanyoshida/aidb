@@ -38,6 +38,7 @@ def _create_system(page, suffix: str) -> str:
     # admin cria o editor
     _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
     page.get_by_role("button", name="Administração").click()
+    page.get_by_role("button", name="Novo usuário").click()
     page.locator('[data-testid=new-user-email]').fill(editor_email)
     page.locator('[data-testid=new-user-password]').fill("pw-gate")
     page.locator('[data-testid=new-user-type]').click()
@@ -53,7 +54,10 @@ def _create_system(page, suffix: str) -> str:
     page.locator('[data-testid=system-name]').fill("Sistema Gate")
     page.locator('[data-testid=system-slug]').fill(slug)
     page.locator('[data-testid=create-system]').click()
-    page.get_by_text("Conexões de banco").wait_for(timeout=60_000)
+    # a aba "Chat" fica sempre visível ao carregar a página, independente de
+    # estar selecionada — melhor sinal de "página do sistema renderizou" do
+    # que um texto que agora vive dentro de uma aba inativa por padrão
+    page.get_by_role("tab", name="Chat").wait_for(timeout=60_000)
     import time
 
     start = time.time()
@@ -86,6 +90,7 @@ def test_gate_truncate_bloqueado_e_delete_aprovado(page, suffix):
     page.get_by_text("agente livre").wait_for(timeout=60_000)
 
     # 3) histórico do gate mostra bloqueada e aprovada (painel atualiza a cada 2s)
+    page.get_by_role("tab", name="Auditoria").click()
     page.get_by_text("Gate de destrutivas").wait_for(timeout=30_000)
     page.get_by_text("[bloqueada]").first.wait_for(timeout=30_000)
     page.get_by_text("[aprovada]").first.wait_for(timeout=30_000)
@@ -102,5 +107,6 @@ def test_gate_recusa_do_editor(page, suffix):
 
     body = page.inner_text("body")
     assert "recusada pelo gate" in body or "recusada: execução interrompida" in body or "[recusada]" in body
+    page.get_by_role("tab", name="Auditoria").click()
     page.get_by_text("Gate de destrutivas").wait_for(timeout=30_000)
     page.get_by_text("[recusada]").first.wait_for(timeout=30_000)

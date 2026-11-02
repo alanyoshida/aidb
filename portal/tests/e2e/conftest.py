@@ -23,6 +23,7 @@ CREATE TEMP TABLE _e2e_users AS SELECT id FROM users WHERE email LIKE '%@e2e.loc
 CREATE TEMP TABLE _e2e_systems AS SELECT id FROM systems WHERE owner_id IN (SELECT id FROM _e2e_users);
 DELETE FROM gate_decisions WHERE system_id IN (SELECT id FROM _e2e_systems)
   OR run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
+DELETE FROM run_events WHERE run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
 DELETE FROM checkpoints WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM token_usage WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems);

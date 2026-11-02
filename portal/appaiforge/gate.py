@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from .app_template import sqlgate
 from .db import session_scope
-from .models import GateDecision
+from .models import GateDecision, User
 
 
 class GateClass(str, enum.Enum):
@@ -102,11 +102,12 @@ def extract_sql(command: str) -> str | None:
 def list_decisions(system_id: str, limit: int = 50) -> list[dict]:
     with session_scope() as s:
         rows = s.execute(
-            select(GateDecision)
+            select(GateDecision, User.email)
+            .outerjoin(User, User.id == GateDecision.author_id)
             .where(GateDecision.system_id == system_id)
             .order_by(GateDecision.created_at.desc())
             .limit(limit)
-        ).scalars().all()
+        ).all()
         return [
             {
                 "id": r.id,
@@ -116,7 +117,8 @@ def list_decisions(system_id: str, limit: int = 50) -> list[dict]:
                 "classification": r.classification,
                 "decision": r.decision,
                 "author_id": r.author_id,
+                "author_email": author_email,
                 "created_at": r.created_at.isoformat(),
             }
-            for r in rows
+            for r, author_email in rows
         ]

@@ -35,6 +35,7 @@ def _logout(page) -> None:
 def _create_editor_via_admin(page, email: str) -> None:
     _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
     page.get_by_role("button", name="Administração").click()
+    page.get_by_role("button", name="Novo usuário").click()
     page.locator('[data-testid=new-user-email]').fill(email)
     page.locator('[data-testid=new-user-password]').fill("pw-editor")
     page.locator('[data-testid=new-user-type]').click()
@@ -45,6 +46,17 @@ def _create_editor_via_admin(page, email: str) -> None:
 
 
 def _fill_connection(page, name: str, database: str, password: str) -> None:
+    # a nova conexão abre em diálogo; uma tentativa inválida deixa o diálogo
+    # aberto com o feedback, então fecha antes de (re)abrir com estado limpo
+    field = page.locator('[data-testid=conn-name]')
+    if field.is_visible():
+        try:
+            page.get_by_role("button", name="Cancelar").click(timeout=3_000)
+        except Exception:
+            pass
+    field.wait_for(state="hidden", timeout=30_000)
+    page.get_by_role("button", name="Nova conexão").click()
+    field.wait_for(state="visible", timeout=30_000)
     page.locator('[data-testid=conn-name]').fill(name)
     page.locator('[data-testid=conn-host]').fill("postgres")
     page.locator('[data-testid=conn-port]').fill("5432")
@@ -65,8 +77,8 @@ def test_editor_cria_sistema_e_cadastra_duas_conexoes(page, suffix):
     page.locator('[data-testid=system-slug]').fill(slug)
     page.locator('[data-testid=create-system]').click()
 
-    # detalhe do sistema carrega
-    page.get_by_text("Conexões de banco").wait_for(timeout=30_000)
+    # detalhe do sistema carrega; conexões ficam na própria aba
+    page.get_by_role("tab", name="Conexões").click()
 
     # conexão inválida é recusada com feedback
     _fill_connection(page, "errada", "appaiforge", "senha-torta")
@@ -95,7 +107,7 @@ def test_slug_duplicado_mostra_feedback(page, suffix):
     page.locator('[data-testid=system-name]').fill("Primeiro")
     page.locator('[data-testid=system-slug]').fill(slug)
     page.locator('[data-testid=create-system]').click()
-    page.get_by_text("Conexões de banco").wait_for(timeout=30_000)
+    page.get_by_role("tab", name="Chat").wait_for(timeout=30_000)
 
     page.goto("/systems/new")
     page.locator('[data-testid=system-name]').fill("Segundo")

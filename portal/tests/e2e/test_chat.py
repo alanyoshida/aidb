@@ -36,6 +36,7 @@ def _logout(page) -> None:
 def _create_editor(page, email: str) -> None:
     _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
     page.get_by_role("button", name="Administração").click()
+    page.get_by_role("button", name="Novo usuário").click()
     page.locator('[data-testid=new-user-email]').fill(email)
     page.locator('[data-testid=new-user-password]').fill("pw-editor")
     page.locator('[data-testid=new-user-type]').click()
@@ -46,7 +47,10 @@ def _create_editor(page, email: str) -> None:
 
 
 def _wait_system_active(page, timeout_ms: int = 60_000) -> None:
-    page.get_by_text("Conexões de banco").wait_for(timeout=timeout_ms)
+    # a aba "Chat" fica sempre visível ao carregar a página, independente de
+    # estar selecionada — melhor sinal de "página do sistema renderizou" do
+    # que um texto que agora vive dentro de uma aba inativa por padrão
+    page.get_by_role("tab", name="Chat").wait_for(timeout=timeout_ms)
     deadline = timeout_ms / 1000
     import time
 
@@ -81,9 +85,11 @@ def test_chat_gera_app_e_registra_uso_e_checkpoint(page, suffix):
     page.get_by_text("agente livre").wait_for(timeout=30_000)
 
     # uso de tokens visível no painel (fake: 120/80); painel atualiza a cada 2s
+    page.get_by_role("tab", name="Auditoria").click()
     page.get_by_text("total: 120 entrada / 80 saída").wait_for(timeout=30_000)
 
     # checkpoint criado ao fim da execução bem-sucedida
+    page.get_by_role("tab", name="Checkpoints").click()
     page.get_by_role("button", name="Restaurar").first.wait_for(timeout=30_000)
 
     # a app gerada (fake) está no ar pela rota do portal (entrada autenticada)

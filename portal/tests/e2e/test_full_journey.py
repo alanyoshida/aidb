@@ -34,7 +34,21 @@ def _logout(page) -> None:
     page.get_by_role("button", name="Entrar").wait_for(timeout=30_000)
 
 
+def _select(page, testid: str, text: str) -> None:
+    """Escolhe uma opção num ui.select do NiceGUI (menu suspenso).
+
+    Espera o menu anterior fechar antes de abrir o próximo: com opções de texto
+    idêntico (ex.: grupo e sistema com o mesmo nome) um clique no menu ainda
+    aberto selecionaria o item errado.
+    """
+    page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
+    page.locator(f"[data-testid={testid}]").click()
+    page.locator(".q-menu:visible").get_by_text(text, exact=True).click()
+    page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
+
+
 def _create_user(page, email: str, user_type: str) -> None:
+    page.get_by_role("button", name="Novo usuário").click()
     page.locator('[data-testid=new-user-email]').fill(email)
     page.locator('[data-testid=new-user-password]').fill("pw-jornada")
     page.locator('[data-testid=new-user-type]').click()
@@ -44,7 +58,10 @@ def _create_user(page, email: str, user_type: str) -> None:
 
 
 def _wait_system_active(page) -> None:
-    page.get_by_text("Conexões de banco").wait_for(timeout=60_000)
+    # a aba "Chat" fica sempre visível ao carregar a página, independente de
+    # estar selecionada — melhor sinal de "página do sistema renderizou" do
+    # que um texto que agora vive dentro de uma aba inativa por padrão
+    page.get_by_role("tab", name="Chat").wait_for(timeout=60_000)
     import time as _time
 
     start = _time.time()
@@ -73,11 +90,13 @@ def test_jornada_completa(page, suffix):
     _create_user(page, app_in_email, "app_user")
     _create_user(page, app_out_email, "app_user")
     page.get_by_role("tab", name="Grupos").click()
+    page.get_by_role("button", name="Novo grupo").click()
     page.locator('[data-testid=new-group-name]').fill(group_name)
     page.locator('[data-testid=create-group]').click()
     page.wait_for_timeout(1000)
-    page.locator('[data-testid=member-group]').fill(group_name)
-    page.locator('[data-testid=member-email]').fill(app_in_email)
+    page.get_by_role("button", name="Adicionar membro a um grupo").click()
+    _select(page, "member-group", group_name)
+    _select(page, "member-email", app_in_email)
     page.locator('[data-testid=add-member]').click()
     _logout(page)
 
@@ -89,6 +108,8 @@ def test_jornada_completa(page, suffix):
     page.locator('[data-testid=create-system]').click()
     _wait_system_active(page)
 
+    page.get_by_role("tab", name="Conexões").click()
+    page.get_by_role("button", name="Nova conexão").click()
     page.locator('[data-testid=conn-name]').fill("vendas")
     page.locator('[data-testid=conn-host]').fill("postgres")
     page.locator('[data-testid=conn-database]').fill("appaiforge")
@@ -102,8 +123,9 @@ def test_jornada_completa(page, suffix):
     _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
     page.get_by_role("button", name="Administração").click()
     page.get_by_role("tab", name="Grupos").click()
-    page.locator('[data-testid=link-group]').fill(group_name)
-    page.locator('[data-testid=link-slug]').fill(slug)
+    page.get_by_role("button", name="Vincular a sistema").click()
+    _select(page, "link-group", group_name)
+    _select(page, "link-slug", slug)
     page.locator('[data-testid=link-system]').click()
     page.get_by_text(f"sistemas: {slug}").wait_for(timeout=30_000)
     _logout(page)
@@ -144,7 +166,7 @@ def test_jornada_completa(page, suffix):
     _login(page, editor_email, "pw-jornada")
     page.goto("/")
     page.get_by_text("Sistema Jornada").first.click()
-    page.get_by_text("Checkpoints").wait_for(timeout=30_000)
+    page.get_by_role("tab", name="Checkpoints").click()
     page.get_by_role("button", name="Restaurar").first.click()
     page.get_by_text("workspace restaurado").wait_for(timeout=30_000)
 

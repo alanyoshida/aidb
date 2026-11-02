@@ -34,7 +34,20 @@ def _logout(page) -> None:
     page.get_by_role("button", name="Entrar").wait_for(timeout=30_000)
 
 
+def _select(page, testid: str, text: str) -> None:
+    """Escolhe uma opção num ui.select do NiceGUI (menu suspenso).
+
+    Espera o menu anterior fechar antes de abrir o próximo: evita clicar num
+    dropdown ainda aberto quando há dois selects seguidos.
+    """
+    page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
+    page.locator(f"[data-testid={testid}]").click()
+    page.locator(".q-menu:visible").get_by_text(text, exact=True).click()
+    page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
+
+
 def _create_user(page, email: str, password: str, user_type: str) -> None:
+    page.get_by_role("button", name="Novo usuário").click()
     page.locator('[data-testid=new-user-email]').fill(email)
     page.locator('[data-testid=new-user-password]').fill(password)
     page.locator('[data-testid=new-user-type]').click()
@@ -60,11 +73,13 @@ def test_admin_gerencia_usuarios_grupos_e_papéis(page, suffix):
 
     # grupo + membro
     page.get_by_role("tab", name="Grupos").click()
+    page.get_by_role("button", name="Novo grupo").click()
     page.locator('[data-testid=new-group-name]').fill(group_name)
     page.locator('[data-testid=create-group]').click()
     page.get_by_text(f"membros: —", exact=False).first.wait_for(timeout=30_000)
-    page.locator('[data-testid=member-group]').fill(group_name)
-    page.locator('[data-testid=member-email]').fill(app_email)
+    page.get_by_role("button", name="Adicionar membro a um grupo").click()
+    _select(page, "member-group", group_name)
+    _select(page, "member-email", app_email)
     page.locator('[data-testid=add-member]').click()
     page.get_by_text(f"membros: {app_email}").wait_for(timeout=30_000)
 

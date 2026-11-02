@@ -27,4 +27,4 @@ def register() -> None:
             version = guidelines.update_content(editor.value, user.id)
             feedback.classes("text-green-600 text-sm").set_text(f"guidelines v{version} salvas")
 
-        ui.button("Salvar", on_click=save).props("data-testid=save-guidelines mx-4")
+        ui.button("Salvar", icon="save", on_click=save).props("data-testid=save-guidelines mx-4")

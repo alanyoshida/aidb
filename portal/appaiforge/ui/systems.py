@@ -28,7 +28,7 @@ def render_systems_area(user: User) -> None:
     ui.label("Sistemas").classes("text-lg font-semibold mt-4")
     if can_create_systems(user):
         with ui.row():
-            ui.button("Novo sistema", on_click=lambda: ui.navigate.to("/systems/new"))
+            ui.button("Novo sistema", icon="add", on_click=lambda: ui.navigate.to("/systems/new"))
 
     if not rows:
         ui.label("Nenhum sistema acessível.").classes("text-gray-500")
@@ -37,7 +37,9 @@ def render_systems_area(user: User) -> None:
     with ui.grid(columns=3).classes("w-full gap-4"):
         for system_id, slug, name, status, status_message in rows:
             with ui.card().on("click", lambda sid=system_id: ui.navigate.to(f"/systems/{sid}")):
-                ui.label(name).classes("font-semibold")
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("dns").classes("text-gray-500")
+                    ui.label(name).classes("font-semibold")
                 ui.label(f"/{slug}").classes("text-xs text-gray-500")
                 with ui.row().classes("items-center"):
                     badge = ui.badge(_STATUS_LABEL.get(status, status))

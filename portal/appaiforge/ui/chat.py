@@ -12,21 +12,33 @@ from ..agent_queue import RunBuffer, get_queue
 from ..models import AgentRun, RunStatus, System, User
 from ..rbac import can_chat, can_manage_system
 
-_EVENT_ICON = {
-    "run_started": "▶",
-    "message": "💬",
-    "file_edited": "📝",
-    "command_run": "⌨",
-    "tool_output": "🔧",
-    "usage": "📊",
-    "run_finished": "✅",
-    "gate_request": "🛑",
-    "gate_denied": "⛔",
-    "gate_approved": "✅",
-    "gate_resolved": "⚖",
-    "run_error": "❌",
-    "run_interrupted": "⏹",
+# marcadores de transição de execução: ficam fora das bolhas de chat
+_STATUS_ICON = {
+    "run_started": ("play_arrow", "text-gray-400"),
+    "run_finished": ("check_circle", "text-green-600"),
+    "run_interrupted": ("stop_circle", "text-gray-500"),
+    "run_error": ("error", "text-red-600"),
 }
+
+# ícone exibido ao lado da bolha, conforme o tipo de evento
+_EVENT_ICON = {
+    "file_edited": "description",
+    "command_run": "terminal",
+    "gate_request": "warning",
+    "gate_denied": "block",
+    "gate_approved": "check_circle",
+    "gate_resolved": "gavel",
+}
+
+_GATE_COLOR_PROPS = {
+    "gate_request": "bg-color=orange-2 text-color=orange-10",
+    "gate_denied": "bg-color=red-2 text-color=red-10",
+    "gate_approved": "bg-color=green-2 text-color=green-10",
+    "gate_resolved": "bg-color=green-2 text-color=green-10",
+}
+
+_QUIET_KINDS = {"tool_output", "usage"}  # detalhe técnico: fora do chat
+                                         # (tokens ficam no painel "Uso de tokens")
 
 
 def render_chat(system: System, user: User) -> None:
@@ -36,18 +48,19 @@ def render_chat(system: System, user: User) -> None:
         ui.label("Somente editores conversam com o agente.").classes("text-gray-500")
         return
 
-    log_box = ui.column().classes("w-full gap-1")
+    with ui.scroll_area().classes("w-full h-96 border rounded"):
+        log_box = ui.column().classes("w-full gap-1 p-2")
+        approval_box = ui.column().classes("w-full")
     state_label = ui.label("").classes("text-sm text-gray-500")
     input_row = ui.row().classes("w-full items-center")
     with input_row:
         prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow").props("data-testid=chat-input")
-        send_btn = ui.button("Enviar").props("data-testid=chat-send")
-        interrupt_btn = ui.button("Interromper").props("color=negative outline data-testid=chat-interrupt")
+        send_btn = ui.button("Enviar", icon="send").props("data-testid=chat-send")
+        interrupt_btn = ui.button("Interromper", icon="stop").props("color=negative outline data-testid=chat-interrupt")
         interrupt_btn.set_visibility(False)
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
-    approval_box = ui.column().classes("w-full")
 
     def do_send() -> None:
         text = (prompt.value or "").strip()
@@ -90,7 +103,7 @@ def render_chat(system: System, user: User) -> None:
         approval_box.clear()
         with approval_box:
             with ui.card().classes("w-full border-orange-400"):
-                ui.label("🛑 O agente pede aprovação para uma operação destrutiva").classes("font-semibold text-orange-700")
+                ui.label("O agente pede aprovação para uma operação destrutiva").classes("font-semibold text-orange-700")
                 ui.label(f"SQL: {info['sql']}").classes("text-sm").style("white-space: pre-wrap")
                 ui.label(f"motivo: {info['reason']}").classes("text-xs text-gray-600")
 
@@ -105,37 +118,41 @@ def render_chat(system: System, user: User) -> None:
                     queue.decide_gate(run_id, info["request_id"], approve, author)
 
                 with ui.row():
-                    ui.button("Aprovar", on_click=lambda: decide(True)).props("color=negative data-testid=gate-approve")
-                    ui.button("Recusar", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
-
-    _QUIET_KINDS = {"tool_output", "usage"}  # detalhe técnico: fora do chat
-                                             # (tokens ficam no painel "Uso de tokens")
+                    ui.button("Aprovar", icon="check", on_click=lambda: decide(True)).props("color=negative data-testid=gate-approve")
+                    ui.button("Recusar", icon="close", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
 
     def render_event(box, event) -> None:
+        """Renderiza um evento (RunEvent em memória ou RunEventRecord persistido)
+        como bolha de chat ou marcador de status compacto."""
         if event.kind in _QUIET_KINDS:
             return
 
-        icon = _EVENT_ICON.get(event.kind, "·")
-        style = ""
-        label = event.text or event.kind
-
-        if event.kind == "command_run":
-            label = f"comando: {(event.meta.get('command') or event.text or 'comando')[:160]}"
-        elif event.kind == "file_edited":
-            label = f"arquivo alterado: {event.text}"
-        elif event.kind == "gate_request":
-            with box:
-                ui.label(f"🛑 PEDIDO DE APROVAÇÃO — comando de banco: {label}") \
-                    .classes("text-sm text-orange-600 font-semibold") \
-                    .style("white-space: pre-wrap")
+        if event.kind in _STATUS_ICON:
+            icon, color = _STATUS_ICON[event.kind]
+            with box, ui.row().classes("w-full justify-center items-center gap-1"):
+                ui.icon(icon).classes(f"text-sm {color}")
+                ui.label(event.kind).classes(f"text-xs {color}")
             return
-        elif event.kind == "gate_denied":
-            style = "text-red-600 font-semibold"
-        elif event.kind in ("gate_resolved", "gate_approved"):
-            style = "text-green-700 font-semibold"
+
+        if event.kind == "gate_request":
+            command = event.meta.get("command") or event.text or "comando"
+            text = f"PEDIDO DE APROVAÇÃO — comando de banco: {command}"
+        elif event.kind == "command_run":
+            text = f"comando: {(event.meta.get('command') or event.text or 'comando')[:160]}"
+        elif event.kind == "file_edited":
+            text = f"arquivo alterado: {event.text}"
+        else:
+            text = event.text or event.kind
 
         with box:
-            ui.label(f"{icon} {label}").classes(f"text-sm {style}").style("white-space: pre-wrap")
+            with ui.row().classes("w-full items-center gap-1"):
+                icon = _EVENT_ICON.get(event.kind)
+                if icon:
+                    ui.icon(icon).classes("text-gray-500")
+                msg = ui.chat_message(text=text, name="Agente", sent=False)
+                color_props = _GATE_COLOR_PROPS.get(event.kind)
+                if color_props:
+                    msg.props(color_props)
 
     def refresh_state() -> None:
         state = queue.system_state(system.id)
@@ -178,10 +195,15 @@ def render_chat(system: System, user: User) -> None:
             text = pending_prompt["text"]
             pending_prompt["text"] = None
             run = queue.enqueue(system.id, user.id, text)
-            with log_box:
-                ui.label(f"Você: {text}").classes("text-sm font-semibold")
+            # current_run precisa ser atualizado ANTES de criar a bolha: criar
+            # ui.chat_message cede ao event loop o suficiente para o ui.timer
+            # de 0.5s dar refresh_state() concorrente nesse meio-tempo — se
+            # ele visse current_run["id"] ainda None aqui, achava que é uma
+            # run "nova" vinda de fora e limpava o log_box, apagando a bolha.
             current_run["id"] = run.id
             current_run["shown"] = 0
+            with log_box:
+                ui.chat_message(text=text, name="Você", sent=True)
 
     # runs anteriores (histórico persistido, sempre presente e vivo)
     with ui.expansion("Execuções anteriores", icon="history").classes("w-full") as history_exp:
@@ -214,7 +236,7 @@ def render_chat(system: System, user: User) -> None:
                     _load_run_events(r.id)
 
     def _load_run_events(run_id: str) -> None:
-        """Carregar e renderizar eventos persistidos da run."""
+        """Carregar e renderizar eventos persistidos da run (mesmo mapeamento do log ao vivo)."""
         from ..db import session_scope
         from sqlalchemy import select
         from ..models import RunEventRecord
@@ -224,22 +246,9 @@ def render_chat(system: System, user: User) -> None:
                 select(RunEventRecord).where(RunEventRecord.run_id == run_id)
                 .order_by(RunEventRecord.created_at)
             ).scalars().all()
-        with ui.column().classes("w-full gap-1 pl-4"):
-            for evt in events:
-                if evt.kind in _QUIET_KINDS:
-                    continue
-                icon = _EVENT_ICON.get(evt.kind, "·")
-                style = ""
-                label = evt.text or evt.kind
-                if evt.kind == "command_run":
-                    label = f"comando: {(evt.meta.get('command') or evt.text or 'comando')[:160]}"
-                elif evt.kind == "file_edited":
-                    label = f"arquivo alterado: {evt.text}"
-                elif evt.kind == "gate_denied":
-                    style = "text-red-600 font-semibold"
-                elif evt.kind in ("gate_resolved", "gate_approved"):
-                    style = "text-green-700 font-semibold"
-                ui.label(f"{icon} {label}").classes(f"text-sm {style}").style("white-space: pre-wrap")
+        box = ui.column().classes("w-full gap-1 pl-4")
+        for evt in events:
+            render_event(box, evt)
 
     load_history()
     ui.timer(2.0, load_history)

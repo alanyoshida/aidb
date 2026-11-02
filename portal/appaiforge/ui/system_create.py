@@ -20,9 +20,9 @@ def register() -> None:
 
         ui.label("Novo sistema").classes("text-2xl font-bold m-4")
         with ui.card().classes("w-96"):
-            name = ui.input("Nome").props("data-testid=system-name")
-            slug = ui.input("Slug (kebab-case)").props("data-testid=system-slug")
-            provider = ui.select(["glm", "anthropic", "openai"], value="glm", label="Provedor de LLM").props("data-testid=system-provider")
+            name = ui.input("Nome").classes("w-full").props("data-testid=system-name")
+            slug = ui.input("Slug (kebab-case)").classes("w-full").props("data-testid=system-slug")
+            provider = ui.select(["glm", "anthropic", "openai"], value="glm", label="Provedor de LLM").classes("w-full").props("data-testid=system-provider")
             feedback = ui.label("").classes("text-sm")
 
             def create() -> None:
@@ -40,4 +40,4 @@ def register() -> None:
                 ui.notify("Sistema criado; provisionando container...", type="info")
                 ui.navigate.to(f"/systems/{system.id}")
 
-            ui.button("Criar sistema", on_click=create).props("data-testid=create-system")
+            ui.button("Criar sistema", icon="add", on_click=create).props("data-testid=create-system")
