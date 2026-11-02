@@ -1,0 +1,67 @@
+name: appaiforge-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appaiforge
+      POSTGRES_PASSWORD: appaiforge
+      POSTGRES_DB: appaiforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./e2e-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appaiforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  traefik:
+    image: traefik:v3.1
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "8081:80"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - dynamic:/etc/traefik/dynamic
+    depends_on:
+      portal:
+        condition: service_healthy
+
+  portal:
+    build:
+      context: ..
+      dockerfile: deploy/portal.Dockerfile
+    environment:
+      APPAIFORGE_DATABASE_URL: postgresql+psycopg://appaiforge:appaiforge@postgres:5432/appaiforge
+      APPAIFORGE_SECRET_KEY: e2e-secret
+      APPAIFORGE_DOCKER_NETWORK: appaiforge-e2e-net
+      APPAIFORGE_WORKSPACES_DIR: /workspaces
+      APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_E2E_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e}
+      APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
+      APPAIFORGE_HARNESS_MODE: fake
+      APPAIFORGE_FAKE_DELAY: "1.5"
+      APPAIFORGE_MAX_SYSTEMS: "50"
+      APPAIFORGE_HEALTH_INTERVAL: "5"
+      APPAIFORGE_SEED_DEMO_ADMIN: "1"
+    volumes:
+      - ${APPAIFORGE_E2E_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e}:/workspaces
+      - dynamic:/dynamic
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+networks:
+  default:
+    name: appaiforge-e2e-net
+
+volumes:
+  pgdata:
+  dynamic:

@@ -1,0 +1,49 @@
+[project]
+name = "appaiforge-portal"
+version = "0.1.0"
+description = "AppAIForge — portal que gera sistemas de gestão com IA sobre bancos de dados"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "nicegui>=2.14",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    "cryptography>=44",
+    "httpx>=0.28",
+    "docker>=7.1",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "sqlglot>=25.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-bdd>=7.2",
+    "pytest-playwright>=0.6",
+    "testcontainers[postgres]>=4.8",
+    "pytest-asyncio>=0.24",
+    "asyncpg>=0.30",
+]
+
+[project.scripts]
+appaiforge = "appaiforge.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["appaiforge"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["../base-image"]
+markers = [
+    "e2e: testes end-to-end pelo browser (stack de teste via Traefik)",
+    "integration: testes que exigem Docker ou serviços reais",
+    "llm_real: cenário manual com provedor de LLM real (nunca roda em CI)",
+]

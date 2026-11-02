@@ -39,6 +39,7 @@ Este é o change fundador do projeto: entrega a primeira fatia vertical completa
 ## Impact
 
 - **Novo código**: monorepo do portal (backend FastAPI + frontend NiceGUI), imagem base dos containers, supervisor, adapter de harness; sem código existente afetado (greenfield).
+- **Documentação**: decisões arquiteturais e de produto registradas como ADRs (formato MADR, PT-BR) em `docs/adr/` — 16 ADRs iniciais, índice em `docs/adr/README.md`; convenção mantida nas próximas changes (decisão nova → ADR sequencial).
 - **Dependências novas**: Docker (API de containers no host), opencode (binário na imagem base), MCP servers de Postgres, provedores de LLM via API (padrão GLM/Z.ai).
 - **Sistemas externos**: bancos PostgreSQL de produção acessados pelos sistemas cadastrados (leitura pelo agente via MCP; leitura e escrita pela app gerada com a mesma credencial da conexão — risco aceito, gate dedicado vem em change posterior).
 - **Host**: este host (Docker 29.9, 28 CPUs, 46 GB RAM); novo serviço Postgres para metadados do portal; ~10 containers de sistema suportados com limites padrão.

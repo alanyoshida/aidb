@@ -1,0 +1,9 @@
+portal/.venv
+portal/.pytest_cache
+**/__pycache__
+.git
+tests
+docs
+openspec
+*.md
+.env
