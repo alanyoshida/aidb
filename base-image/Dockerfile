@@ -6,9 +6,10 @@ ARG OPENCODE_VERSION=1.19.5
 ARG MCP_POSTGRES_VERSION=0.6.2
 ENV NODE_VERSION=22.14.0
 
-# node é necessário para os MCP servers (npx)
+# node é necessário para os MCP servers (npx); libmysqlclient-dev para mysqlclient
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl xz-utils ca-certificates git bash procps \
+        libmysqlclient-dev default-libmysqlclient-dev gcc \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
         | tar -xJ -C /usr/local --strip-components=1
@@ -22,7 +23,7 @@ RUN pip install --no-cache-dir uv
 
 # MCP server de leitura do AIDB + deps (mcp/sqlglot/asyncpg no python do sistema)
 COPY gated-mcp /opt/gated-mcp
-RUN pip install --no-cache-dir "mcp>=1.0" sqlglot asyncpg
+RUN pip install --no-cache-dir "mcp>=1.0" sqlglot asyncpg aiomysql mysqlclient google-cloud-bigquery sqlalchemy-bigquery
 
 # supervisor como PID 1
 COPY afsupervisor /opt/afsupervisor/afsupervisor

@@ -25,11 +25,12 @@ def _login(page, email: str, password: str) -> None:
     page.locator('[data-testid=login-email]').fill(email)
     page.locator('[data-testid=login-password]').fill(password)
     page.get_by_role("button", name="Entrar").click()
-    page.get_by_text(email).first.wait_for(timeout=30_000)
+    page.locator('[data-testid=user-menu]').wait_for(timeout=30_000)
 
 
 def _logout(page) -> None:
-    page.get_by_role("button", name="Sair").click()
+    page.locator('[data-testid=user-menu]').click()
+    page.locator('[data-testid=logout]').click()
     page.get_by_role("button", name="Entrar").wait_for(timeout=30_000)
 
 
@@ -160,6 +161,8 @@ def test_rota_publicada_ao_criar_e_removida_ao_arquivar(page, suffix):
         raise AssertionError("rota da app não publicada após provisionamento")
 
     # arquivada: rota removida (acesso direto sem sessão vira 404 no edge do stack de teste)
+    page.get_by_role("tab", name="Configurações").click()
+    page.get_by_role("button", name="Arquivar sistema").wait_for(timeout=10_000)
     page.get_by_role("button", name="Arquivar sistema").click()
     page.wait_for_timeout(2000)
     last_error = None

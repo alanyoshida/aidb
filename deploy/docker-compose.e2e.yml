@@ -16,6 +16,23 @@ services:
       timeout: 3s
       retries: 20
 
+  bigquery-emulator:
+    image: ghcr.io/goccy/bigquery-emulator:0.8.1
+    command: ["--project=bq-test", "--dataset=e2e", "--port=9050"]
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: appaiforge
+      MYSQL_USER: appaiforge
+      MYSQL_PASSWORD: appaiforge
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "appaiforge", "-pappaiforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   traefik:
     image: traefik:v3.1
     command: ["--configFile=/etc/traefik/traefik.yml"]
@@ -40,6 +57,7 @@ services:
       APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_E2E_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e}
       APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
       APPAIFORGE_HARNESS_MODE: fake
+      BIGQUERY_EMULATOR_HOST: bigquery-emulator:9050
       APPAIFORGE_FAKE_DELAY: "1.5"
       APPAIFORGE_MAX_SYSTEMS: "50"
       APPAIFORGE_HEALTH_INTERVAL: "5"

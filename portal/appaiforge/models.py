@@ -131,7 +131,11 @@ class DbConnection(Base):
     port: Mapped[int] = mapped_column(Integer, default=5432)
     database: Mapped[str] = mapped_column(String(255))
     username: Mapped[str] = mapped_column(String(255))
-    password_encrypted: Mapped[str] = mapped_column(String(500))
+    password_encrypted: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    access_mode: Mapped[str] = mapped_column(String(20), default="read_write")
+    status: Mapped[str] = mapped_column(String(20), default="unknown")
+    status_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

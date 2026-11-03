@@ -19,7 +19,7 @@ from .db import session_scope
 from .edge import publish_app, system_container_name, unpublish_app
 from .models import DbConnection, ProviderKey, System, SystemStatus
 from .security import decrypt_secret
-from .services.connections import get_connection_secret
+from .services.connections import connection_string, get_connection_secret
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def _connection_env(system_id: str) -> dict[str, str]:
     for conn_id in ids:
         conn, secret = get_connection_secret(conn_id)
         key = _env_name(conn.name)
-        env[f"DATABASE_URL_{key}"] = f"postgresql://{conn.username}:{secret}@{conn.host}:{conn.port}/{conn.database}"
+        env[f"DATABASE_URL_{key}"] = connection_string(conn, secret)
     return env
 
 
@@ -85,12 +85,17 @@ def write_opencode_config(system: System, workspace_dir: str) -> None:
         conn_data = [(c.id, c.name) for c in conns]
     for conn_id, conn_name in conn_data:
         conn, secret = get_connection_secret(conn_id)
-        url = f"postgresql://{conn.username}:{secret}@{conn.host}:{conn.port}/{conn.database}"
+        url = connection_string(conn, secret)
+        tool_name = conn_name
+        if conn.description:
+            tool_name = f"{tool_name} [{conn.description}]"
+        if conn.access_mode == "read_only":
+            tool_name = f"{tool_name} (somente-leitura)"
         # MCP de LEITURA própria (D2 refinado): escritas do agente passam pelo bash,
         # que é permissionado (spike 2.1 — permissões do opencode não cobrem ferramentas MCP)
-        mcp[conn_name] = {
+        mcp[tool_name] = {
             "type": "local",
-            "command": ["python", "/opt/gated-mcp/mcp_server.py", url],
+            "command": ["python", "/opt/gated-mcp/mcp_server.py", url, conn.kind, conn.access_mode],
             "enabled": True,
         }
     config = {
@@ -284,7 +289,7 @@ def reconcile() -> None:
             for sys in s.execute(select(System)).scalars()
         ]
     for system_id, slug, status, container_id in systems:
-        if status == SystemStatus.archived:
+        if status in (SystemStatus.archived, SystemStatus.provisioning):
             continue
         try:
             client.containers.get(system_container_name(slug))
@@ -302,6 +307,22 @@ def reconcile() -> None:
                     from .services.systems import set_status
 
                     set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
+        _check_connections_health(system_id)
+
+
+def _check_connections_health(system_id: str) -> None:
+    """Verifica saúde de cada conexão do sistema; erros por conexão são silenciados."""
+    from .services.connections import check_connection_health
+
+    with session_scope() as s:
+        conn_ids = [
+            c.id for c in s.execute(select(DbConnection).where(DbConnection.system_id == system_id)).scalars()
+        ]
+    for conn_id in conn_ids:
+        try:
+            check_connection_health(conn_id)
+        except Exception:
+            log.exception("health check falhou para conexão %s", conn_id)
 
 
 def publish_app_by_slug(slug: str) -> None:

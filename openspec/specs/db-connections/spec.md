@@ -6,12 +6,16 @@ Registra como as conexões de banco de dados são cadastradas por sistema, valid
 
 ## Requirements
 
-### Requirement: Cadastro de conexão PostgreSQL por sistema
-O portal SHALL permitir que o dono de um sistema cadastre conexões PostgreSQL informando nome, host, porta, banco, usuário e senha, sem limite de conexões por sistema.
+### Requirement: Cadastro de conexão por sistema
+O portal SHALL permitir que o dono de um sistema cadastre conexões de banco de dados (PostgreSQL, MySQL ou BigQuery) informando os campos adequados ao tipo escolhido, sem limite de conexões por sistema.
 
 #### Scenario: Dono cadastra duas conexões
 - **WHEN** o dono cadastra duas conexões distintas no mesmo sistema
 - **THEN** ambas ficam disponíveis ao sistema para seleção nos pedidos ao agente
+
+#### Scenario: Dono cadastra conexão MySQL
+- **WHEN** o dono cadastra uma conexão com tipo MySQL informando as credenciais
+- **THEN** a conexão é salva com tipo mysql e disponibilizada ao agente via MCP
 
 ### Requirement: Teste de conexão antes de salvar
 O portal SHALL testar a conectividade e as credenciais antes de confirmar o cadastro de uma conexão.
@@ -46,9 +50,85 @@ O portal SHALL disponibilizar cada conexão ativa de um sistema ao agente como f
 - **WHEN** a app gerada inicia no container do sistema
 - **THEN** recebe as credenciais das conexões do sistema por variáveis de ambiente
 
+### Requirement: Agente acessa bancos MySQL via MCP
+O portal SHALL disponibilizar conexões MySQL ao agente com as mesmas ferramentas de leitura disponíveis para PostgreSQL (listar tabelas, descrever tabela, consulta de leitura).
+
+#### Scenario: Agente inspeciona tabelas de banco MySQL
+- **WHEN** um editor pede ao agente que analise as tabelas de uma conexão MySQL cadastrada
+- **THEN** o agente consegue listar e descrever o schema usando essa conexão
+
+#### Scenario: Escrita bloqueada em MySQL via MCP
+- **WHEN** o agente tenta executar uma query de escrita em uma conexão MySQL via MCP
+- **THEN** a operação é recusada pelo gate, da mesma forma que em conexões PostgreSQL
+
+### Requirement: App gerada recebe credenciais de banco conforme tipo
+O portal SHALL gerar a variável de ambiente `DATABASE_URL_<NOME>` com o scheme correto para o tipo da conexão (`postgresql://` para PostgreSQL, `mysql://` para MySQL).
+
+#### Scenario: App recebe URL com scheme mysql
+- **WHEN** a app gerada inicia no container de um sistema com conexão MySQL
+- **THEN** recebe `DATABASE_URL_<NOME>=mysql://...` nas variáveis de ambiente
+
 ### Requirement: Remoção de conexão
 O portal SHALL permitir que o dono remova uma conexão do sistema, cessando imediatamente seu provisionamento ao agente e à app.
 
 #### Scenario: Remoção reverte provisionamento
 - **WHEN** o dono remove uma conexão ativa
 - **THEN** o agente passa a não ter mais acesso ao banco correspondente nas próximas sessões
+
+### Requirement: Estado de saúde monitorado por conexão
+O portal SHALL verificar periodicamente a conectividade de cada conexão de banco cadastrada nos sistemas ativos e manter um estado de saúde (`healthy`, `degraded`, `unknown`) atualizado.
+
+#### Scenario: Conexão saudável após verificação
+- **WHEN** o portal verifica uma conexão e consegue conectar e executar uma query simples
+- **THEN** o estado da conexão passa a ser `healthy` e o horário da última verificação é atualizado
+
+#### Scenario: Conexão degradada após verificação
+- **WHEN** o portal verifica uma conexão e não consegue conectar dentro do timeout
+- **THEN** o estado da conexão passa a ser `degraded` e o horário da última verificação é atualizado
+
+### Requirement: Estado de saúde visível na interface
+O portal SHALL exibir o estado de saúde de cada conexão na página do sistema, com indicação visual distinta para cada estado.
+
+#### Scenario: Badge saudável
+- **WHEN** um editor abre a aba de conexões de um sistema
+- **THEN** cada conexão exibe um indicador de estado que reflete o último resultado da verificação
+
+#### Scenario: Conexão nunca verificada
+- **WHEN** uma conexão foi cadastrada mas ainda não passou pelo ciclo de verificação
+- **THEN** seu estado aparece como desconhecido, não como erro
+
+### Requirement: Conexões degradadas visíveis ao admin
+O portal SHALL permitir que administradores consultem um resumo das conexões degradadas em todos os sistemas, para diagnóstico operacional.
+
+#### Scenario: Admin identifica conexões com problema
+- **WHEN** um admin acessa a área de administração
+- **THEN** consegue ver quais sistemas têm conexões em estado degradado, com nome do sistema e da conexão
+
+### Requirement: Descrição e modo de acesso configuráveis por conexão
+O portal SHALL permitir que o dono informe uma descrição textual e um modo de acesso (`read_write` ou `read_only`) ao cadastrar ou editar uma conexão, com `read_write` como padrão.
+
+#### Scenario: Cadastro com descrição e modo read_only
+- **WHEN** o dono cadastra uma conexão informando descrição e selecionando modo somente-leitura
+- **THEN** a conexão é salva com esses metadados e os exibe na listagem
+
+#### Scenario: Cadastro sem metadados mantém padrão
+- **WHEN** o dono cadastra uma conexão sem preencher description ou access_mode
+- **THEN** a conexão usa `read_write` como modo padrão e fica sem descrição
+
+### Requirement: Contexto da conexão exposto ao agente
+O portal SHALL incluir a descrição e o modo de acesso da conexão na configuração entregue ao agente, de forma que o agente receba esse contexto sem instrução manual do editor.
+
+#### Scenario: Agente recebe contexto da conexão
+- **WHEN** o agente inicia uma sessão em um sistema com conexões que possuem descrição cadastrada
+- **THEN** as ferramentas MCP correspondentes exibem a descrição como parte do seu nome ou documentação
+
+### Requirement: Modo somente-leitura enforçado pelo portal
+O portal SHALL garantir que conexões configuradas como `read_only` não permitam operações de escrita via MCP, mesmo que o agente tente executá-las.
+
+#### Scenario: Escrita bloqueada em conexão read_only
+- **WHEN** o agente tenta executar uma query de escrita (INSERT, UPDATE, DELETE, DDL) usando uma conexão configurada como `read_only`
+- **THEN** a operação é recusada com mensagem indicando que a conexão é somente-leitura
+
+#### Scenario: Leitura permitida em conexão read_only
+- **WHEN** o agente executa uma query de leitura (SELECT, EXPLAIN) em uma conexão configurada como `read_only`
+- **THEN** a query é executada normalmente

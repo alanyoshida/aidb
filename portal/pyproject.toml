@@ -16,6 +16,8 @@ dependencies = [
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
     "sqlglot>=25.0",
+    "pymysql>=1.1",
+    "google-cloud-bigquery>=3.0",
 ]
 
 [dependency-groups]

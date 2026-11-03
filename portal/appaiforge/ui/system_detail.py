@@ -179,21 +179,59 @@ def _render_connections(system, user) -> None:
     manage = can_manage_system(user, system)
     ui.label("Bancos de dados que o agente e a app podem acessar").classes("text-sm text-gray-500 mb-2")
 
+    _KIND_OPTIONS = {"PostgreSQL": "postgres", "MySQL": "mysql", "BigQuery": "bigquery"}
+    _KIND_DEFAULT_PORT = {"postgres": 5432, "mysql": 3306, "bigquery": 0}
+
     with ui.dialog() as conn_dialog, ui.card().classes("w-96"):
-        ui.label("Nova conexão PostgreSQL").classes("font-semibold text-lg")
+        ui.label("Nova conexão").classes("font-semibold text-lg")
+        ckind = ui.select(list(_KIND_OPTIONS.keys()), value="PostgreSQL", label="Tipo").classes("w-full").props("data-testid=conn-kind")
         cname = ui.input("Nome").classes("w-full").props("data-testid=conn-name")
-        chost = ui.input("Host").classes("w-full").props("data-testid=conn-host")
-        cport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=conn-port")
-        cdb = ui.input("Banco").classes("w-full").props("data-testid=conn-database")
-        cuser = ui.input("Usuário").classes("w-full").props("data-testid=conn-user")
-        cpass = ui.input("Senha", password=True).classes("w-full").props("data-testid=conn-password")
+
+        with ui.column().classes("w-full") as c_sql_fields:
+            chost = ui.input("Host").classes("w-full").props("data-testid=conn-host")
+            cport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=conn-port")
+            cdb = ui.input("Banco").classes("w-full").props("data-testid=conn-database")
+            cuser = ui.input("Usuário").classes("w-full").props("data-testid=conn-user")
+            cpass = ui.input("Senha", password=True).classes("w-full").props("data-testid=conn-password")
+
+        with ui.column().classes("w-full") as c_bq_fields:
+            cbq_project = ui.input("Project ID").classes("w-full").props("data-testid=conn-bq-project")
+            cbq_dataset = ui.input("Dataset").classes("w-full").props("data-testid=conn-bq-dataset")
+            cbq_sa_json = ui.textarea("Service Account JSON").classes("w-full").props("data-testid=conn-bq-sa-json")
+
+        cdesc = ui.input("Descrição (opcional)").classes("w-full").props("data-testid=conn-description")
+        caccess_mode = ui.select(
+            {"read_write": "Leitura e escrita", "read_only": "Somente leitura"},
+            value="read_write", label="Modo de acesso",
+        ).classes("w-full").props("data-testid=conn-access-mode")
+
+        c_bq_fields.set_visibility(False)
         feedback = ui.label("").classes("text-sm")
 
+        def _on_kind_change(e) -> None:
+            kind_key = _KIND_OPTIONS.get(e.value, "postgres")
+            is_bq = kind_key == "bigquery"
+            c_sql_fields.set_visibility(not is_bq)
+            c_bq_fields.set_visibility(is_bq)
+            if not is_bq:
+                cport.set_value(_KIND_DEFAULT_PORT[kind_key])
+
+        ckind.on("update:model-value", _on_kind_change)
+
         def add_conn() -> None:
+            kind_key = _KIND_OPTIONS.get(ckind.value, "postgres")
+            if kind_key == "bigquery":
+                host, port, database, username, password = (
+                    cbq_project.value, 0, cbq_dataset.value, "", cbq_sa_json.value
+                )
+            else:
+                host = chost.value
+                port = int(cport.value or _KIND_DEFAULT_PORT[kind_key])
+                database, username, password = cdb.value, cuser.value, cpass.value
             try:
                 connections.register_connection(
-                    system, cname.value, chost.value, int(cport.value or 5432), cdb.value, cuser.value, cpass.value,
-                    actor=user,
+                    system, cname.value, host, port, database, username, password, kind=kind_key, actor=user,
+                    description=cdesc.value or None, access_mode=caccess_mode.value or "read_write",
                 )
             except connections.ConnectionFailed as exc:
                 feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
@@ -210,29 +248,73 @@ def _render_connections(system, user) -> None:
             ui.button("Testar e salvar", icon="check_circle", on_click=add_conn).props("data-testid=save-connection")
 
     def open_conn_dialog() -> None:
-        for field in (cname, chost, cdb, cuser, cpass):
+        ckind.set_value("PostgreSQL")
+        for field in (cname, chost, cdb, cuser, cpass, cbq_project, cbq_dataset, cbq_sa_json):
             field.set_value("")
+        cdesc.set_value("")
+        caccess_mode.set_value("read_write")
         cport.set_value(5432)
+        c_sql_fields.set_visibility(True)
+        c_bq_fields.set_visibility(False)
         feedback.set_text("")
         conn_dialog.open()
 
+    _CONN_STATUS_COLOR = {"healthy": "positive", "degraded": "negative", "unknown": "grey"}
+    _CONN_STATUS_LABEL = {"healthy": "saudável", "degraded": "degradada", "unknown": "desconhecido"}
+    _KIND_LABEL = {"postgres": "PostgreSQL", "mysql": "MySQL", "bigquery": "BigQuery"}
     edit_target: dict = {"id": None}
 
     with ui.dialog() as edit_dialog, ui.card().classes("w-96"):
-        ui.label("Editar conexão PostgreSQL").classes("font-semibold text-lg")
+        ui.label("Editar conexão").classes("font-semibold text-lg")
+        ekind = ui.select(list(_KIND_OPTIONS.keys()), value="PostgreSQL", label="Tipo").classes("w-full").props("data-testid=edit-conn-kind")
         ename = ui.input("Nome").classes("w-full").props("data-testid=edit-conn-name")
-        ehost = ui.input("Host").classes("w-full").props("data-testid=edit-conn-host")
-        eport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=edit-conn-port")
-        edb = ui.input("Banco").classes("w-full").props("data-testid=edit-conn-database")
-        euser = ui.input("Usuário").classes("w-full").props("data-testid=edit-conn-user")
-        epass = ui.input("Nova senha (opcional)", password=True).classes("w-full").props("data-testid=edit-conn-password")
+
+        with ui.column().classes("w-full") as e_sql_fields:
+            ehost = ui.input("Host").classes("w-full").props("data-testid=edit-conn-host")
+            eport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=edit-conn-port")
+            edb = ui.input("Banco").classes("w-full").props("data-testid=edit-conn-database")
+            euser = ui.input("Usuário").classes("w-full").props("data-testid=edit-conn-user")
+            epass = ui.input("Nova senha (opcional)", password=True).classes("w-full").props("data-testid=edit-conn-password")
+
+        with ui.column().classes("w-full") as e_bq_fields:
+            ebq_project = ui.input("Project ID").classes("w-full").props("data-testid=edit-conn-bq-project")
+            ebq_dataset = ui.input("Dataset").classes("w-full").props("data-testid=edit-conn-bq-dataset")
+            ebq_sa_json = ui.textarea("Novo Service Account JSON (opcional)").classes("w-full").props("data-testid=edit-conn-bq-sa-json")
+            ebq_email = ui.label("").classes("text-xs text-gray-500")
+
+        edesc = ui.input("Descrição (opcional)").classes("w-full").props("data-testid=edit-conn-description")
+        eaccess_mode = ui.select(
+            {"read_write": "Leitura e escrita", "read_only": "Somente leitura"},
+            value="read_write", label="Modo de acesso",
+        ).classes("w-full").props("data-testid=edit-conn-access-mode")
+
+        e_bq_fields.set_visibility(False)
         edit_feedback = ui.label("").classes("text-sm")
 
+        def _on_ekind_change(e) -> None:
+            kind_key = _KIND_OPTIONS.get(e.value, "postgres")
+            is_bq = kind_key == "bigquery"
+            e_sql_fields.set_visibility(not is_bq)
+            e_bq_fields.set_visibility(is_bq)
+            if not is_bq:
+                eport.set_value(_KIND_DEFAULT_PORT[kind_key])
+
+        ekind.on("update:model-value", _on_ekind_change)
+
         def save_edit() -> None:
+            kind_key = _KIND_OPTIONS.get(ekind.value, "postgres")
+            if kind_key == "bigquery":
+                host, port, database = ebq_project.value, 0, ebq_dataset.value
+                username, password = "", ebq_sa_json.value or None
+            else:
+                host = ehost.value
+                port = int(eport.value or _KIND_DEFAULT_PORT[kind_key])
+                database, username, password = edb.value, euser.value, epass.value or None
             try:
                 connections.update_connection(
-                    system, edit_target["id"], ename.value, ehost.value, int(eport.value or 5432),
-                    edb.value, euser.value, password=epass.value or None, actor=user,
+                    system, edit_target["id"], ename.value, host, port,
+                    database, username, password=password, kind=kind_key, actor=user,
+                    description=edesc.value or None, access_mode=eaccess_mode.value or "read_write",
                 )
             except connections.ConnectionFailed as exc:
                 edit_feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
@@ -250,12 +332,25 @@ def _render_connections(system, user) -> None:
 
     def open_edit_dialog(c: dict) -> None:
         edit_target["id"] = c["id"]
+        kind = c.get("kind", "postgres")
+        ekind.set_value(_KIND_LABEL.get(kind, "PostgreSQL"))
         ename.set_value(c["name"])
-        ehost.set_value(c["host"])
-        eport.set_value(c["port"])
-        edb.set_value(c["database"])
-        euser.set_value(c["username"])
-        epass.set_value("")
+        edesc.set_value(c.get("description") or "")
+        eaccess_mode.set_value(c.get("access_mode") or "read_write")
+        is_bq = kind == "bigquery"
+        e_sql_fields.set_visibility(not is_bq)
+        e_bq_fields.set_visibility(is_bq)
+        if is_bq:
+            ebq_project.set_value(c["host"])
+            ebq_dataset.set_value(c["database"])
+            ebq_sa_json.set_value("")
+            ebq_email.set_text(f"Service account: {c['username']}" if c.get("username") else "")
+        else:
+            ehost.set_value(c["host"])
+            eport.set_value(c["port"])
+            edb.set_value(c["database"])
+            euser.set_value(c["username"])
+            epass.set_value("")
         edit_feedback.set_text("")
         edit_dialog.open()
 
@@ -293,8 +388,20 @@ def _render_connections(system, user) -> None:
                 ui.label("Nenhuma conexão cadastrada ainda.").classes("text-gray-500 text-sm")
             for c in conns:
                 with ui.card().classes("w-full").props(f"data-testid=conn-card:{c['name']}"):
-                    ui.label(f"{c['name']}").classes("font-semibold")
-                    ui.label(f"{c['kind']} · {c['username']}@{c['host']}:{c['port']}/{c['database']}").classes("text-sm text-gray-600")
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label(f"{c['name']}").classes("font-semibold")
+                        status = c.get("status", "unknown")
+                        ui.badge(
+                            _CONN_STATUS_LABEL.get(status, status)
+                        ).props(f"color={_CONN_STATUS_COLOR.get(status, 'grey')} data-testid=conn-status-badge")
+                        if c.get("access_mode") == "read_only":
+                            ui.badge("somente-leitura").props("color=info data-testid=conn-access-mode-badge")
+                    if c.get("description"):
+                        ui.label(c["description"]).classes("text-sm text-gray-500 italic")
+                    if c.get("kind") == "bigquery":
+                        ui.label(f"bigquery · {c['host']}/{c['database']} ({c['username']})").classes("text-sm text-gray-600")
+                    else:
+                        ui.label(f"{c['kind']} · {c['username']}@{c['host']}:{c['port']}/{c['database']}").classes("text-sm text-gray-600")
                     if manage:
                         with ui.row().classes("gap-2"):
                             ui.button("Editar", icon="edit", on_click=lambda c=c: open_edit_dialog(c)).props("dense outline data-testid=conn-edit")

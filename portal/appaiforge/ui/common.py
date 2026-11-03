@@ -28,18 +28,21 @@ def require_user() -> User:
 
 
 def render_header(user: User) -> None:
-    """Header comum a todas as páginas autenticadas (navegação + logout)."""
+    """Header comum a todas as páginas autenticadas (navegação + menu do usuário)."""
+    def do_logout() -> None:
+        auth.logout(current_token())
+        ui.run_javascript(CLEAR_COOKIE_JS + "; window.location = '/login'")
+
     with ui.header().classes("items-center justify-between bg-dark"):
         ui.label("AIDB").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
-        with ui.row().classes("items-center"):
+        with ui.row().classes("items-center gap-2"):
             if user.is_admin:
                 ui.button("Administração", on_click=lambda: ui.navigate.to("/admin")).props("flat dense")
-                ui.button("Guidelines", on_click=lambda: ui.navigate.to("/admin/guidelines")).props("flat dense")
-            ui.label(user.email).classes("text-sm")
-            ui.label(f"({user.type.value})").classes("text-xs text-gray-400")
-
-            def do_logout() -> None:
-                auth.logout(current_token())
-                ui.run_javascript(CLEAR_COOKIE_JS + "; window.location = '/login'")
-
-            ui.button("Sair", on_click=do_logout).props("flat dense")
+            with ui.dropdown_button(icon="account_circle").props(
+                "flat dense round data-testid=user-menu"
+            ).classes("text-white"):
+                with ui.column().classes("p-3 gap-1 min-w-48"):
+                    ui.label(user.email).classes("text-sm font-semibold")
+                    ui.label(f"({user.type.value})").classes("text-xs text-gray-500")
+                    ui.separator()
+                    ui.menu_item("Sair", on_click=do_logout).props("data-testid=logout")

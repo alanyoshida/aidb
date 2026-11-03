@@ -1,11 +1,13 @@
-"""Administração de usuários, grupos, chaves de LLM e auditoria (specs portal-identity, llm-provider-keys, management-audit)."""
+"""Administração de usuários, grupos, chaves de LLM, auditoria e guidelines
+(specs portal-identity, llm-provider-keys, management-audit, agent-harness)."""
 
 from nicegui import ui
 from sqlalchemy import select
 
+from .. import guidelines
 from ..db import session_scope
 from ..models import System, User
-from ..services import audit, catalog, directory, provider_keys
+from ..services import audit, catalog, connections, directory, provider_keys
 from .common import get_current_user, render_header
 
 _USER_TYPES = ["admin", "editor", "app_user"]
@@ -30,11 +32,13 @@ def register() -> None:
 
         render_header(user)
         ui.label("Administração").classes("text-2xl font-bold m-4")
-        with ui.tabs().classes("w-full") as tabs:
+        with ui.tabs().classes("w-full").props("align=left") as tabs:
             usuarios_tab = ui.tab("Usuários", icon="people")
             grupos_tab = ui.tab("Grupos", icon="group")
             keys_tab = ui.tab("Provedores de LLM", icon="vpn_key")
             audit_tab = ui.tab("Auditoria de gestão", icon="history")
+            guidelines_tab = ui.tab("Guidelines", icon="description")
+            health_tab = ui.tab("Conexões degradadas", icon="warning")
         with ui.tab_panels(tabs, value=usuarios_tab).classes("w-full"):
             with ui.tab_panel(usuarios_tab):
                 _users_panel(user)
@@ -44,6 +48,10 @@ def register() -> None:
                 _llm_keys_panel(user)
             with ui.tab_panel(audit_tab):
                 _audit_panel()
+            with ui.tab_panel(guidelines_tab):
+                _guidelines_panel(user)
+            with ui.tab_panel(health_tab):
+                _degraded_connections_panel()
 
 
 def _users_panel(user: User) -> None:
@@ -505,3 +513,51 @@ def _audit_panel() -> None:
 
     entries_box = ui.column().classes("w-full max-w-4xl gap-1")
     refresh()
+
+def _guidelines_panel(user: User) -> None:
+    """Editor de guidelines de geração (somente admin; spec agent-harness)."""
+    ui.label("Guidelines de geração").classes("text-xl font-bold m-4")
+    ui.label("Aplicadas a todos os agentes a partir das próximas execuções.").classes(
+        "text-sm text-gray-500 m-4"
+    )
+    editor = ui.textarea(value=guidelines.current_content()).classes(
+        "w-full max-w-4xl mx-4"
+    ).props("rows=20 data-testid=guidelines-editor")
+    feedback = ui.label("").classes("mx-4 text-sm")
+
+    def save() -> None:
+        version = guidelines.update_content(editor.value, user.id, user.email)
+        feedback.classes("text-green-600 text-sm").set_text(f"guidelines v{version} salvas")
+
+    ui.button("Salvar", icon="save", on_click=save).props("data-testid=save-guidelines mx-4")
+
+
+def _degraded_connections_panel() -> None:
+    """Conexões degradadas em todos os sistemas (spec db-connection-health)."""
+    ui.label("Conexões degradadas").classes("text-xl font-bold m-4")
+    ui.label("Conexões de banco com falha de conectividade detectada pelo reconciliador.").classes(
+        "text-sm text-gray-500 m-4"
+    )
+    box = ui.column().classes("w-full max-w-4xl gap-2").props("data-testid=degraded-connections-box")
+
+    def refresh() -> None:
+        box.clear()
+        items = connections.list_degraded_connections()
+        with box:
+            if not items:
+                ui.label("Nenhuma conexão degradada no momento.").classes(
+                    "text-gray-500 text-sm"
+                ).props("data-testid=no-degraded-connections")
+                return
+            for item in items:
+                with ui.card().classes("w-full").props(f"data-testid=degraded-conn:{item['system_slug']}:{item['name']}"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.icon("warning").classes("text-red-500")
+                        ui.label(item["system_name"]).classes("font-semibold")
+                        ui.label(f"/ {item['name']}").classes("text-gray-600")
+                    ui.label(
+                        f"{item['kind']} · {item['host']}"
+                    ).classes("text-sm text-gray-500")
+
+    refresh()
+    ui.timer(30.0, refresh)

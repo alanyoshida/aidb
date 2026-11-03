@@ -20,7 +20,7 @@ def _login(page, email: str, password: str) -> None:
     page.locator('[data-testid=login-email]').fill(email)
     page.locator('[data-testid=login-password]').fill(password)
     page.get_by_role("button", name="Entrar").click()
-    page.get_by_text(email).first.wait_for(timeout=30_000)
+    page.locator('[data-testid=user-menu]').wait_for(timeout=30_000)
 
 
 def _card(page, text: str):

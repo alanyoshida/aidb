@@ -133,3 +133,109 @@ def test_edicao_de_metadados_reflete_na_lista(system, target):
     )
     listing = connections.list_connections(system.id)
     assert listing[0]["name"] == "renomeada"
+
+
+def test_listagem_inclui_status_e_sem_senha(system, target):
+    _register(system, target)
+    listing = connections.list_connections(system.id)
+    assert listing
+    item = listing[0]
+    assert "status" in item
+    assert "status_checked_at" in item
+    assert "password" not in item
+    assert "password_encrypted" not in item
+
+
+def test_check_connection_health_saudavel(system, target):
+    conn = _register(system, target)
+    connections.check_connection_health(conn.id)
+    listing = connections.list_connections(system.id)
+    assert listing[0]["status"] == "healthy"
+    assert listing[0]["status_checked_at"] is not None
+
+
+def test_check_connection_health_degradado(system, target):
+    from unittest.mock import patch
+
+    # suprime o thread de provisionamento para evitar PermissionError de background
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        conn = connections.register_connection(
+            system, "health-degraded", target["host"], target["port"],
+            target["database"], target["username"], target["password"],
+        )
+    with patch("appaiforge.services.connections.psycopg.connect", side_effect=Exception("timeout")):
+        connections.check_connection_health(conn.id)
+    listing = connections.list_connections(system.id)
+    item = next(c for c in listing if c["id"] == conn.id)
+    assert item["status"] == "degraded"
+    assert item["status_checked_at"] is not None
+
+
+def test_check_connection_health_nao_levanta_excecao(system, target):
+    """check_connection_health nunca deve propagar exceção."""
+    from unittest.mock import patch
+
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        conn = connections.register_connection(
+            system, "health-nao-levanta", target["host"], target["port"],
+            target["database"], target["username"], target["password"],
+        )
+    with patch("appaiforge.services.connections.psycopg.connect", side_effect=RuntimeError("falha inesperada")):
+        connections.check_connection_health(conn.id)  # não deve levantar
+
+
+def test_list_degraded_connections_retorna_degradadas(system, target):
+    from unittest.mock import patch
+
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        conn = connections.register_connection(
+            system, "health-deg-list", target["host"], target["port"],
+            target["database"], target["username"], target["password"],
+        )
+    with patch("appaiforge.services.connections.psycopg.connect", side_effect=Exception("timeout")):
+        connections.check_connection_health(conn.id)
+
+    degraded = connections.list_degraded_connections()
+    assert any(d["id"] == conn.id for d in degraded)
+
+
+def test_list_degraded_connections_vazia_quando_saudaveis(system, target):
+    _register(system, target)
+    # nenhum check foi feito: status é 'unknown', não 'degraded'
+    degraded = connections.list_degraded_connections()
+    assert degraded == []
+
+
+def test_description_e_access_mode_salvos_e_retornados(system, target):
+    conn = connections.register_connection(
+        system, "com-meta", target["host"], target["port"], target["database"],
+        target["username"], target["password"],
+        description="Banco de produção", access_mode="read_only",
+    )
+    listing = connections.list_connections(system.id)
+    item = next(c for c in listing if c["id"] == conn.id)
+    assert item["description"] == "Banco de produção"
+    assert item["access_mode"] == "read_only"
+    assert "password" not in item
+    assert "password_encrypted" not in item
+
+
+def test_defaults_description_none_access_mode_read_write(system, target):
+    _register(system, target)
+    listing = connections.list_connections(system.id)
+    item = listing[0]
+    assert item["description"] is None
+    assert item["access_mode"] == "read_write"
+
+
+def test_update_description_e_access_mode(system, target):
+    conn = _register(system, target)
+    connections.update_connection(
+        system, conn.id, "principal", target["host"], target["port"],
+        target["database"], target["username"], password=None,
+        description="Relatórios", access_mode="read_only",
+    )
+    listing = connections.list_connections(system.id)
+    item = listing[0]
+    assert item["description"] == "Relatórios"
+    assert item["access_mode"] == "read_only"

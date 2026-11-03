@@ -1,6 +1,7 @@
 """Unitários da geração do opencode.json por tipo de provedor (tasks 3.1, 3.2)."""
 
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -8,7 +9,7 @@ from appaiforge import auth
 from appaiforge.models import ProviderKey, UserType
 from appaiforge.provisioning import _provider_env, write_opencode_config
 from appaiforge.security import encrypt_secret
-from appaiforge.services import catalog
+from appaiforge.services import catalog, connections
 from appaiforge.services.systems import create_system
 
 GLM_BASE = "https://api.z.ai/api/coding/paas/v4"
@@ -60,3 +61,52 @@ def test_provider_env_usa_env_name_do_catalogo(editor):
         s.add(ProviderKey(provider="minha-ia", key_encrypted=encrypt_secret("segredo")))
     assert _provider_env("minha-ia") == {"MINHA_IA_API_KEY": "segredo"}
     assert _provider_env("glm") == {}  # preset sem chave cadastrada
+
+
+@pytest.fixture()
+def target(live_pg):
+    return live_pg
+
+
+def test_nome_tool_com_descricao_e_read_only(editor, tmp_path, target):
+    system = create_system(editor, "T", "prov-tool-ro")
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        connections.register_connection(
+            system, "analytics", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+            description="Dados analíticos", access_mode="read_only",
+        )
+    config = _config(tmp_path, system)
+    mcp_keys = list(config["mcp"].keys())
+    assert mcp_keys == ["analytics [Dados analíticos] (somente-leitura)"]
+    cmd = config["mcp"][mcp_keys[0]]["command"]
+    assert cmd[-1] == "read_only"
+
+
+def test_nome_tool_com_descricao_sem_read_only(editor, tmp_path, target):
+    system = create_system(editor, "T2", "prov-tool-rw")
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        connections.register_connection(
+            system, "operacional", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+            description="Banco principal", access_mode="read_write",
+        )
+    config = _config(tmp_path, system)
+    mcp_keys = list(config["mcp"].keys())
+    assert mcp_keys == ["operacional [Banco principal]"]
+    cmd = config["mcp"][mcp_keys[0]]["command"]
+    assert cmd[-1] == "read_write"
+
+
+def test_nome_tool_sem_descricao_sem_read_only(editor, tmp_path, target):
+    system = create_system(editor, "T3", "prov-tool-plain")
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        connections.register_connection(
+            system, "simples", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+        )
+    config = _config(tmp_path, system)
+    mcp_keys = list(config["mcp"].keys())
+    assert mcp_keys == ["simples"]
+    cmd = config["mcp"]["simples"]["command"]
+    assert cmd[-1] == "read_write"
