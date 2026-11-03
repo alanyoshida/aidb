@@ -41,7 +41,7 @@ class Handler(BaseHTTPRequestHandler):
         token = parse_qs(urlparse(self.path).query).get("t", [None])[0]
         user = _identity(token)
         if user is None:
-            body = "AppAIForge: acesso restrito. Abra a app pelo portal.\\n".encode()
+            body = "AIDB: acesso restrito. Abra a app pelo portal.\\n".encode()
             self.send_response(403)
         else:
             body = f"App de exemplo do sistema {SLUG} — ola, {user.get('user_id', '?')[:8]}!\\n".encode()

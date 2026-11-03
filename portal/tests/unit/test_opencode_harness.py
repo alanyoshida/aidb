@@ -39,7 +39,7 @@ def fake_opencode():
             elif self.path == f"/session/{SESSION}/abort":
                 state["aborted"] = True
                 self._json({"ok": True})
-            elif "/permission/" in self.path and self.path.endswith("/reply"):
+            elif "/permissions/" in self.path or ("/permission/" in self.path and self.path.endswith("/reply")):
                 state.setdefault("replies", []).append((self.path, body.decode()))
                 self._json({"ok": True})
             else:
@@ -180,7 +180,7 @@ def test_gate_request_normalizado_e_reply(fake_opencode):
     harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
     harness.reply_gate({"slug": "erp"}, SESSION, "per_123", approve=False)
     replies = fake_opencode["replies"]
-    assert replies and "permission/per_123/reply" in replies[0][0]
+    assert replies and f"/session/{SESSION}/permissions/per_123" in replies[0][0]
     assert '"reject"' in replies[0][1]
 
     events = _run(harness, {"slug": "erp"})

@@ -92,6 +92,11 @@ def test_chat_gera_app_e_registra_uso_e_checkpoint(page, suffix):
     page.get_by_role("tab", name="Checkpoints").click()
     page.get_by_role("button", name="Restaurar").first.wait_for(timeout=30_000)
 
+    # excluir o checkpoint (com confirmação) esvazia a timeline
+    page.locator('[data-testid=checkpoint-delete]').first.click()
+    page.locator('[data-testid=confirm-checkpoint-delete]').click()
+    page.get_by_text("Nenhum checkpoint ainda.").wait_for(timeout=30_000)
+
     # a app gerada (fake) está no ar pela rota do portal (entrada autenticada)
     import time
 
@@ -165,3 +170,28 @@ def test_rota_publicada_ao_criar_e_removida_ao_arquivar(page, suffix):
         last_error = f"HTTP {resp.status}"
         time.sleep(1)
     raise AssertionError(last_error or "rota não removida após arquivamento")
+
+
+def test_chat_debug_mostra_comandos(page, suffix):
+    """Modo debug: comandos executados só aparecem com o switch ligado (padrão desligado)."""
+    editor_email = f"dbg-editor-{suffix}@e2e.local"
+    _create_editor(page, editor_email)
+    _login(page, editor_email, "pw-editor")
+    page.get_by_role("button", name="Novo sistema").click()
+    page.locator('[data-testid=system-name]').fill("Sistema Debug")
+    page.locator('[data-testid=system-slug]').fill(f"dbg-{suffix}")
+    page.locator('[data-testid=create-system]').click()
+    _wait_system_active(page)
+
+    # desligado por padrão: comando não aparece
+    page.locator('[data-testid=chat-input]').fill("crie o painel de clientes")
+    page.locator('[data-testid=chat-send]').click()
+    page.get_by_text("agente livre").wait_for(timeout=30_000)
+    assert not page.get_by_text("comando:").first.is_visible()
+
+    # liga o debug e roda de novo: comandos aparecem
+    page.locator('[data-testid=chat-debug]').click()
+    page.locator('[data-testid=chat-input]').fill("gere novamente o painel")
+    page.locator('[data-testid=chat-send]').click()
+    page.get_by_text("agente livre").wait_for(timeout=30_000)
+    page.get_by_text("comando:").first.wait_for(state="visible", timeout=30_000)

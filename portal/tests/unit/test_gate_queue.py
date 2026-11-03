@@ -105,7 +105,7 @@ def test_comando_sem_sql_identificavel_e_confirmavel(fake_env, clean_db):
     queue.buffers[run_id] = RunBuffer()
     queue._handle_gate_request(
         {"system_id": system.id, "slug": system.slug},
-        run_id, editor.id,
+        run_id, editor.id, editor.email,
         RE("gate_request", text="psql $DATABASE_URL_VENDAS", meta={"request_id": "per_x", "session_id": "s1"}),
         queue.buffers[run_id], "s1",
     )

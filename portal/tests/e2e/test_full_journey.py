@@ -178,3 +178,16 @@ def test_jornada_completa(page, suffix):
         time.sleep(1)
     else:
         raise AssertionError("app saiu do ar após rollback")
+
+    # 7. admin desvincula o grupo do sistema
+    _logout(page)
+    _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    page.get_by_role("button", name="Administração").click()
+    page.get_by_role("tab", name="Grupos").click()
+    card = page.locator(f'[data-testid="group-card:{group_name}"]').first
+    card.wait_for(timeout=30_000)
+    card.get_by_role("button", name="Desvincular sistema").click()
+    _select(page, "group-unlink-select", slug)
+    page.locator('[data-testid=confirm-group-unlink]').click()
+    card.get_by_text("sistemas: —").wait_for(timeout=30_000)
+    _logout(page)

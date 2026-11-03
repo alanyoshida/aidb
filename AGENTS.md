@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guia para agentes que trabalham neste repositório. Produto: **AppAIForge** — portal que gera
+Guia para agentes que trabalham neste repositório. Produto: **AIDB** — portal que gera
 apps de gestão (NiceGUI, Python) sobre bancos PostgreSQL, conduzido por chat. A documentação de
 produto fica no [`README.md`](README.md); decisões em [`docs/adr/`](docs/adr/README.md).
 

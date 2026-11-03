@@ -72,10 +72,10 @@ class R(BaseHTTPRequestHandler):
     def do_GET(self):
         token = parse_qs(urlparse(self.path).query).get("t", [None])[0]
         if _identity(token) is None:
-            body = "AppAIForge: acesso restrito. Abra a app pelo portal.\\n".encode()
+            body = "AIDB: acesso restrito. Abra a app pelo portal.\\n".encode()
             self.send_response(403)
         else:
-            body = "AppAIForge: app ainda nao gerada para este sistema.\\nUse o chat do portal.\\n".encode()
+            body = "AIDB: app ainda nao gerada para este sistema.\\nUse o chat do portal.\\n".encode()
             self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

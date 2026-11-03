@@ -11,8 +11,10 @@ import psycopg
 from sqlalchemy import select
 
 from ..db import session_scope
-from ..models import DbConnection, System
+from ..models import DbConnection, System, User
+from ..rbac import can_manage_system
 from ..security import decrypt_secret, encrypt_secret
+from . import audit
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +24,10 @@ class ConnectionFailed(Exception):
 
 
 class NameTaken(Exception):
+    pass
+
+
+class NotFound(Exception):
     pass
 
 
@@ -45,8 +51,13 @@ def test_connection(host: str, port: int, database: str, username: str, password
         raise ConnectionFailed("credenciais recusadas pelo banco") from exc
 
 
-def register_connection(system: System, name: str, host: str, port: int, database: str, username: str, password: str) -> DbConnection:
+def register_connection(
+    system: System, name: str, host: str, port: int, database: str, username: str, password: str,
+    actor: User | None = None,
+) -> DbConnection:
     """Testa e cadastra; devolve a conexão SEM o segredo exposto."""
+    if actor is not None and not can_manage_system(actor, system):
+        raise PermissionError("permissão insuficiente para gerenciar conexões deste sistema")
     test_connection(host, port, database, username, password)
     with session_scope() as s:
         exists = s.execute(
@@ -67,6 +78,60 @@ def register_connection(system: System, name: str, host: str, port: int, databas
         s.flush()
         s.expunge(conn)
     log.info("conexão registrada: sistema=%s nome=%s host=%s db=%s", system.slug, conn.name, conn.host, conn.database)
+    audit.record(
+        actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
+        action="conn.create", resource_type="connection",
+        resource_id=conn.id, system_id=system.id,
+        details={"name": conn.name, "host": conn.host, "database": conn.database},
+    )
+    _refresh_provisioning(system)
+    return conn
+
+
+def update_connection(
+    system: System, connection_id: str, name: str, host: str, port: int, database: str, username: str,
+    password: str | None = None, actor: User | None = None,
+) -> DbConnection:
+    """Edita uma conexão. Senha vazia mantém a atual; preenchida testa e troca."""
+    if actor is not None and not can_manage_system(actor, system):
+        raise PermissionError("permissão insuficiente para gerenciar conexões deste sistema")
+    with session_scope() as s:
+        conn = s.get(DbConnection, connection_id)
+        if conn is None or conn.system_id != system.id:
+            raise NotFound("conexão não encontrada neste sistema")
+        current_password = decrypt_secret(conn.password_encrypted)
+        s.expunge(conn)
+    effective_password = password if password else current_password
+    test_connection(host, port, database, username, effective_password)
+    with session_scope() as s:
+        conn = s.get(DbConnection, connection_id)
+        assert conn is not None
+        clean_name = name.strip()
+        conflict = s.execute(
+            select(DbConnection.id).where(
+                DbConnection.system_id == system.id,
+                DbConnection.name == clean_name,
+                DbConnection.id != connection_id,
+            )
+        ).scalar_one_or_none()
+        if conflict is not None:
+            raise NameTaken(f"conexão '{clean_name}' já existe neste sistema")
+        conn.name = clean_name
+        conn.host = host.strip()
+        conn.port = port
+        conn.database = database.strip()
+        conn.username = username.strip()
+        if password:
+            conn.password_encrypted = encrypt_secret(password)
+        s.flush()
+        s.expunge(conn)
+    log.info("conexão atualizada: sistema=%s id=%s", system.slug, connection_id)
+    audit.record(
+        actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
+        action="conn.update", resource_type="connection",
+        resource_id=connection_id, system_id=system.id,
+        details={"name": clean_name, "host": host.strip(), "database": database.strip(), "password_changed": bool(password)},
+    )
     _refresh_provisioning(system)
     return conn
 
@@ -100,12 +165,19 @@ def get_connection_secret(connection_id: str) -> tuple[DbConnection, str]:
         return conn, secret
 
 
-def remove_connection(system: System, connection_id: str) -> None:
+def remove_connection(system: System, connection_id: str, actor: User | None = None) -> None:
+    if actor is not None and not can_manage_system(actor, system):
+        raise PermissionError("permissão insuficiente para gerenciar conexões deste sistema")
     with session_scope() as s:
         conn = s.get(DbConnection, connection_id)
         if conn is not None and conn.system_id == system.id:
             s.delete(conn)
     log.info("conexão removida: sistema=%s id=%s", system.slug, connection_id)
+    audit.record(
+        actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
+        action="conn.remove", resource_type="connection",
+        resource_id=connection_id, system_id=system.id, details={},
+    )
     _refresh_provisioning(system)
 
 

@@ -29,10 +29,14 @@ def _seed_demo_admin() -> None:
 
 
 def create_app() -> FastAPI:
-    application = FastAPI(title="AppAIForge", version=__version__)
+    application = FastAPI(title="AIDB", version=__version__)
     get_engine()
     Base.metadata.create_all(get_engine())  # Alembic é o caminho normal; create_all garante dev/boot
     _seed_demo_admin()
+
+    from .services.catalog import ensure_presets
+
+    ensure_presets()
 
     from .agent_queue import reconcile_orphaned_runs
 
@@ -73,7 +77,7 @@ def create_app() -> FastAPI:
     from .health_monitor import start_monitor
 
     start_monitor()
-    ui.run_with(application, title="AppAIForge")
+    ui.run_with(application, title="AIDB")
     return application
 
 

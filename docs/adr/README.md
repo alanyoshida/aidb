@@ -1,4 +1,4 @@
-# ADRs — Architecture Decision Records do AppAIForge
+# ADRs — Architecture Decision Records do AIDB
 
 Registro das decisões arquiteturais e de produto da plataforma, em formato MADR (Markdown ADR), em português.
 

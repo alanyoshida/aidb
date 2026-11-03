@@ -43,14 +43,15 @@ def ensure_network() -> None:
 
 def _provider_env(provider: str) -> dict[str, str]:
     """Env da chave do provedor, com o nome que o opencode espera (ADR 0004)."""
-    from .harness.opencode import opencode_provider
+    from .services import catalog
 
-    _, env_name = opencode_provider(provider)
+    provider_def = catalog.get_provider(provider)
+    env_name = provider_def["env_name"] if provider_def else f"{provider.upper()}_API_KEY"
     env: dict[str, str] = {}
     with session_scope() as s:
-        keys = {k.provider: decrypt_secret(k.key_encrypted) for k in s.execute(select(ProviderKey)).scalars()}
-    if provider in keys:
-        env[env_name] = keys[provider]
+        key = s.get(ProviderKey, provider)
+        if key is not None:
+            env[env_name] = decrypt_secret(key.key_encrypted)
     return env
 
 
@@ -74,9 +75,10 @@ def _env_name(name: str) -> str:
 
 def write_opencode_config(system: System, workspace_dir: str) -> None:
     """Gera opencode.json do sistema: provedor/modelo + MCP por conexão."""
-    from .harness.opencode import opencode_provider
+    from .services import catalog
 
-    provider_id, _ = opencode_provider(system.provider)
+    provider = catalog.get_provider(system.provider)
+    provider_id = provider["provider_id"] if provider else system.provider
     mcp: dict = {}
     with session_scope() as s:
         conns = s.execute(select(DbConnection).where(DbConnection.system_id == system.id)).scalars().all()
@@ -112,10 +114,23 @@ def write_opencode_config(system: System, workspace_dir: str) -> None:
             }
         },
     }
-    if provider_id == "zhipuai":
+    if provider is not None and provider["kind"] == "openai-compatible":
+        models = {m: {} for m in (provider["models"] or [])}
+        models.setdefault(system.model, {})
         config["provider"] = {
-            provider_id: {"options": {"baseURL": get_settings().glm_base_url}}
+            provider_id: {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": provider["label"],
+                "options": {"baseURL": provider["base_url"]},
+                "models": models,
+            }
         }
+    else:
+        base_url = provider["base_url"] if provider else None
+        if not base_url and provider_id == "zhipuai":
+            base_url = get_settings().glm_base_url
+        if base_url:
+            config["provider"] = {provider_id: {"options": {"baseURL": base_url}}}
     os.makedirs(workspace_dir, exist_ok=True)
     with open(os.path.join(workspace_dir, "opencode.json"), "w") as f:
         json.dump(config, f, indent=2)
@@ -269,7 +284,7 @@ def reconcile() -> None:
             for sys in s.execute(select(System)).scalars()
         ]
     for system_id, slug, status, container_id in systems:
-        if status in (SystemStatus.archived, SystemStatus.error):
+        if status == SystemStatus.archived:
             continue
         try:
             client.containers.get(system_container_name(slug))

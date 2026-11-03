@@ -1,4 +1,4 @@
-# Imagem base dos containers de sistema do AppAIForge (ADR 0003).
+# Imagem base dos containers de sistema do AIDB (ADR 0003).
 # Python 3.12 + uv + opencode (pinado) + MCP server de Postgres + supervisor PID 1.
 FROM python:3.12-slim
 
@@ -20,7 +20,7 @@ RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "${OPENCODE_VE
 # uv para rodar a app gerada com deps próprias
 RUN pip install --no-cache-dir uv
 
-# MCP server de leitura do AppAIForge + deps (mcp/sqlglot/asyncpg no python do sistema)
+# MCP server de leitura do AIDB + deps (mcp/sqlglot/asyncpg no python do sistema)
 COPY gated-mcp /opt/gated-mcp
 RUN pip install --no-cache-dir "mcp>=1.0" sqlglot asyncpg
 

@@ -9,8 +9,9 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import session_scope
 from .models import Guideline, System
+from .services import audit
 
-_DEFAULT = """# Guidelines de geração do AppAIForge (PT-BR)
+_DEFAULT = """# Guidelines de geração do AIDB (PT-BR)
 
 Você é o agente de código deste sistema. Siga estas regras em toda geração:
 
@@ -60,13 +61,21 @@ def current_content() -> str:
         return row.content if row else _DEFAULT
 
 
-def update_content(content: str, updated_by_id: str) -> int:
+def update_content(content: str, updated_by_id: str | None, updated_by_email: str | None = None) -> int:
     with session_scope() as s:
         latest = s.execute(select(Guideline.version).order_by(Guideline.version.desc()).limit(1)).scalar_one_or_none()
-        row = Guideline(version=(latest or 0) + 1, content=content, updated_by_id=updated_by_id)
+        row = Guideline(
+            version=(latest or 0) + 1, content=content,
+            updated_by_id=updated_by_id, updated_by_email=updated_by_email or "",
+        )
         s.add(row)
         s.flush()
-        return row.version
+        version = row.version
+    audit.record(
+        actor_id=updated_by_id, actor_email=updated_by_email, action="guidelines.update",
+        resource_type="guidelines", resource_id=str(version), details={"version": version},
+    )
+    return version
 
 
 TEMPLATE_FILES = ["identity.py", "sqlgate.py", "dbgate.py"]

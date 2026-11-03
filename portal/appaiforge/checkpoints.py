@@ -13,6 +13,7 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import session_scope
 from .models import Checkpoint, System, User
+from .services import audit
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def ensure_repo(system: System) -> None:
     if not os.path.isdir(os.path.join(ensure, ".git")):
         _git(system, "init", "-q", "-b", "main")
     _git(system, "config", "user.email", "appaiforge@portal")
-    _git(system, "config", "user.name", "AppAIForge")
+    _git(system, "config", "user.name", "AIDB")
 
 
 def commit_all(system: System, message: str, author: User | None = None) -> str | None:
@@ -61,11 +62,35 @@ def record_checkpoint(system: System, run_id: str | None, message: str, author: 
     if sha is None:
         return None
     with session_scope() as s:
-        cp = Checkpoint(system_id=system.id, run_id=run_id, git_sha=sha, message=message, author_id=author.id if author else system.owner_id)
+        cp = Checkpoint(
+            system_id=system.id, run_id=run_id, git_sha=sha, message=message,
+            author_id=author.id if author else system.owner_id,
+            author_email=author.email if author else "",
+        )
         s.add(cp)
         s.flush()
         s.expunge(cp)
-        return cp
+    audit.record(
+        actor_id=author.id if author else None, actor_email=author.email if author else None,
+        action="checkpoint.create", resource_type="checkpoint",
+        resource_id=cp.id, system_id=system.id, details={"git_sha": sha[:8]},
+    )
+    return cp
+
+
+def delete_checkpoint(system: System, checkpoint_id: str, actor: User | None = None) -> None:
+    """Remove um checkpoint do histórico (não mexe no workspace atual)."""
+    with session_scope() as s:
+        cp = s.get(Checkpoint, checkpoint_id)
+        if cp is None or cp.system_id != system.id:
+            return
+        s.delete(cp)
+    audit.record(
+        actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
+        action="checkpoint.delete", resource_type="checkpoint",
+        resource_id=checkpoint_id, system_id=system.id, details={},
+    )
+    log.info("checkpoint removido: sistema=%s id=%s", system.slug, checkpoint_id)
 
 
 def list_checkpoints(system: System) -> list[dict]:

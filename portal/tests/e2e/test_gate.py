@@ -92,6 +92,7 @@ def test_gate_truncate_bloqueado_e_delete_aprovado(page, suffix):
     # 3) histórico do gate mostra bloqueada e aprovada (painel atualiza a cada 2s)
     page.get_by_role("tab", name="Auditoria").click()
     page.get_by_text("Gate de destrutivas").wait_for(timeout=30_000)
+    page.get_by_text("Ações de gestão").wait_for(timeout=30_000)
     page.get_by_text("[bloqueada]").first.wait_for(timeout=30_000)
     page.get_by_text("[aprovada]").first.wait_for(timeout=30_000)
 

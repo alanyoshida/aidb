@@ -133,7 +133,7 @@ def test_guidelines_atualizacao_propaga_para_workspace(fake_workspace, clean_db)
     system = create_system(editor, "Guides", "guides")
 
     before = materialize(system)
-    assert "AppAIForge" in open(before).read()
+    assert "AIDB" in open(before).read()
 
     update_content("Regra nova: use sempre PT-BR nos rótulos.", admin.id)
     after = materialize(system)

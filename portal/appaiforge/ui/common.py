@@ -30,7 +30,7 @@ def require_user() -> User:
 def render_header(user: User) -> None:
     """Header comum a todas as páginas autenticadas (navegação + logout)."""
     with ui.header().classes("items-center justify-between bg-dark"):
-        ui.label("AppAIForge").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
+        ui.label("AIDB").classes("text-xl font-bold cursor-pointer").on("click", lambda: ui.navigate.to("/"))
         with ui.row().classes("items-center"):
             if user.is_admin:
                 ui.button("Administração", on_click=lambda: ui.navigate.to("/admin")).props("flat dense")

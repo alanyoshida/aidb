@@ -11,7 +11,7 @@ def register() -> None:
     @ui.page("/login")
     def login_page() -> None:
         with ui.card().classes("w-96 mx-auto mt-24"):
-            ui.label("AppAIForge").classes("text-2xl font-bold")
+            ui.label("AIDB").classes("text-2xl font-bold")
             ui.label("Entre para acessar o portal").classes("text-sm text-gray-500")
             email = ui.input("E-mail").classes("w-full").props("data-testid=login-email")
             password = ui.input("Senha", password=True, password_toggle_button=True).classes("w-full").props("data-testid=login-password")

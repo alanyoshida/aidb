@@ -16,7 +16,7 @@ from .db import session_scope
 from .harness.base import HarnessPort, RunEvent
 from .harness.fake import FakeHarness
 from .harness.opencode import OpencodeHarness
-from .models import AgentRun, ChatSession, RunStatus, TokenUsage, System, utcnow
+from .models import AgentRun, ChatSession, RunStatus, TokenUsage, System, User, utcnow
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +90,8 @@ class AgentQueue:
 
     def enqueue(self, system_id: str, user_id: str, prompt: str) -> AgentRun:
         with session_scope() as s:
+            user = s.get(User, user_id)
+            user_email = user.email if user is not None else ""
             chat = s.execute(
                 select(ChatSession).where(ChatSession.system_id == system_id, ChatSession.user_id == user_id)
             ).scalar_one_or_none()
@@ -97,7 +99,7 @@ class AgentQueue:
                 chat = ChatSession(system_id=system_id, user_id=user_id)
                 s.add(chat)
                 s.flush()
-            run = AgentRun(system_id=system_id, user_id=user_id, chat_session_id=chat.id, prompt=prompt)
+            run = AgentRun(system_id=system_id, user_id=user_id, user_email=user_email, chat_session_id=chat.id, prompt=prompt)
             s.add(run)
             s.flush()
             s.expunge(run)
@@ -207,7 +209,7 @@ class AgentQueue:
             if event.meta.get("command"):
                 event.meta["command"] = redact(event.meta["command"])
             if event.kind == "gate_request":
-                self._handle_gate_request(system_dict, run_id, run.user_id, event, buffer, session_id)
+                self._handle_gate_request(system_dict, run_id, run.user_id, run.user_email, event, buffer, session_id)
                 return
             buffer.push(event)
             if event.kind == "usage":
@@ -219,6 +221,7 @@ class AgentQueue:
                         run_id=run_id,
                         system_id=system_id,
                         user_id=run.user_id,
+                        user_email=run.user_email,
                         provider=provider,
                         model=model,
                         input_tokens=event.meta.get("input_tokens", 0),
@@ -294,7 +297,7 @@ class AgentQueue:
                 except OSError:
                     log.warning("não foi possível publicar rota para %s", fresh.slug)
 
-    def _handle_gate_request(self, system_dict: dict, run_id: str, user_id: str, event: RunEvent, buffer: RunBuffer, session_id: str) -> None:
+    def _handle_gate_request(self, system_dict: dict, run_id: str, user_id: str, user_email: str, event: RunEvent, buffer: RunBuffer, session_id: str) -> None:
         """Pedido de permissão do harness: o portal classifica e decide (D2).
 
         bloqueada -> recusa automática; normal -> aprova automática; confirmável
@@ -316,7 +319,7 @@ class AgentQueue:
             self.harness.reply_gate(system_dict, session_id, request_id, approve=False)
             gate.record_decision(system_id, sql or command, origin="agente",
                                  connection_name="", classification=classification,
-                                 decision="bloqueada", run_id=run_id, author_id=user_id)
+                                 decision="bloqueada", run_id=run_id, author_id=user_id, author_email=user_email)
             buffer.push(RunEvent("gate_denied", text=f"bloqueada pelo gate: {reason}", meta={"request_id": request_id}))
             return
 
@@ -324,7 +327,7 @@ class AgentQueue:
             self.harness.reply_gate(system_dict, session_id, request_id, approve=True)
             gate.record_decision(system_id, sql, origin="agente",
                                  connection_name="", classification=classification,
-                                 decision="aprovada", run_id=run_id, author_id=user_id)
+                                 decision="aprovada", run_id=run_id, author_id=user_id, author_email=user_email)
             buffer.push(RunEvent("gate_approved", text=f"liberada pelo gate: {sql[:80]}", meta={"request_id": request_id}))
             return
 
@@ -360,7 +363,8 @@ class AgentQueue:
         gate.record_decision(
             info["system_id"], info["sql"], origin="agente", connection_name=info["connection_name"],
             classification=gate.GateClass.CONFIRMABLE,
-            decision="aprovada" if approve else "recusada", run_id=run_id, author_id=author.id if author else None,
+            decision="aprovada" if approve else "recusada", run_id=run_id,
+            author_id=author.id if author else None, author_email=author.email if author else None,
         )
         self.pending_gates.pop(run_id, None)
         buffer = self.buffers.get(run_id)

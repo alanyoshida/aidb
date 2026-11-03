@@ -84,3 +84,52 @@ def test_remocao_cessa_registro(system, target):
     conn = _register(system, target)
     connections.remove_connection(system, conn.id)
     assert connections.list_connections(system.id) == []
+
+
+def _stored_password(conn_id):
+    from sqlalchemy import text
+
+    with session_scope() as s:
+        return s.execute(
+            text("SELECT password_encrypted FROM db_connections WHERE id = :id"), {"id": conn_id}
+        ).scalar_one()
+
+
+def test_edicao_senha_vazia_mantem_a_atual(system, target):
+    conn = _register(system, target)
+    connections.update_connection(
+        system, conn.id, "principal", target["host"], target["port"], target["database"], target["username"],
+        password=None,
+    )
+    assert connections.decrypt_secret(_stored_password(conn.id)) == target["password"]
+
+
+def test_edicao_com_senha_troca_a_cifra(system, target):
+    conn = _register(system, target)
+    before = _stored_password(conn.id)
+    connections.update_connection(
+        system, conn.id, "principal", target["host"], target["port"], target["database"], target["username"],
+        password=target["password"],
+    )
+    after = _stored_password(conn.id)
+    assert after != before  # re-cifra mesmo com o mesmo texto
+    assert connections.decrypt_secret(after) == target["password"]
+
+
+def test_edicao_com_senha_errada_recusa(system, target):
+    conn = _register(system, target)
+    with pytest.raises(connections.ConnectionFailed):
+        connections.update_connection(
+            system, conn.id, "principal", target["host"], target["port"], target["database"], target["username"],
+            password="senha-errada",
+        )
+
+
+def test_edicao_de_metadados_reflete_na_lista(system, target):
+    conn = _register(system, target)
+    connections.update_connection(
+        system, conn.id, "renomeada", target["host"], target["port"], target["database"], target["username"],
+        password=None,
+    )
+    listing = connections.list_connections(system.id)
+    assert listing[0]["name"] == "renomeada"

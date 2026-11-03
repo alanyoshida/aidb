@@ -21,6 +21,10 @@ HOST_WORKSPACES = os.environ.get("APPAIFORGE_E2E_WORKSPACES_DIR", "/opt/appaifor
 _RESET_SQL = """
 CREATE TEMP TABLE _e2e_users AS SELECT id FROM users WHERE email LIKE '%@e2e.local';
 CREATE TEMP TABLE _e2e_systems AS SELECT id FROM systems WHERE owner_id IN (SELECT id FROM _e2e_users);
+DELETE FROM provider_keys WHERE provider NOT IN ('glm', 'anthropic', 'openai', 'openrouter');
+DELETE FROM llm_provider WHERE is_preset = false;
+DELETE FROM management_audit WHERE system_id IN (SELECT id FROM _e2e_systems)
+  OR actor_id IN (SELECT id FROM _e2e_users);
 DELETE FROM gate_decisions WHERE system_id IN (SELECT id FROM _e2e_systems)
   OR run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
 DELETE FROM run_events WHERE run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
@@ -58,8 +62,13 @@ def clean_stack():
         yield  # stack não disponível: nada a limpar
         return
 
-    # containers de sistema cujo slug não existe mais no banco
-    names = _run(["docker", "ps", "-aq", "--filter", "label=appaiforge.managed=true"]).split()
+    # containers de sistema cujo slug não existe mais no banco — SOMENTE na rede do
+    # stack E2E, para nunca tocar containers do ambiente de dev/produção (isolamento)
+    names = _run([
+        "docker", "ps", "-aq",
+        "--filter", "label=appaiforge.managed=true",
+        "--filter", "network=appaiforge-e2e-net",
+    ]).split()
     for cid in names:
         try:
             name = _run(["docker", "inspect", "--format", "{{.Name}}", cid]).strip().lstrip("/")

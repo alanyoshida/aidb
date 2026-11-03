@@ -24,7 +24,7 @@ def register() -> None:
         feedback = ui.label("").classes("mx-4 text-sm")
 
         def save() -> None:
-            version = guidelines.update_content(editor.value, user.id)
+            version = guidelines.update_content(editor.value, user.id, user.email)
             feedback.classes("text-green-600 text-sm").set_text(f"guidelines v{version} salvas")
 
         ui.button("Salvar", icon="save", on_click=save).props("data-testid=save-guidelines mx-4")

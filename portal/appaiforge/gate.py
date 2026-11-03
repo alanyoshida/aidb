@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from .app_template import sqlgate
 from .db import session_scope
-from .models import GateDecision, User
+from .models import GateDecision
 
 
 class GateClass(str, enum.Enum):
@@ -40,6 +40,7 @@ def evaluate(
     connection_name: str = "",
     run_id: str | None = None,
     author_id: str | None = None,
+    author_email: str | None = None,
 ) -> GateClass:
     """Avalia a statement: bloqueada e normais são decididas e auditadas aqui;
     confirmáveis retornam CONFIRMABLE sem registro (quem confirma registra depois
@@ -47,10 +48,12 @@ def evaluate(
     gate_class, _reason = classify_sql(sql)
     if gate_class is GateClass.BLOCKED:
         record_decision(system_id, sql, origin=origin, connection_name=connection_name,
-                        classification=gate_class, decision="bloqueada", run_id=run_id, author_id=author_id)
+                        classification=gate_class, decision="bloqueada", run_id=run_id,
+                        author_id=author_id, author_email=author_email)
     elif gate_class is GateClass.NORMAL:
         record_decision(system_id, sql, origin=origin, connection_name=connection_name,
-                        classification=gate_class, decision="aprovada", run_id=run_id, author_id=author_id)
+                        classification=gate_class, decision="aprovada", run_id=run_id,
+                        author_id=author_id, author_email=author_email)
     return gate_class
 
 
@@ -64,6 +67,7 @@ def record_decision(
     decision: str,
     run_id: str | None = None,
     author_id: str | None = None,
+    author_email: str | None = None,
 ) -> GateDecision:
     with session_scope() as s:
         row = GateDecision(
@@ -75,6 +79,7 @@ def record_decision(
             classification=classification.value,
             decision=decision,
             author_id=author_id,
+            author_email=author_email or "",
         )
         s.add(row)
         s.flush()
@@ -102,12 +107,11 @@ def extract_sql(command: str) -> str | None:
 def list_decisions(system_id: str, limit: int = 50) -> list[dict]:
     with session_scope() as s:
         rows = s.execute(
-            select(GateDecision, User.email)
-            .outerjoin(User, User.id == GateDecision.author_id)
+            select(GateDecision)
             .where(GateDecision.system_id == system_id)
             .order_by(GateDecision.created_at.desc())
             .limit(limit)
-        ).all()
+        ).scalars().all()
         return [
             {
                 "id": r.id,
@@ -117,8 +121,8 @@ def list_decisions(system_id: str, limit: int = 50) -> list[dict]:
                 "classification": r.classification,
                 "decision": r.decision,
                 "author_id": r.author_id,
-                "author_email": author_email,
+                "author_email": r.author_email,
                 "created_at": r.created_at.isoformat(),
             }
-            for r, author_email in rows
+            for r in rows
         ]

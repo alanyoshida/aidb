@@ -2,6 +2,7 @@
 
 from nicegui import ui
 
+from ..services import catalog
 from ..services.systems import InvalidSlug, NotPermitted, SlugTaken, create_system
 from .common import get_current_user, render_header
 
@@ -22,7 +23,8 @@ def register() -> None:
         with ui.card().classes("w-96"):
             name = ui.input("Nome").classes("w-full").props("data-testid=system-name")
             slug = ui.input("Slug (kebab-case)").classes("w-full").props("data-testid=system-slug")
-            provider = ui.select(["glm", "anthropic", "openai"], value="glm", label="Provedor de LLM").classes("w-full").props("data-testid=system-provider")
+            provider_ids = [p["id"] for p in catalog.list_providers()] or ["glm"]
+            provider = ui.select(provider_ids, value="glm", label="Provedor de LLM").classes("w-full").props("data-testid=system-provider")
             feedback = ui.label("").classes("text-sm")
 
             def create() -> None:

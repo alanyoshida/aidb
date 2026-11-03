@@ -4,12 +4,28 @@ from nicegui import ui
 
 from ..models import System
 from ..rbac import can_access_system, can_manage_system
-from ..services import connections
-from ..services.systems import get_system
+from ..services import catalog, connections
+from ..services.systems import get_system, rename_system, set_provider
 from .common import get_current_user, render_header
 
 _STATUS_LABEL = {"provisioning": "provisionando", "active": "ativo", "error": "erro", "archived": "arquivado"}
 _STATUS_COLOR = {"active": "positive", "provisioning": "warning", "error": "negative"}
+
+
+def _catalog_provider_ids() -> list[str]:
+    ids = [p["id"] for p in catalog.list_providers()]
+    return ids or ["glm"]
+
+
+def _catalog_models(provider_id: str, current: str | None = None) -> list[str]:
+    provider = catalog.get_provider(provider_id)
+    models = list(provider["models"]) if provider else []
+    if current and current in models:
+        models.remove(current)
+        models.insert(0, current)
+    elif current:
+        models.insert(0, current)
+    return models
 
 
 def register() -> None:
@@ -28,13 +44,14 @@ def register() -> None:
         with ui.row().classes("mx-4 mt-4 items-center gap-1 text-sm"):
             ui.link("Sistemas", "/").classes("text-gray-500")
             ui.icon("chevron_right").classes("text-gray-500 text-sm")
-            ui.label(system.name).classes("text-gray-300")
-        ui.label(system.name).classes("text-2xl font-bold mx-4 mt-1")
+            breadcrumb_label = ui.label(system.name).classes("text-gray-300")
+        name_label = ui.label(system.name).classes("text-2xl font-bold mx-4 mt-1")
+        provider_label = None
         with ui.row().classes("mx-4 items-center"):
             ui.label(f"/{system.slug}").classes("text-gray-500")
             status_badge = ui.badge(_STATUS_LABEL.get(system.status.value, system.status.value))
             if can_manage_system(user, system):
-                ui.label(f"provedor: {system.provider} / modelo: {system.model}").classes("text-sm text-gray-600")
+                provider_label = ui.label(f"provedor: {system.provider} / modelo: {system.model}").classes("text-sm text-gray-600")
 
         open_btn = ui.button("Abrir app", icon="open_in_new", on_click=lambda: ui.navigate.to(f"/entry/{system.slug}", new_tab=True)).props("data-testid=open-app")
         open_btn.set_visibility(system.status.value == "active")
@@ -54,31 +71,11 @@ def register() -> None:
         if not can_manage_system(user, system):
             return
 
-        # ciclo de vida: arquivar (dono) e excluir definitivamente (admin, arquivado)
-        with ui.row().classes("mx-4 mt-2"):
-
-            def archive() -> None:
-                from ..provisioning import archive_system
-
-                archive_system(system)
-                ui.navigate.to("/")
-
-            ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
-
-            if user.is_admin and system.status.value == "archived":
-
-                def delete() -> None:
-                    from ..provisioning import delete_system
-
-                    delete_system(system)
-                    ui.navigate.to("/")
-
-                ui.button("Excluir definitivamente", icon="delete_forever", on_click=delete).props("color=negative data-testid=delete-system")
-
         with ui.tabs().classes("mx-4 w-full") as tabs:
             chat_tab = ui.tab("chat", label="Chat", icon="chat")
             conn_tab = ui.tab("conn", label="Conexões", icon="storage")
             ckpt_tab = ui.tab("ckpt", label="Checkpoints", icon="history")
+            cfg_tab = ui.tab("cfg", label="Configurações", icon="settings")
             audit_tab = ui.tab("audit", label="Auditoria", icon="shield")
 
         with ui.tab_panels(tabs, value=chat_tab).classes("mx-4 w-full"):
@@ -87,16 +84,99 @@ def register() -> None:
 
                 render_chat(system, user)
             with ui.tab_panel(conn_tab):
-                _render_connections(system)
+                _render_connections(system, user)
             with ui.tab_panel(ckpt_tab):
-                _render_checkpoints(system)
+                _render_checkpoints(system, user)
+            with ui.tab_panel(cfg_tab):
+                _render_configuration(system, user, name_label, breadcrumb_label, provider_label)
             with ui.tab_panel(audit_tab):
                 _render_gate_history(system)
+                _render_management_audit(system)
                 _render_usage(system)
 
 
-def _render_connections(system) -> None:
-    """Conexões de banco: lista + formulário de nova conexão (spec db-connections)."""
+def _render_configuration(system, user, name_label, breadcrumb_label, provider_label) -> None:
+    """Identidade (nome, provedor/modelo) e ciclo de vida do sistema (spec system-management)."""
+    with ui.row().classes("gap-2"):
+        ui.button("Renomear sistema", icon="edit", on_click=lambda: open_rename_dialog()).props("dense outline data-testid=rename-system")
+        ui.button("Editar provedor/modelo", icon="bolt", on_click=lambda: open_provider_dialog()).props("dense outline data-testid=edit-provider")
+
+    with ui.dialog() as rename_dialog, ui.card().classes("w-96"):
+        ui.label("Renomear sistema").classes("font-semibold text-lg")
+        rename_input = ui.input("Nome").classes("w-full").props("data-testid=rename-system-name")
+
+        def do_rename() -> None:
+            rename_system(system, rename_input.value, user)
+            new_name = rename_input.value.strip()
+            name_label.set_text(new_name)
+            breadcrumb_label.set_text(new_name)
+            rename_dialog.close()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=rename_dialog.close).props("flat")
+            ui.button("Salvar", icon="save", on_click=do_rename).props("data-testid=confirm-rename-system")
+
+    def open_rename_dialog() -> None:
+        rename_input.set_value(system.name)
+        rename_dialog.open()
+
+    with ui.dialog() as provider_dialog, ui.card().classes("w-96"):
+        ui.label("Provedor e modelo").classes("font-semibold text-lg")
+        provider_select = ui.select(_catalog_provider_ids(), value=system.provider, label="Provedor").classes("w-full").props("data-testid=edit-provider-select")
+        model_select = ui.select(_catalog_models(system.provider, system.model), value=system.model, label="Modelo").classes("w-full").props("data-testid=edit-model-select")
+
+        def on_provider_change() -> None:
+            model_select.set_options(_catalog_models(provider_select.value), value=None)
+
+        provider_select.on_value_change(on_provider_change)
+        provider_feedback = ui.label("").classes("text-sm")
+
+        def do_save_provider() -> None:
+            if not model_select.value:
+                provider_feedback.classes(remove="text-green-600", add="text-red-600").set_text(
+                    "escolha um modelo (se a lista estiver vazia, cadastre/descubra modelos em Administração → Provedores de LLM)"
+                )
+                return
+            set_provider(system.id, provider_select.value, model_select.value, actor=user)
+            if provider_label is not None:
+                provider_label.set_text(f"provedor: {provider_select.value} / modelo: {model_select.value}")
+            provider_dialog.close()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=provider_dialog.close).props("flat")
+            ui.button("Salvar", icon="save", on_click=do_save_provider).props("data-testid=confirm-provider")
+
+    def open_provider_dialog() -> None:
+        provider_select.set_value(system.provider)
+        model_select.set_options(_catalog_models(system.provider, system.model), value=system.model)
+        provider_feedback.set_text("")
+        provider_dialog.open()
+
+    # ciclo de vida: arquivar (dono) e excluir definitivamente (admin, arquivado)
+    with ui.row().classes("mt-4"):
+
+        def archive() -> None:
+            from ..provisioning import archive_system
+
+            archive_system(system)
+            ui.navigate.to("/")
+
+        ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
+
+        if user.is_admin and system.status.value == "archived":
+
+            def delete() -> None:
+                from ..provisioning import delete_system
+
+                delete_system(system)
+                ui.navigate.to("/")
+
+            ui.button("Excluir definitivamente", icon="delete_forever", on_click=delete).props("color=negative data-testid=delete-system")
+
+
+def _render_connections(system, user) -> None:
+    """Conexões de banco: lista + criar/editar/remover (spec db-connections)."""
+    manage = can_manage_system(user, system)
     ui.label("Bancos de dados que o agente e a app podem acessar").classes("text-sm text-gray-500 mb-2")
 
     with ui.dialog() as conn_dialog, ui.card().classes("w-96"):
@@ -113,6 +193,7 @@ def _render_connections(system) -> None:
             try:
                 connections.register_connection(
                     system, cname.value, chost.value, int(cport.value or 5432), cdb.value, cuser.value, cpass.value,
+                    actor=user,
                 )
             except connections.ConnectionFailed as exc:
                 feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
@@ -135,6 +216,71 @@ def _render_connections(system) -> None:
         feedback.set_text("")
         conn_dialog.open()
 
+    edit_target: dict = {"id": None}
+
+    with ui.dialog() as edit_dialog, ui.card().classes("w-96"):
+        ui.label("Editar conexão PostgreSQL").classes("font-semibold text-lg")
+        ename = ui.input("Nome").classes("w-full").props("data-testid=edit-conn-name")
+        ehost = ui.input("Host").classes("w-full").props("data-testid=edit-conn-host")
+        eport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=edit-conn-port")
+        edb = ui.input("Banco").classes("w-full").props("data-testid=edit-conn-database")
+        euser = ui.input("Usuário").classes("w-full").props("data-testid=edit-conn-user")
+        epass = ui.input("Nova senha (opcional)", password=True).classes("w-full").props("data-testid=edit-conn-password")
+        edit_feedback = ui.label("").classes("text-sm")
+
+        def save_edit() -> None:
+            try:
+                connections.update_connection(
+                    system, edit_target["id"], ename.value, ehost.value, int(eport.value or 5432),
+                    edb.value, euser.value, password=epass.value or None, actor=user,
+                )
+            except connections.ConnectionFailed as exc:
+                edit_feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
+                return
+            except connections.NameTaken:
+                edit_feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"conexão '{ename.value}' já existe")
+                return
+            edit_feedback.classes(remove="text-red-600", add="text-green-600").set_text("conexão atualizada")
+            refresh_conns()
+            edit_dialog.close()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=edit_dialog.close).props("flat")
+            ui.button("Testar e salvar", icon="check_circle", on_click=save_edit).props("data-testid=save-connection-edit")
+
+    def open_edit_dialog(c: dict) -> None:
+        edit_target["id"] = c["id"]
+        ename.set_value(c["name"])
+        ehost.set_value(c["host"])
+        eport.set_value(c["port"])
+        edb.set_value(c["database"])
+        euser.set_value(c["username"])
+        epass.set_value("")
+        edit_feedback.set_text("")
+        edit_dialog.open()
+
+    remove_target: dict = {"id": None}
+
+    with ui.dialog() as remove_dialog, ui.card().classes("w-96"):
+        ui.label("Remover conexão").classes("font-semibold text-lg")
+        remove_message = ui.label("").classes("text-sm text-gray-600")
+
+        def confirm_remove() -> None:
+            connections.remove_connection(system, remove_target["id"], actor=user)
+            remove_dialog.close()
+            refresh_conns()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=remove_dialog.close).props("flat")
+            ui.button("Remover", icon="delete", on_click=confirm_remove).props("color=negative data-testid=confirm-remove-connection")
+
+    def ask_remove(c: dict) -> None:
+        remove_target["id"] = c["id"]
+        remove_message.set_text(
+            f"Remover a conexão '{c['name']}'? O agente e a app deixarão de acessar este banco."
+        )
+        remove_dialog.open()
+
     ui.button("Nova conexão", icon="add", on_click=open_conn_dialog).classes("mb-3")
 
     conns_box = ui.column().classes("w-full max-w-3xl")
@@ -146,19 +292,43 @@ def _render_connections(system) -> None:
             if not conns:
                 ui.label("Nenhuma conexão cadastrada ainda.").classes("text-gray-500 text-sm")
             for c in conns:
-                with ui.card().classes("w-full"):
+                with ui.card().classes("w-full").props(f"data-testid=conn-card:{c['name']}"):
                     ui.label(f"{c['name']}").classes("font-semibold")
                     ui.label(f"{c['kind']} · {c['username']}@{c['host']}:{c['port']}/{c['database']}").classes("text-sm text-gray-600")
+                    if manage:
+                        with ui.row().classes("gap-2"):
+                            ui.button("Editar", icon="edit", on_click=lambda c=c: open_edit_dialog(c)).props("dense outline data-testid=conn-edit")
+                            ui.button("Remover", icon="delete", on_click=lambda c=c: ask_remove(c)).props("dense outline color=negative data-testid=conn-remove")
 
     refresh_conns()
 
 
-def _render_checkpoints(system) -> None:
+def _render_checkpoints(system, user) -> None:
     from .. import checkpoints as cp_service
 
-    ui.label("Pontos salvos do código da app — restaure a qualquer um deles").classes("text-sm text-gray-500 mb-2")
-    ui.button("Criar checkpoint agora", icon="add", on_click=lambda: (cp_service.record_checkpoint(system, None, "checkpoint manual"), refresh_cps())).props("outline dense")
+    ui.label("Pontos salvos do código da app — restaure ou exclua").classes("text-sm text-gray-500 mb-2")
+    ui.button("Criar checkpoint agora", icon="add", on_click=lambda: (cp_service.record_checkpoint(system, None, "checkpoint manual", author=user), refresh_cps())).props("outline dense")
     timeline_container = ui.column().classes("w-full max-w-3xl mt-2")
+
+    delete_target: dict = {"id": None}
+
+    with ui.dialog() as delete_dialog, ui.card().classes("w-96"):
+        ui.label("Excluir checkpoint").classes("font-semibold text-lg")
+        delete_message = ui.label("").classes("text-sm text-gray-600")
+
+        def confirm_delete() -> None:
+            cp_service.delete_checkpoint(system, delete_target["id"], actor=user)
+            delete_dialog.close()
+            refresh_cps()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=delete_dialog.close).props("flat")
+            ui.button("Excluir", icon="delete", on_click=confirm_delete).props("color=negative data-testid=confirm-checkpoint-delete")
+
+    def ask_delete(cp: dict) -> None:
+        delete_target["id"] = cp["id"]
+        delete_message.set_text(f"Excluir o checkpoint {cp['git_sha'][:8]}?")
+        delete_dialog.open()
 
     def refresh_cps() -> None:
         timeline_container.clear()
@@ -179,17 +349,45 @@ def _render_checkpoints(system) -> None:
 
                     with ui.timeline_entry(title=cp["git_sha"][:8], icon="commit"):
                         ui.label(cp["message"][:140]).classes("text-sm")
-                        ui.button("Restaurar", icon="restore", on_click=do_rollback).props("dense outline")
+                        with ui.row().classes("gap-2"):
+                            ui.button("Restaurar", icon="restore", on_click=do_rollback).props("dense outline")
+                            ui.button("Excluir", icon="delete", on_click=lambda cp=cp: ask_delete(cp)).props("dense outline color=negative data-testid=checkpoint-delete")
 
     refresh_cps()
     ui.timer(2.0, refresh_cps)
+
+
+def _render_management_audit(system) -> None:
+    """Ações de gestão deste sistema (capability management-audit)."""
+    from ..services import audit
+
+    ui.label("Ações de gestão").classes("text-lg font-semibold mt-6")
+    ui.label("Alterações de conexões, provedor, nome e checkpoints deste sistema").classes("text-sm text-gray-500 mb-2")
+    box = ui.column().classes("w-full max-w-3xl gap-1")
+
+    def refresh() -> None:
+        entries = audit.list_by_system(system.id, limit=30)
+        box.clear()
+        with box:
+            if not entries:
+                ui.label("Nenhuma ação de gestão ainda.").classes("text-gray-500 text-sm")
+            for e in entries:
+                with ui.row().classes("w-full items-center gap-2 text-sm"):
+                    ui.icon("history").classes("text-gray-500")
+                    ui.label(e["action"]).classes("font-semibold")
+                    ui.label(f"{e['resource_type']} {e['resource_id'] or ''}").classes("text-gray-600")
+                    ui.label(e["actor_email"] or "sistema").classes("text-xs text-gray-500")
+                    ui.label(e["created_at"][:19].replace("T", " ")).classes("text-xs text-gray-400")
+
+    refresh()
+    ui.timer(2.0, refresh)
 
 
 def _render_usage(system) -> None:
     from sqlalchemy import select
 
     from ..db import session_scope
-    from ..models import AgentRun, TokenUsage, User
+    from ..models import AgentRun, TokenUsage
 
     ui.label("Uso de tokens").classes("text-lg font-semibold mt-6")
     ui.label("Consumo de LLM agrupado por execução, para acompanhar custo").classes("text-sm text-gray-500 mb-2")
@@ -199,21 +397,20 @@ def _render_usage(system) -> None:
     def refresh_usage() -> None:
         with session_scope() as s:
             rows = s.execute(
-                select(TokenUsage, User.email, AgentRun.prompt)
-                .outerjoin(User, User.id == TokenUsage.user_id)
+                select(TokenUsage, AgentRun.prompt)
                 .outerjoin(AgentRun, AgentRun.id == TokenUsage.run_id)
                 .where(TokenUsage.system_id == system.id)
                 .order_by(TokenUsage.created_at.desc())
             ).all()
-        total_in = sum(usage.input_tokens for usage, _, _ in rows)
-        total_out = sum(usage.output_tokens for usage, _, _ in rows)
+        total_in = sum(usage.input_tokens for usage, _ in rows)
+        total_out = sum(usage.output_tokens for usage, _ in rows)
         total_label.set_text(f"total: {total_in:,} entrada / {total_out:,} saída")
 
         execs: dict[str, dict] = {}
-        for usage, email, prompt in rows:
+        for usage, prompt in rows:
             group = execs.setdefault(
                 usage.run_id,
-                {"provider": usage.provider, "model": usage.model, "email": email, "prompt": prompt, "tin": 0, "tout": 0},
+                {"provider": usage.provider, "model": usage.model, "email": usage.user_email, "prompt": prompt, "tin": 0, "tout": 0},
             )
             group["tin"] += usage.input_tokens
             group["tout"] += usage.output_tokens

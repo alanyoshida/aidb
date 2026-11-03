@@ -77,6 +77,25 @@ def test_editor_cria_sistema_e_cadastra_duas_conexoes(page, suffix):
     page.locator('[data-testid=system-slug]').fill(slug)
     page.locator('[data-testid=create-system]').click()
 
+    # renomeia o sistema e confere no cabeçalho (ações ficam na aba Configurações)
+    page.get_by_role("tab", name="Chat").wait_for(timeout=30_000)
+    page.get_by_role("tab", name="Configurações").click()
+    page.locator('[data-testid=rename-system]').click()
+    page.locator('[data-testid=rename-system-name]').fill("Sistema E2E Renomeado")
+    page.locator('[data-testid=confirm-rename-system]').click()
+    page.get_by_text("Sistema E2E Renomeado").first.wait_for(timeout=30_000)
+
+    # troca provedor/modelo e confere no cabeçalho
+    page.locator('[data-testid=edit-provider]').click()
+    page.locator('[data-testid=edit-provider-select]').click()
+    page.locator('.q-menu:visible').get_by_text("anthropic", exact=True).click()
+    page.locator('.q-menu:visible').wait_for(state="hidden", timeout=5_000)
+    page.locator('[data-testid=edit-model-select]').click()
+    page.locator('.q-menu:visible').get_by_text("claude-3-5-sonnet-latest", exact=True).click()
+    page.locator('.q-menu:visible').wait_for(state="hidden", timeout=5_000)
+    page.locator('[data-testid=confirm-provider]').click()
+    page.get_by_text("provedor: anthropic").wait_for(timeout=30_000)
+
     # detalhe do sistema carrega; conexões ficam na própria aba
     page.get_by_role("tab", name="Conexões").click()
 
@@ -92,9 +111,24 @@ def test_editor_cria_sistema_e_cadastra_duas_conexoes(page, suffix):
     _fill_connection(page, "fiscal", "appaiforge2", "appaiforge")
     page.get_by_text("appaiforge@postgres:5432/appaiforge2").wait_for(timeout=30_000)
 
+    # edita os metadados da conexão 'vendas'
+    page.locator('[data-testid="conn-card:vendas"]').get_by_role("button", name="Editar").click()
+    page.locator('[data-testid=edit-conn-name]').fill("vendas-editada")
+    page.locator('[data-testid=save-connection-edit]').click()
+    page.get_by_text("vendas-editada").first.wait_for(timeout=30_000)
+
+    # remove a conexão 'fiscal' com confirmação
+    page.locator('[data-testid="conn-card:fiscal"]').get_by_role("button", name="Remover").click()
+    page.locator('[data-testid=confirm-remove-connection]').click()
+    page.locator('[data-testid="conn-card:fiscal"]').wait_for(state="detached", timeout=30_000)
+
     # nenhuma senha aparece na tela
     content = page.content()
     assert "senha-torta" not in content
+
+    # o novo nome reflete na lista de sistemas
+    page.goto("/")
+    page.get_by_text("Sistema E2E Renomeado").first.wait_for(timeout=30_000)
 
 
 def test_slug_duplicado_mostra_feedback(page, suffix):
@@ -114,3 +148,28 @@ def test_slug_duplicado_mostra_feedback(page, suffix):
     page.locator('[data-testid=system-slug]').fill(slug)
     page.locator('[data-testid=create-system]').click()
     page.get_by_text("já existe").wait_for(timeout=30_000)
+
+
+def test_provedor_custom_disponivel_na_criacao(page, suffix):
+    provider = f"prov-{suffix}"
+
+    # admin cadastra um provedor custom no catálogo
+    _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    page.get_by_role("button", name="Administração").click()
+    page.get_by_role("tab", name="Provedores de LLM").click()
+    page.locator('[data-testid=provider-new]').click()
+    page.locator('[data-testid=provider-id]').fill(provider)
+    page.locator('[data-testid=provider-label]').fill("Provedor Custom")
+    page.locator('[data-testid=provider-base-url]').fill("http://127.0.0.1:9/v1")
+    page.locator('[data-testid=confirm-provider-create]').click()
+    page.locator(f'[data-testid="key-card:{provider}"]').wait_for(timeout=30_000)
+    _logout(page)
+
+    # o editor vê o provedor do catálogo no select de criação de sistema
+    editor_email = f"cat-editor-{suffix}@e2e.local"
+    _create_editor_via_admin(page, editor_email)
+    _login(page, editor_email, "pw-editor")
+    page.get_by_role("button", name="Novo sistema").click()
+    page.locator('[data-testid=system-provider]').click()
+    page.locator(".q-menu:visible").get_by_text(provider, exact=True).wait_for(timeout=30_000)
+    _logout(page)

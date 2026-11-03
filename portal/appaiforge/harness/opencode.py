@@ -12,12 +12,15 @@ de base_url (injetado) devolve o endereço do container do sistema.
 """
 
 import json
+import logging
 import threading
 from typing import Callable
 
 import httpx
 
 from .base import HarnessPort, RunEvent
+
+log = logging.getLogger(__name__)
 
 # portal provider -> providerID do catálogo (models.dev) e env de chave
 PROVIDER_MAP = {
@@ -58,16 +61,22 @@ class OpencodeHarness(HarnessPort):
             pass
 
     def reply_gate(self, system: dict, session_id: str, request_id: str, approve: bool) -> None:
-        """Responde um permission.asked: approve -> 'once'; recusa -> 'reject'."""
+        """Responde um permission.asked: approve -> 'once'; recusa -> 'reject'.
+
+        opencode 1.19.x: POST /session/{sessionID}/permissions/{permissionID}
+        com corpo {"response": ...}. (A rota antiga .../permission/{id}/reply
+        não aplica a resposta e deixava a execução presa.)
+        """
         try:
             base = self.resolve_base_url(system)
-            httpx.post(
-                f"{base}/session/{session_id}/permission/{request_id}/reply",
+            resp = httpx.post(
+                f"{base}/session/{session_id}/permissions/{request_id}",
                 json={"response": "once" if approve else "reject"},
                 timeout=self.timeout,
             )
-        except httpx.HTTPError:
-            pass
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("falha ao responder permissão do gate (%s): %s", request_id, exc)
 
     def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
         on_event(RunEvent("run_started", meta={"session_id": session_id}))

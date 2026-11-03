@@ -40,18 +40,25 @@ _GATE_COLOR_PROPS = {
 _QUIET_KINDS = {"tool_output", "usage"}  # detalhe técnico: fora do chat
                                          # (tokens ficam no painel "Uso de tokens")
 
+# Modo debug: os comandos executados ficam no DOM mas ocultos enquanto o debug
+# está desligado; alternar o switch é instantâneo (não precisa re-renderizar).
+_DEBUG_CSS = ".af-hide-commands .af-command { display: none !important; }"
+
 
 def render_chat(system: System, user: User) -> None:
     queue = get_queue()
+    ui.add_css(_DEBUG_CSS)
 
     if not can_chat(user):
         ui.label("Somente editores conversam com o agente.").classes("text-gray-500")
         return
 
     with ui.scroll_area().classes("w-full h-96 border rounded"):
-        log_box = ui.column().classes("w-full gap-1 p-2")
+        log_box = ui.column().classes("w-full gap-1 p-2 af-hide-commands")
         approval_box = ui.column().classes("w-full")
     state_label = ui.label("").classes("text-sm text-gray-500")
+    debug = {"on": False}  # modo debug desativado por padrão: comandos só aparecem com ele ligado
+    debug_switch = ui.switch("Debug (mostrar comandos executados)").props("data-testid=chat-debug")
     input_row = ui.row().classes("w-full items-center")
     with input_row:
         prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow").props("data-testid=chat-input")
@@ -140,19 +147,29 @@ def render_chat(system: System, user: User) -> None:
         elif event.kind == "command_run":
             text = f"comando: {(event.meta.get('command') or event.text or 'comando')[:160]}"
         elif event.kind == "file_edited":
-            text = f"arquivo alterado: {event.text}"
+            files = event.meta.get("files") or ([event.meta["file"]] if event.meta.get("file") else [])
+            names = ", ".join(f for f in files if f)
+            detail = names or (event.text or "").strip()
+            text = f"arquivo alterado: {detail}" if detail else "arquivo alterado"
         else:
             text = event.text or event.kind
 
         with box:
-            with ui.row().classes("w-full items-center gap-1"):
+            row_classes = "w-full items-center gap-1" + (" af-command" if event.kind == "command_run" else "")
+            with ui.row().classes(row_classes):
                 icon = _EVENT_ICON.get(event.kind)
                 if icon:
                     ui.icon(icon).classes("text-gray-500")
-                msg = ui.chat_message(text=text, name="Agente", sent=False)
-                color_props = _GATE_COLOR_PROPS.get(event.kind)
-                if color_props:
-                    msg.props(color_props)
+                if event.kind == "message":
+                    # resposta do agente: markdown formatado (sanitizado pelo NiceGUI)
+                    msg = ui.chat_message(name="Agente", sent=False)
+                    with msg:
+                        ui.markdown(event.text or "")
+                else:
+                    msg = ui.chat_message(text=text, name="Agente", sent=False)
+                    color_props = _GATE_COLOR_PROPS.get(event.kind)
+                    if color_props:
+                        msg.props(color_props)
 
     def refresh_state() -> None:
         state = queue.system_state(system.id)
@@ -207,7 +224,7 @@ def render_chat(system: System, user: User) -> None:
 
     # runs anteriores (histórico persistido, sempre presente e vivo)
     with ui.expansion("Execuções anteriores", icon="history").classes("w-full") as history_exp:
-        history_rows = ui.column().classes("w-full")
+        history_rows = ui.column().classes("w-full af-hide-commands")
 
     def load_history() -> None:
         from ..db import session_scope
@@ -249,6 +266,17 @@ def render_chat(system: System, user: User) -> None:
         box = ui.column().classes("w-full gap-1 pl-4")
         for evt in events:
             render_event(box, evt)
+
+    def on_debug_change() -> None:
+        # alterna a classe que oculta os comandos (instantâneo, sem re-render)
+        debug["on"] = bool(debug_switch.value)
+        for el in (log_box, history_rows):
+            if debug["on"]:
+                el.classes(remove="af-hide-commands")
+            else:
+                el.classes(add="af-hide-commands")
+
+    debug_switch.on_value_change(on_debug_change)
 
     load_history()
     ui.timer(2.0, load_history)

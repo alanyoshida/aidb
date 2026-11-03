@@ -4,6 +4,26 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Modelos conhecidos por provedor de LLM; o primeiro é o padrão (usado no select da UI).
+KNOWN_MODELS: dict[str, list[str]] = {
+    "glm": ["glm-4.6"],
+    "anthropic": ["claude-3-5-sonnet-latest", "claude-3-5-haiku-latest"],
+    "openai": ["gpt-4o", "gpt-4o-mini"],
+}
+
+PROVIDERS: list[str] = list(KNOWN_MODELS)
+
+
+def models_for(provider: str, current: str | None = None) -> list[str]:
+    """Modelos conhecidos do provedor; o modelo atual aparece primeiro quando conhecido."""
+    models = list(KNOWN_MODELS.get(provider, []))
+    if not models:
+        return [current] if current else []
+    if current and current in models:
+        models.remove(current)
+        models.insert(0, current)
+    return models
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APPAIFORGE_", env_file=".env", extra="ignore")

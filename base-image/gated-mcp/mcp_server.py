@@ -1,4 +1,4 @@
-"""MCP server de leitura do AppAIForge (D2 refinado — spec destructive-gate).
+"""MCP server de leitura do AIDB (D2 refinado — spec destructive-gate).
 
 Substitui o server-postgres genérico para as conexões dos sistemas: expõe APENAS
 ferramentas de leitura (list_tables, describe_table, read_query) e recusa escritas
