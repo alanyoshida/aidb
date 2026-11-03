@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     workspaces_dir: str = "/workspaces"
     # Mesma raiz vista pelo host — usada para bind-mount nos containers de sistema.
     host_workspaces_dir: str = "/var/lib/appaiforge/workspaces"
+    # Raiz dos configs de agente visível ao portal (fora do workspace, fora do alcance do agente).
+    configs_dir: str = "/configs"
+    # Mesma raiz vista pelo host — usada para bind-mount (read-only) nos containers de sistema.
+    host_config_dir: str = "/var/lib/appaiforge/configs"
 
     # Traefik file provider: diretório compartilhado com o Traefik onde o portal
     # escreve a configuração dinâmica das rotas /apps/{slug}.

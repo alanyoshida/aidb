@@ -73,7 +73,7 @@ def _env_name(name: str) -> str:
     return re.sub(r"[^A-Z0-9]", "_", name.upper())
 
 
-def write_opencode_config(system: System, workspace_dir: str) -> None:
+def write_opencode_config(system: System, config_dir: str) -> None:
     """Gera opencode.json do sistema: provedor/modelo + MCP por conexão."""
     from .services import catalog
 
@@ -136,8 +136,8 @@ def write_opencode_config(system: System, workspace_dir: str) -> None:
             base_url = get_settings().glm_base_url
         if base_url:
             config["provider"] = {provider_id: {"options": {"baseURL": base_url}}}
-    os.makedirs(workspace_dir, exist_ok=True)
-    with open(os.path.join(workspace_dir, "opencode.json"), "w") as f:
+    os.makedirs(config_dir, exist_ok=True)
+    with open(os.path.join(config_dir, "opencode.json"), "w") as f:
         json.dump(config, f, indent=2)
 
 
@@ -175,7 +175,10 @@ def provision_system(system: System) -> str:
     host_dir = os.path.join(settings.host_workspaces_dir, system.slug)
     portal_dir = os.path.join(settings.workspaces_dir, system.slug)
     os.makedirs(portal_dir, exist_ok=True)
-    write_opencode_config(system, portal_dir)
+
+    host_config_slug = os.path.join(settings.host_config_dir, system.slug)
+    portal_config_dir = os.path.join(settings.configs_dir, system.slug)
+    write_opencode_config(system, portal_config_dir)
 
     env = {
         "APP_IDENTITY_SECRET": system.identity_secret,
@@ -198,7 +201,10 @@ def provision_system(system: System) -> str:
         "hostname": container_name,
         "network": settings.docker_network,
         "environment": env,
-        "volumes": {host_dir: {"bind": "/workspace", "mode": "rw"}},
+        "volumes": {
+            host_dir: {"bind": "/workspace", "mode": "rw"},
+            host_config_slug: {"bind": "/opencode-config", "mode": "ro"},
+        },
         "labels": {
             "appaiforge.system_id": system.id,
             "appaiforge.slug": system.slug,

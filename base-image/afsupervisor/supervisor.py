@@ -138,7 +138,7 @@ class Supervisor:
         self._signature: tuple | None = dir_signature(self.app_dir) if app_entry_exists(self.app_dir) else None
 
     def start_harness(self) -> None:
-        self.harness_pid = self.runner.spawn(HARNESS_CMD)
+        self.harness_pid = self.runner.spawn(HARNESS_CMD, cwd="/opencode-config")
 
     def app_python(self) -> str:
         """Python da app: venv criado pelo agente (uv) quando existir, senão o do sistema."""

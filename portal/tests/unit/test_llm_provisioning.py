@@ -110,3 +110,17 @@ def test_nome_tool_sem_descricao_sem_read_only(editor, tmp_path, target):
     assert mcp_keys == ["simples"]
     cmd = config["mcp"]["simples"]["command"]
     assert cmd[-1] == "read_write"
+
+
+def test_write_opencode_config_grava_em_config_dir_nao_no_workspace(editor, tmp_path):
+    import os
+
+    config_dir = tmp_path / "config"
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+
+    system = create_system(editor, "ISO", "prov-iso")
+    write_opencode_config(system, str(config_dir))
+
+    assert os.path.isfile(config_dir / "opencode.json"), "opencode.json deve estar em config_dir"
+    assert not os.path.exists(workspace_dir / "opencode.json"), "opencode.json NÃO deve estar no workspace_dir"
