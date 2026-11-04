@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Registra como as conexões de banco de dados são cadastradas por sistema, validadas, protegidas e entregues ao agente (via MCP) e à app gerada (via credencial de ambiente). No MVP o único tipo suportado é PostgreSQL.
+Registra como as conexões de banco de dados são cadastradas por sistema, validadas, protegidas e entregues ao agente (via MCP) e à app gerada (via credencial de ambiente). Os tipos suportados são PostgreSQL, MySQL e BigQuery.
 
 ## Requirements
 
@@ -31,6 +31,7 @@ O portal SHALL testar a conectividade e as credenciais antes de confirmar o cada
 #### Scenario: Senha não aparece na mensagem de erro
 - **WHEN** o driver inclui a senha no texto do erro que motivou a falha
 - **THEN** o portal remove a senha antes de exibir a mensagem ao usuário
+
 ### Requirement: Credenciais protegidas em repouso e na interface
 O portal SHALL armazenar senhas de conexões cifradas e nunca exibi-las de volta, nem registrá-las em logs ou eventos do agente.
 
@@ -65,11 +66,15 @@ O portal SHALL disponibilizar conexões MySQL ao agente com as mesmas ferramenta
 - **THEN** a operação é recusada pelo gate, da mesma forma que em conexões PostgreSQL
 
 ### Requirement: App gerada recebe credenciais de banco conforme tipo
-O portal SHALL gerar a variável de ambiente `DATABASE_URL_<NOME>` com o scheme correto para o tipo da conexão (`postgresql://` para PostgreSQL, `mysql://` para MySQL).
+O portal SHALL gerar a variável de ambiente `DATABASE_URL_<NOME>` com o scheme correto para o tipo da conexão (`postgresql://` para PostgreSQL, `mysql://` para MySQL, `bigquery://` com `credentials_base64` para BigQuery).
 
 #### Scenario: App recebe URL com scheme mysql
 - **WHEN** a app gerada inicia no container de um sistema com conexão MySQL
 - **THEN** recebe `DATABASE_URL_<NOME>=mysql://...` nas variáveis de ambiente
+
+#### Scenario: App recebe URL com scheme bigquery
+- **WHEN** a app gerada inicia no container de um sistema com conexão BigQuery
+- **THEN** recebe `DATABASE_URL_<NOME>=bigquery://...` com as credenciais da Service Account codificadas em `credentials_base64`
 
 ### Requirement: Remoção de conexão
 O portal SHALL permitir que o dono remova uma conexão do sistema, cessando imediatamente seu provisionamento ao agente e à app.

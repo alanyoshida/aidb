@@ -1,13 +1,13 @@
 # AIDB
 
-Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você cadastra um sistema, conecta um banco PostgreSQL, conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
+Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você cadastra um sistema, conecta um banco (PostgreSQL, MySQL ou BigQuery), conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
 
-- Decisões de arquitetura: [`docs/adr/`](docs/adr/README.md) (16 ADRs, formato MADR)
-- Especificações: `openspec/specs/` (change fundadora: `openspec/changes/appai-forge-mvp`)
+- Decisões de arquitetura: [`docs/adr/`](docs/adr/README.md) (17 ADRs, formato MADR)
+- Especificações: `openspec/specs/` (13 capacidades); o histórico de mudanças fica em `openspec/changes/archive/` (change fundadora: `2026-11-02-appai-forge-mvp`)
 
 ## Arquitetura em uma linha
 
-Traefik (edge) → portal FastAPI+NiceGUI (auth/RBAC/chat/proxy) → um container por sistema (supervisor + `opencode serve` + app gerada) → PostgreSQL de produção via MCP (agente) e driver direto (app).
+Traefik (edge) → portal FastAPI+NiceGUI (auth/RBAC/chat/proxy) → um container por sistema (supervisor + `opencode serve` + app gerada) → banco de produção (PostgreSQL, MySQL ou BigQuery) via MCP somente leitura (agente) e driver direto (app).
 
 ## Requisitos
 
@@ -19,10 +19,11 @@ Traefik (edge) → portal FastAPI+NiceGUI (auth/RBAC/chat/proxy) → um containe
 
 ```bash
 cd deploy
-docker compose up -d --build          # postgres + traefik + portal
+docker compose up -d --build          # postgres + mysql + traefik + portal
 docker compose exec portal alembic upgrade head   # migrações (opcional: o portal cria o schema no boot)
 ```
 
+- O serviço `mysql` do compose existe só como banco de teste para cadastrar conexões MySQL (host `mysql`, porta 3306, banco/usuário/senha `appaiforge`); as portas dos bancos não são publicadas no host.
 - Portal: http://localhost (admin semeado em dev: `admin@appaiforge.local` / `admin123` — `APPAIFORGE_SEED_DEMO_ADMIN=1` no compose)
 - Health: http://localhost/api/health
 
@@ -45,7 +46,9 @@ docker compose -f deploy/docker-compose.yml exec portal appaiforge set-provider-
 
 > Os comandos `docker compose -f deploy/...` funcionam de qualquer diretório; se preferir, `cd deploy` antes e use `docker compose exec portal ...` sem o `-f`.
 
-Sem chave, o portal opera em **modo fake** (ver abaixo) — todo o resto funciona.
+Além do GLM, o admin pode cadastrar na UI provedores que falam o padrão OpenAI (o OpenRouter é um preset); os modelos são descobertos na própria rota do provedor, e cada sistema escolhe provedor e modelo. Chaves são globais por provedor, cifradas, e podem ser cadastradas, testadas e removidas pela UI de admin.
+
+Sem chave, o portal opera em **modo fake** (ver abaixo) — todo o resto funciona. O compose sobe em `fake` por padrão; para usar o agente real defina `APPAIFORGE_HARNESS_MODE=opencode` (por exemplo em `deploy/.env`, que não vai para o git).
 
 **Troubleshooting de provedor**: se uma execução falha com *"o provedor de LLM não retornou resposta (verifique chave, saldo e modelo configurados)"*, valide a chave diretamente — exemplo do erro `1113` (saldo insuficiente na Z.ai):
 
@@ -59,14 +62,30 @@ curl -s https://api.z.ai/api/coding/paas/v4/chat/completions \
 
 1. Login como **editor** → "Novo sistema" → nome + slug.
 2. Aguarde o badge **ativo** (container provisionado, app em `/apps/<slug>` mostrando "ainda não gerada").
-3. Na página do sistema: **Conexões** → cadastre o PostgreSQL (host/porta/banco/usuário/senha — testado antes de salvar; vira MCP do agente + `DATABASE_URL_<NOME>` da app).
-4. **Chat de geração**: peça em PT-BR ("crie um CRUD da tabela clientes com busca e formulário"). Acompanhe o streaming, interrompa se preciso.
+3. Na página do sistema: **Conexões** → escolha o tipo e cadastre o banco, testado antes de salvar (vira MCP somente leitura do agente + `DATABASE_URL_<NOME>` da app):
+   - **PostgreSQL / MySQL**: host, porta, banco, usuário e senha.
+   - **BigQuery**: projeto, dataset e JSON de Service Account (guardado cifrado).
+   - Cada conexão tem um estado de saúde monitorado (ver Operação).
+4. **Chat de geração**: peça em PT-BR ("crie um CRUD da tabela clientes com busca e formulário"). Acompanhe o streaming, interrompa se preciso (detalhes em *Chat* abaixo).
 5. Ao concluir: checkpoint criado, app reiniciada e servida em `/apps/<slug>`; "Abrir app" entra com sua identidade (SSO por token HMAC).
 6. **Checkpoints** → "Restaurar" para voltar o código a qualquer ponto (a app reinicia no estado restaurado).
 
+## Chat
+
+- **Sessões**: cada editor mantém várias sessões nomeadas por sistema (criadas na primeira mensagem, renomeáveis, com troca na lista). O agente mantém o contexto dentro da sessão; se o contexto for reiniciado (container recriado, sessão inválida) o chat avisa.
+- **Mensagens**: data e hora ao lado do nome de quem enviou, no fuso `APPAIFORGE_DISPLAY_TIMEZONE`. Os marcadores de execução (iniciada, concluída, interrompida, erro) aparecem em português.
+- **Disponibilidade**: abaixo do chat, uma bolinha verde indica agente livre e uma amarela pulsando indica trabalho em curso (sem animação se o sistema operacional pede movimento reduzido).
+- **Debug**: comandos executados e arquivos alterados só aparecem com a chave **Debug** ligada; ligar e desligar não perde histórico.
+- **Artifacts**: o agente pode responder com blocos ` ```echart `, ` ```table ` e ` ```html `, que o chat renderiza como gráfico, tabela interativa e HTML em sandbox.
+- **Checkpoint manual**: o botão informa se criou um checkpoint ou se não havia alteração a salvar.
+
+## Aparência
+
+Na topbar o usuário escolhe o modo (Light, Dark ou Pastel) e a cor de destaque (Índigo, Teal, Âmbar ou Violeta). A preferência fica salva por usuário e é aplicada ao portal inteiro sem flash. Todas as 12 combinações respeitam contraste WCAG AA; ao criar componentes novos, use os tokens de `portal/appaiforge/ui/theme.py` em vez de cores fixas.
+
 ## Gate de operações destrutivas
 
-Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador canônico com sqlglot — ADR 0017):
+Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador canônico com sqlglot — [ADR 0017](docs/adr/0017-gate-de-operacoes-destrutivas-com-classificador-sql.md), spec `destructive-gate`):
 
 | Classe | Exemplo | Comportamento |
 |---|---|---|
@@ -85,7 +104,7 @@ Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador can
 |---|---|---|
 | `DATABASE_URL` | postgres do compose | metadados do portal |
 | `SECRET_KEY` | — | **obrigatória em produção** (deriva a cifra de segredos) |
-| `HARNESS_MODE` | `opencode` | `fake` = agente determinístico sem LLM (dev/E2E) |
+| `HARNESS_MODE` | `opencode` (no compose: `fake`) | `fake` = agente determinístico sem LLM (dev/E2E) |
 | `FAKE_DELAY` | `0.15` | ritmo do harness fake em segundos |
 | `BASE_IMAGE` | `appaiforge/base:0.1.0` | imagem dos containers de sistema |
 | `CONTAINER_CPUS` / `CONTAINER_MEM_MB` / `CONTAINER_DISK_GB` | 2 / 2048 / 10 | limites por sistema (ADR 0013) |
@@ -93,6 +112,9 @@ Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador can
 | `HEALTH_INTERVAL` | 15 | sonda de saúde das apps (segundos) |
 | `WORKSPACES_DIR` / `HOST_WORKSPACES_DIR` | /workspaces | raiz dos workspaces (bind compartilhado) |
 | `DYNAMIC_CONFIG_DIR` | /dynamic | rotas dinâmicas do Traefik (volume compartilhado) |
+| `CONFIGS_DIR` / `HOST_CONFIG_DIR` | /configs | config do agente (MCP, provedor, chaves) **fora do workspace**, montada read-only no container do sistema |
+| `DISPLAY_TIMEZONE` | America/Sao_Paulo | fuso das datas exibidas (gravadas em UTC) |
+| `SEED_DEMO_ADMIN` | — | `1` semeia o admin de dev quando não há usuários (nunca em produção) |
 
 Limites: CPU/memória aplicados via Docker; **quota de disco** requer storage driver com suporte a `storage-opt` (overlay2/ext4 não suporta — o container sobe sem quota e o portal registra a ressalva).
 
@@ -121,7 +143,7 @@ cd portal && uv run pytest tests/e2e     # browser (Playwright), do zero, no sta
 O caminho opencode+GLM é validado manualmente (não roda em CI):
 
 1. Suba o stack com `APPAIFORGE_HARNESS_MODE=opencode` e a chave GLM cadastrada.
-2. Crie um sistema apontando para um **Postgres de homologação** (ADR 0015: a app usa a mesma credencial da conexão, em produção com escrita).
+2. Crie um sistema apontando para um **banco de homologação** (ADR 0015: a app usa a mesma credencial da conexão, com escrita; o gate de destrutivas protege as operações).
 3. No chat: "analise o banco via MCP e crie um CRUD da tabela <x>".
 4. Verifique: eventos de ferramenta no chat, app gerada em `/apps/<slug>`, MCP visível em `GET /mcp/status` do container do sistema.
 
@@ -130,6 +152,8 @@ O caminho opencode+GLM é validado manualmente (não roda em CI):
 - **Rollback**: página do sistema → Checkpoints → Restaurar.
 - **Arquivar** (dono): para o container, preserva o workspace, remove a rota. **Excluir** (admin, só para arquivados): remove container + workspace.
 - **Logs**: `docker compose logs -f portal` / `docker logs appaiforge-sys-<slug>`.
+- **Saúde das conexões**: cada conexão é sondada periodicamente e exibe seu estado na página do sistema.
+- **Auditoria**: toda ação de escrita da gestão (sistemas, conexões, usuários, provedores) fica numa trilha sem segredos, global para o admin e por sistema.
 - **Estado da app**: o monitor marca `erro — app fora do ar` após 3 sondas falhas e recupera sozinho quando a app volta.
 - **Reconciliação**: no boot e periodicamente o portal recria containers ausentes (workspace persiste no bind).
 - **Backup**: volumes do Postgres do portal + diretório de workspaces (`APPAIFORGE_WORKSPACES_DIR`).
@@ -138,8 +162,8 @@ O caminho opencode+GLM é validado manualmente (não roda em CI):
 
 ```
 portal/       appaiforge/ (FastAPI+NiceGUI), tests/ (unit, bdd, integration, e2e), migrations/
-base-image/   Dockerfile da imagem dos sistemas + afsupervisor (PID 1)
-deploy/       docker-compose.yml (postgres, traefik, portal)
+base-image/   Dockerfile da imagem dos sistemas + afsupervisor (PID 1) + gated-mcp/ (MCP somente leitura com o gate)
+deploy/       docker-compose.yml (postgres, mysql, traefik, portal) e docker-compose.e2e.yml
 docs/adr/     decisões de arquitetura
-openspec/     specs e change ativa
+openspec/     specs vigentes (specs/) e histórico de changes (changes/archive/)
 ```

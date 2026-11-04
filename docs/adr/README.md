@@ -26,5 +26,6 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0012](0012-llm-via-api-externa-provedor-por-sistema.md) | LLM via API externa; provedor por sistema (default GLM); custo só com visibilidade | aceito |
 | [0013](0013-containers-sempre-ativos-com-reconciliacao.md) | Containers sempre ativos, com reconciliação e limites padrão | aceito |
 | [0014](0014-rbac-com-tipos-globais-de-usuario.md) | RBAC com tipos globais de usuário; só editor cria sistemas | aceito |
-| [0015](0015-mesma-credencial-de-producao-para-app-gerada.md) | App gerada usa a mesma credencial de produção; gate de destrutivas adiado | aceito |
+| [0015](0015-mesma-credencial-de-producao-para-app-gerada.md) | App gerada usa a mesma credencial de produção; gate de destrutivas adiado | aceito (gate: ver 0017) |
 | [0016](0016-testes-em-tres-camadas-unit-bdd-e2e.md) | Testes em três camadas: unitários, BDD e E2E pelo browser | aceito |
+| [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md) | Gate de operações destrutivas com classificador SQL único (sqlglot) | aceito |

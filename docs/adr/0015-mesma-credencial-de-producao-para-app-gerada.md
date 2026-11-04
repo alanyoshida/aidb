@@ -1,6 +1,6 @@
 # 0015 — App gerada usa a mesma credencial de produção; gate de destrutivas adiado
 
-* Status: aceito
+* Status: aceito; a parte "sem gate" foi substituída pelo [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md)
 * Data: 2026-11-01
 * Decidida em: exploração `appai-forge-mvp` (decisões interativas; riscos registrados no design)
 

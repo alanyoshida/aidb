@@ -239,3 +239,18 @@ def test_update_description_e_access_mode(system, target):
     item = listing[0]
     assert item["description"] == "Relatórios"
     assert item["access_mode"] == "read_only"
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_start"),
+    [
+        ("postgres", "postgresql://u:pw@h:5432/d"),
+        ("mysql", "mysql://u:pw@h:5432/d"),
+        ("bigquery", "bigquery://h/d?credentials_base64="),
+    ],
+)
+def test_connection_string_scheme_por_tipo(kind, expected_start):
+    from appaiforge.models import DbConnection
+
+    conn = DbConnection(kind=kind, host="h", port=5432, database="d", username="u")
+    assert connections.connection_string(conn, "pw").startswith(expected_start)
