@@ -91,3 +91,14 @@ def test_estimate_rows_sql_para_confirmavel():
     assert sql.upper().startswith("SELECT COUNT(*)")
     assert "clientes" in sql.lower()
     assert "cidade" in sql.lower()
+
+
+def test_copia_do_gated_mcp_identica_ao_classificador_canonico():
+    from pathlib import Path
+
+    canonico = Path(sqlgate.__file__)
+    copia_mcp = Path(__file__).resolve().parents[3] / "base-image" / "gated-mcp" / "sqlgate.py"
+    assert copia_mcp.read_bytes() == canonico.read_bytes(), (
+        "base-image/gated-mcp/sqlgate.py divergiu de app_template/sqlgate.py; "
+        "copie o original para o gated-mcp"
+    )

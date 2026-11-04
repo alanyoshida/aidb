@@ -19,7 +19,7 @@ Toda SQL que toca os bancos das conexões é classificada por **um único classi
 | **confirmável** | `DELETE`/`UPDATE` sem `WHERE`, tautológico ou sem condição por linha | exige confirmação explícita |
 | **bloqueada** | qualquer DDL (`DROP`, `TRUNCATE`, `ALTER`, `CREATE`, `GRANT`, `REVOKE`) | sempre recusada |
 
-Em múltiplas statements numa só string vale a pior classe. O mesmo módulo é usado pelo portal e copiado para a app gerada (`app_template/sqlgate.py`) e para o MCP (`base-image/gated-mcp/sqlgate.py`). O design previa um teste que comparasse as cópias; ele não foi escrito, e hoje elas são idênticas só por disciplina.
+Em múltiplas statements numa só string vale a pior classe. O módulo canônico é `portal/appaiforge/app_template/sqlgate.py`: o portal o importa e o `materialize` o copia para o workspace de cada app (um teste em `test_agent_pipeline.py` garante que a cópia é idêntica). O MCP roda na imagem base, fora do alcance do código do portal, e por isso tem uma segunda cópia manual em `base-image/gated-mcp/sqlgate.py`, e um teste em `test_sqlgate.py` garante que ela é idêntica à canônica.
 
 - **Agente**: o `opencode.json` pede permissão (`ask`) para comandos bash que executam SQL. O portal recebe o evento `permission.asked`, classifica e responde: bloqueada é recusada na hora, confirmável fica pendente com botões Aprovar/Recusar no chat, normal é aprovada automaticamente. O run ganha o estado "aguardando aprovação".
 - **MCP**: o permissionamento do opencode não cobre ferramentas MCP, então o MCP genérico é trocado por um servidor próprio, o `gated-mcp`, somente leitura (`list_tables`, `describe_table`, `read_query`). Escritas via MCP são sempre recusadas; a via de escrita do agente é o bash, que passa pelo fluxo de permissões.
@@ -39,5 +39,5 @@ Em múltiplas statements numa só string vale a pior classe. O mesmo módulo é 
 - O risco do ADR 0015 deixa de ser irrestrito, mas não desaparece: o gate depende do classificador (falsos negativos são possíveis) e a credencial continua com escrita.
 - Apps geradas antes do gate só passam a usá-lo quando o agente as edita de novo.
 - O gate é provisionado para as conexões Postgres e MySQL; outros tipos acompanham o suporte do classificador.
-- As cópias do classificador podem divergir sem aviso até existir o teste de comparação previsto no design.
+- Alterar o classificador exige copiar o arquivo para `base-image/gated-mcp/` (o teste falha se esquecer) e reconstruir a imagem base.
 - Mudar as regras de fronteira (por exemplo `INSERT ... SELECT` sem `WHERE`) é mudança de código revisada por teste, não de configuração.
