@@ -14,6 +14,8 @@ produto fica no [`README.md`](README.md); decisões em [`docs/adr/`](docs/adr/RE
 - `deploy/` — `docker-compose.yml` (postgres, mysql, traefik, portal) e `docker-compose.e2e.yml`.
 - `docs/adr/` — decisões de arquitetura (MADR). `openspec/specs/` — specs vigentes;
   `openspec/changes/` — changes ativas; `openspec/changes/archive/` — histórico.
+- `docs/roadmap-confinamento-do-agente.md` — roadmap de longa duração (9 etapas, uma change por
+  etapa) de confinamento e política do agente. Leia antes de propor change nessa área.
 
 ## Comandos
 
