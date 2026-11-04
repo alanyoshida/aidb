@@ -4,7 +4,7 @@ from nicegui import ui
 
 from ..services import catalog
 from ..services.systems import InvalidSlug, NotPermitted, SlugTaken, create_system
-from .common import get_current_user, render_header
+from .common import get_current_user, notify, render_header
 
 
 def register() -> None:
@@ -39,7 +39,7 @@ def register() -> None:
                 from ..provisioning import start_provisioning_thread
 
                 start_provisioning_thread(system.id)
-                ui.notify("Sistema criado; provisionando container...", type="info")
+                notify("Sistema criado; provisionando container...", "info")
                 ui.navigate.to(f"/systems/{system.id}")
 
             ui.button("Criar sistema", icon="add", on_click=create).props("data-testid=create-system")

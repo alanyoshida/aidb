@@ -12,12 +12,12 @@ import re
 import time
 
 import docker
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from .config import get_settings
 from .db import session_scope
 from .edge import publish_app, system_container_name, unpublish_app
-from .models import DbConnection, ProviderKey, System, SystemStatus
+from .models import ChatSession, DbConnection, ProviderKey, System, SystemStatus
 from .security import decrypt_secret
 from .services.connections import connection_string, get_connection_secret
 
@@ -157,6 +157,14 @@ def provision_system(system: System) -> str:
     settings = get_settings()
     _check_capacity(system.id)
     ensure_network()
+
+    # invalida sessões opencode abertas antes de recriar o container
+    with session_scope() as s:
+        s.execute(
+            update(ChatSession)
+            .where(ChatSession.system_id == system.id)
+            .values(context_reset=True, harness_session_id=None)
+        )
 
     client = _docker()
     container_name = system_container_name(system.slug)

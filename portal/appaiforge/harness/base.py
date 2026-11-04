@@ -6,7 +6,12 @@ pela fila e pelo chat.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -14,9 +19,16 @@ class RunEvent:
     kind: str  # run_started | message | file_edited | command_run | tool_output | usage | run_finished | run_error | run_interrupted
     text: str = ""
     meta: dict = field(default_factory=dict)
+    # espelha RunEventRecord.created_at: o chat mostra o horário também durante a
+    # execução, antes de o evento ser persistido
+    created_at: datetime = field(default_factory=_now)
 
 
 EventCallback = Callable[[RunEvent], None]
+
+
+class SessionExpiredError(Exception):
+    """Sessão do harness não existe mais (container recriado ou processo morto)."""
 
 
 class HarnessPort:

@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from .config import get_settings
 from .db import session_scope
-from .harness.base import HarnessPort, RunEvent
+from .harness.base import HarnessPort, RunEvent, SessionExpiredError
 from .harness.fake import FakeHarness
 from .harness.opencode import OpencodeHarness
 from .models import AgentRun, ChatSession, RunStatus, TokenUsage, System, User, utcnow
@@ -49,6 +49,18 @@ _REDACT_PATTERNS = [
     # senhas/chaves/tokens em querystring, envs e flags
     (re.compile(r"(?i)(password|passwd|pwd|secret|token|api[_-]?key|api[_-]?key|senha)\s*[=:]\s*\"?[^\s&\"']+\"?"), r"\1=***"),
 ]
+
+
+def _derive_title(prompt: str, max_chars: int = 50) -> str:
+    """Título automático de sessão: primeiras palavras do prompt, até max_chars."""
+    text = prompt.strip()
+    if len(text) <= max_chars:
+        return text
+    truncated = text[:max_chars]
+    last_space = truncated.rfind(" ")
+    if last_space > 0:
+        truncated = truncated[:last_space]
+    return truncated + "…"
 
 
 def redact(text: str) -> str:
@@ -88,15 +100,19 @@ class AgentQueue:
     def harness_for(self, system: System) -> HarnessPort:
         return self.harness
 
-    def enqueue(self, system_id: str, user_id: str, prompt: str) -> AgentRun:
+    def enqueue(self, system_id: str, user_id: str, prompt: str, chat_session_id: str | None = None) -> AgentRun:
         with session_scope() as s:
             user = s.get(User, user_id)
             user_email = user.email if user is not None else ""
-            chat = s.execute(
-                select(ChatSession).where(ChatSession.system_id == system_id, ChatSession.user_id == user_id)
-            ).scalar_one_or_none()
+            if chat_session_id is not None:
+                chat = s.get(ChatSession, chat_session_id)
+                if chat is None or chat.system_id != system_id or chat.user_id != user_id:
+                    chat = None
+            else:
+                chat = None
             if chat is None:
-                chat = ChatSession(system_id=system_id, user_id=user_id)
+                title = _derive_title(prompt)
+                chat = ChatSession(system_id=system_id, user_id=user_id, title=title)
                 s.add(chat)
                 s.flush()
             run = AgentRun(system_id=system_id, user_id=user_id, user_email=user_email, chat_session_id=chat.id, prompt=prompt)
@@ -190,12 +206,27 @@ class AgentQueue:
 
         buffer = RunBuffer()
         self.buffers[run_id] = buffer
-        session_id = self.harness.create_session(system_dict)
+
+        # Resolve sessão opencode: reutiliza existente salvo no ChatSession ou cria nova.
         with session_scope() as s:
-            chat = s.get(AgentRun, run_id)
-            # guarda a sessão do harness no chat da run
-            cs = s.get(ChatSession, chat.chat_session_id)
-            cs.harness_session_id = session_id
+            ar = s.get(AgentRun, run_id)
+            cs = s.get(ChatSession, ar.chat_session_id) if ar.chat_session_id else None
+            existing_session_id = cs.harness_session_id if cs else None
+            needs_reset = bool(cs and cs.context_reset)
+
+        if needs_reset or not existing_session_id:
+            if needs_reset:
+                buffer.push(RunEvent("session_context_reset", text="Contexto do agente reiniciado (container recriado)"))
+            session_id = self.harness.create_session(system_dict)
+        else:
+            session_id = existing_session_id
+
+        with session_scope() as s:
+            ar = s.get(AgentRun, run_id)
+            cs = s.get(ChatSession, ar.chat_session_id) if ar and ar.chat_session_id else None
+            if cs is not None:
+                cs.harness_session_id = session_id
+                cs.context_reset = False
 
         def on_event(event: RunEvent) -> None:
             try:
@@ -231,6 +262,22 @@ class AgentQueue:
         final: RunEvent | None = None
         try:
             self.harness.run(system_dict, session_id, run.prompt, on_event)
+        except SessionExpiredError:
+            # sessão morta detectada ao enviar: reinicia com nova sessão e reexecuta
+            log.warning("sessão opencode expirada na run %s; criando nova sessão", run_id)
+            buffer.push(RunEvent("session_context_reset", text="Contexto do agente reiniciado (sessão expirada)"))
+            session_id = self.harness.create_session(system_dict)
+            with session_scope() as s:
+                ar = s.get(AgentRun, run_id)
+                cs = s.get(ChatSession, ar.chat_session_id) if ar and ar.chat_session_id else None
+                if cs is not None:
+                    cs.harness_session_id = session_id
+                    cs.context_reset = False
+            try:
+                self.harness.run(system_dict, session_id, run.prompt, on_event)
+            except Exception as exc:
+                log.exception("run %s falhou após reinício de sessão", run_id)
+                buffer.push(RunEvent("run_error", text=str(exc)))
         except Exception as exc:
             log.exception("run %s falhou no harness", run_id)
             buffer.push(RunEvent("run_error", text=str(exc)))

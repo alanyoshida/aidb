@@ -50,6 +50,6 @@ def render_systems_area(user: User) -> None:
                     elif status == "provisioning":
                         badge.props("color=warning")
                     else:
-                        badge.props("color=grey")
+                        badge.props("color=neutral text-color=neutraltext")
                 if status == "error" and status_message:
                     ui.label(status_message).classes("text-xs text-red-600")

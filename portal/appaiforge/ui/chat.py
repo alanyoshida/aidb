@@ -6,18 +6,131 @@ NiceGUI já é WS). Interrupção chama queue.interrupt. A fila por sistema é
 visível: run corrente + posição dos esperando.
 """
 
+import base64
+import json
+import re
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from nicegui import ui
 
 from ..agent_queue import RunBuffer, get_queue
-from ..models import AgentRun, RunStatus, System, User
+from ..config import get_settings
+from ..models import AgentRun, ChatSession, RunStatus, System, User
 from ..rbac import can_chat, can_manage_system
+from . import theme as _theme
+
+def _stamp(dt: datetime | None) -> str:
+    """Formata um horário UTC no fuso de exibição, como "dd/mm HH:MM"."""
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:  # driver pode devolver naive; o banco grava em UTC
+        dt = dt.replace(tzinfo=timezone.utc)
+    try:
+        local = dt.astimezone(ZoneInfo(get_settings().display_timezone))
+    except ZoneInfoNotFoundError:
+        local = dt
+    return local.strftime("%d/%m %H:%M")
+
+
+def _sender_label(name: str, dt: datetime | None) -> str:
+    """Nome com o horário ao lado.
+
+    Vai no `name` em vez do `stamp` do Quasar porque o stamp renderiza dentro
+    da bolha; a linha do nome fica fora dela.
+    """
+    stamp = _stamp(dt)
+    return f"{name} · {stamp}" if stamp else name
+
+
+def _avatars(user: User) -> tuple[str, str]:
+    """(avatar do usuário, avatar do agente) nas cores do tema escolhido."""
+    t = _theme.tokens(*_theme.parse_key(user.theme))
+    return (
+        _theme.avatar_svg(t["--ch-user-bg"], t["--ch-user-txt"], "VC"),
+        _theme.avatar_svg(t["--ch-avatar-bg"], t["--ch-avatar-txt"], "AI"),
+    )
+
+_ARTIFACT_PATTERN = re.compile(
+    r"```(echart|table|html)\n(.*?)```",
+    re.DOTALL,
+)
+
+
+def parse_artifacts(text: str) -> list[tuple[str, str]]:
+    """Divide o texto em segmentos de texto puro e blocos de artifact.
+
+    Retorna lista de (kind, conteúdo) onde kind é "text", "echart", "table" ou "html".
+    """
+    segments: list[tuple[str, str]] = []
+    last = 0
+    for m in _ARTIFACT_PATTERN.finditer(text):
+        before = text[last : m.start()]
+        if before:
+            segments.append(("text", before))
+        segments.append((m.group(1), m.group(2).strip()))
+        last = m.end()
+    tail = text[last:]
+    if tail:
+        segments.append(("text", tail))
+    return segments if segments else [("text", text)]
+
+
+def render_artifact_segment(box, kind: str, raw: str) -> None:
+    """Renderiza um segmento: texto como markdown, artifacts como componentes visuais."""
+    with box:
+        if kind == "text":
+            if raw.strip():
+                ui.markdown(raw)
+
+        elif kind == "echart":
+            try:
+                config = json.loads(raw)
+                if not isinstance(config, dict):
+                    raise ValueError("configuração ECharts deve ser um objeto JSON")
+                ui.echart(config).classes("w-full h-64")
+            except Exception as exc:
+                _render_artifact_error(box, "echart", str(exc), raw)
+
+        elif kind == "table":
+            try:
+                rows = json.loads(raw)
+                if not isinstance(rows, list):
+                    raise ValueError("dados de tabela devem ser um array JSON")
+                if rows:
+                    columns = [
+                        {"field": k, "filter": True, "sortable": True}
+                        for k in rows[0].keys()
+                    ]
+                else:
+                    columns = []
+                ui.aggrid({"columnDefs": columns, "rowData": rows}).classes("w-full h-48")
+            except Exception as exc:
+                _render_artifact_error(box, "table", str(exc), raw)
+
+        elif kind == "html":
+            if raw.strip():
+                encoded = base64.b64encode(raw.encode()).decode()
+                ui.element("iframe").props(
+                    f'src="data:text/html;base64,{encoded}" '
+                    f'sandbox="allow-same-origin"'
+                ).style("width:100%;min-height:200px;border:none;resize:vertical;overflow:auto;")
+
+
+def _render_artifact_error(box, kind: str, err: str, raw: str) -> None:
+    with box, ui.card().classes("w-full border border-red-300 bg-red-50 p-2"):
+        ui.label(f"Artifact inválido ({kind}): {err}").classes("text-xs text-red-700 font-medium")
+        with ui.expansion("Ver conteúdo bruto").classes("text-xs text-red-500"):
+            ui.code(raw, language="text").classes("text-xs")
 
 # marcadores de transição de execução: ficam fora das bolhas de chat
+# (ícone, cor, rótulo exibido)
 _STATUS_ICON = {
-    "run_started": ("play_arrow", "text-gray-400"),
-    "run_finished": ("check_circle", "text-green-600"),
-    "run_interrupted": ("stop_circle", "text-gray-500"),
-    "run_error": ("error", "text-red-600"),
+    "run_started": ("play_arrow", "text-gray-400", "execução iniciada"),
+    "run_finished": ("check_circle", "text-green-600", "execução concluída"),
+    "run_interrupted": ("stop_circle", "text-gray-500", "execução interrompida"),
+    "run_error": ("error", "text-red-600", "erro na execução"),
+    "session_context_reset": ("refresh", "text-amber-600", "contexto reiniciado"),
 }
 
 # ícone exibido ao lado da bolha, conforme o tipo de evento
@@ -48,33 +161,174 @@ _DEBUG_CSS = ".af-hide-commands .af-command { display: none !important; }"
 def render_chat(system: System, user: User) -> None:
     queue = get_queue()
     ui.add_css(_DEBUG_CSS)
+    _AVATAR_USER, _AVATAR_AGENT = _avatars(user)
 
     if not can_chat(user):
         ui.label("Somente editores conversam com o agente.").classes("text-gray-500")
         return
 
-    with ui.scroll_area().classes("w-full h-96 border rounded"):
+    # --- painel de sessões ---------------------------------------------------
+    active_session: dict = {"id": None}  # ChatSession.id da sessão ativa
+    rename_state: dict = {"editing": False}
+
+    with ui.expansion("Sessões", icon="chat").classes("w-full"):
+        sessions_col = ui.column().classes("w-full gap-1")
+        ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
+            "flat dense data-testid=chat-new-session"
+        ).classes("text-xs")
+
+    session_title_row = ui.row().classes("w-full items-center gap-1")
+    with session_title_row:
+        session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
+        rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props("flat dense round")
+    rename_row = ui.row().classes("w-full items-center gap-1")
+    rename_row.set_visibility(False)
+    with rename_row:
+        rename_input = ui.input("Novo título").classes("grow")
+        ui.button("OK", on_click=lambda: _confirm_rename()).props("flat dense")
+        ui.button("×", on_click=lambda: rename_row.set_visibility(False)).props("flat dense")
+
+    # --- log do chat ---------------------------------------------------------
+    with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
         log_box = ui.column().classes("w-full gap-1 p-2 af-hide-commands")
         approval_box = ui.column().classes("w-full")
-    state_label = ui.label("").classes("text-sm text-gray-500")
-    debug = {"on": False}  # modo debug desativado por padrão: comandos só aparecem com ele ligado
+    with ui.row().classes("w-full items-center justify-center gap-2"):
+        state_dot = ui.element("span").classes("ap-dot")
+        state_label = ui.label("").classes("text-sm text-gray-500")
+
+    def set_state(text: str, busy: bool) -> None:
+        state_label.set_text(text)
+        if busy:
+            state_dot.classes(add="ap-dot--busy")
+        else:
+            state_dot.classes(remove="ap-dot--busy")
+    debug = {"on": False}
     debug_switch = ui.switch("Debug (mostrar comandos executados)").props("data-testid=chat-debug")
     input_row = ui.row().classes("w-full items-center")
     with input_row:
-        prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow").props("data-testid=chat-input")
-        send_btn = ui.button("Enviar", icon="send").props("data-testid=chat-send")
-        interrupt_btn = ui.button("Interromper", icon="stop").props("color=negative outline data-testid=chat-interrupt")
+        prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props("data-testid=chat-input borderless")
+        send_btn = ui.button(icon="send").classes("af-chat-send").props("flat round data-testid=chat-send")
+        interrupt_btn = ui.button(icon="stop").props("color=negative flat round data-testid=chat-interrupt")
         interrupt_btn.set_visibility(False)
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
+
+    # -------------------------------------------------------------------------
+    # Helpers de sessão
+    # -------------------------------------------------------------------------
+
+    def _load_sessions() -> None:
+        from ..db import session_scope
+        from sqlalchemy import select as sa_select
+
+        with session_scope() as s:
+            rows = s.execute(
+                sa_select(ChatSession)
+                .where(ChatSession.system_id == system.id, ChatSession.user_id == user.id)
+                .order_by(ChatSession.created_at.desc())
+                .limit(20)
+            ).scalars().all()
+        fingerprint = tuple(r.id for r in rows)
+        if fingerprint == getattr(_load_sessions, "_last", None):
+            return
+        _load_sessions._last = fingerprint
+        sessions_col.clear()
+        with sessions_col:
+            if not rows:
+                ui.label("Nenhuma sessão ainda.").classes("text-xs text-gray-400")
+            for r in rows:
+                sess_id = r.id
+                label = r.title or "sessão sem título"
+                is_active = r.id == active_session["id"]
+                btn_classes = "text-xs text-left w-full " + ("font-bold text-primary" if is_active else "text-gray-600")
+                ui.button(
+                    label,
+                    on_click=lambda sid=sess_id: _switch_session(sid),
+                ).props("flat dense align=left").classes(btn_classes)
+
+    def _switch_session(sess_id: str) -> None:
+        from ..db import session_scope
+        from sqlalchemy import select as sa_select
+        from ..models import RunEventRecord
+
+        if active_session["id"] == sess_id:
+            return
+        active_session["id"] = sess_id
+        current_run["id"] = None
+        current_run["shown"] = 0
+        log_box.clear()
+
+        # Atualiza rótulo do título
+        with session_scope() as s:
+            cs = s.get(ChatSession, sess_id)
+            title = cs.title if cs else ""
+            session_title_label.set_text(title or "sessão sem título")
+
+            # Carrega histórico de runs da sessão
+            runs = s.execute(
+                sa_select(AgentRun)
+                .where(AgentRun.chat_session_id == sess_id, AgentRun.status != RunStatus.queued)
+                .order_by(AgentRun.created_at)
+            ).scalars().all()
+            run_data = [(r.id, r.prompt, r.created_at) for r in runs]
+
+        with log_box:
+            for run_id, run_prompt, run_at in run_data:
+                ui.chat_message(text=run_prompt, name=_sender_label("Você", run_at),
+                                sent=True, avatar=_AVATAR_USER)
+                _load_run_events(run_id)
+
+        _load_sessions()
+
+    def _new_session() -> None:
+        from ..db import session_scope
+
+        with session_scope() as s:
+            cs = ChatSession(system_id=system.id, user_id=user.id, title="Nova sessão")
+            s.add(cs)
+            s.flush()
+            sess_id = cs.id
+        _switch_session(sess_id)
+
+    def _start_rename() -> None:
+        from ..db import session_scope
+
+        if not active_session["id"]:
+            return
+        with session_scope() as s:
+            cs = s.get(ChatSession, active_session["id"])
+            rename_input.set_value(cs.title or "" if cs else "")
+        rename_row.set_visibility(True)
+        rename_state["editing"] = True
+
+    def _confirm_rename() -> None:
+        from ..db import session_scope
+
+        if not active_session["id"]:
+            rename_row.set_visibility(False)
+            return
+        new_title = (rename_input.value or "").strip()[:100]
+        if new_title:
+            with session_scope() as s:
+                cs = s.get(ChatSession, active_session["id"])
+                if cs is not None:
+                    cs.title = new_title
+            session_title_label.set_text(new_title)
+        rename_row.set_visibility(False)
+        rename_state["editing"] = False
+        _load_sessions()
+
+    # -------------------------------------------------------------------------
+    # Lógica de envio e execução
+    # -------------------------------------------------------------------------
 
     def do_send() -> None:
         text = (prompt.value or "").strip()
         if not text:
             return
         if current_run["id"] is not None:
-            return  # agente ocupado: UI bloqueia; nada de corrida com a fila
+            return
         prompt.set_value("")
         pending_prompt["text"] = text
         refresh_state()
@@ -93,10 +347,6 @@ def render_chat(system: System, user: User) -> None:
     approval_state: dict = {"request_id": None}
 
     def _render_approval() -> None:
-        """Painel de aprovação do gate (spec destructive-gate): SQL + botões.
-
-        Renderiza UMA vez por pedido — re-render a cada tick engole cliques.
-        """
         run_id = current_run["id"]
         info = queue.pending_gates.get(run_id)
         if info is None:
@@ -105,7 +355,7 @@ def render_chat(system: System, user: User) -> None:
                 approval_state["request_id"] = None
             return
         if approval_state["request_id"] == info["request_id"]:
-            return  # painel já no ar para este pedido
+            return
         approval_state["request_id"] = info["request_id"]
         approval_box.clear()
         with approval_box:
@@ -129,16 +379,16 @@ def render_chat(system: System, user: User) -> None:
                     ui.button("Recusar", icon="close", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
 
     def render_event(box, event) -> None:
-        """Renderiza um evento (RunEvent em memória ou RunEventRecord persistido)
-        como bolha de chat ou marcador de status compacto."""
         if event.kind in _QUIET_KINDS:
             return
 
         if event.kind in _STATUS_ICON:
-            icon, color = _STATUS_ICON[event.kind]
+            icon, color, label = _STATUS_ICON[event.kind]
+            # o reset de contexto traz a própria mensagem já em português
+            label_text = (event.text or label) if event.kind == "session_context_reset" else label
             with box, ui.row().classes("w-full justify-center items-center gap-1"):
                 ui.icon(icon).classes(f"text-sm {color}")
-                ui.label(event.kind).classes(f"text-xs {color}")
+                ui.label(label_text).classes(f"text-xs {color}")
             return
 
         if event.kind == "gate_request":
@@ -160,13 +410,14 @@ def render_chat(system: System, user: User) -> None:
                 icon = _EVENT_ICON.get(event.kind)
                 if icon:
                     ui.icon(icon).classes("text-gray-500")
+                sender = _sender_label("Agente", getattr(event, "created_at", None))
                 if event.kind == "message":
-                    # resposta do agente: markdown formatado (sanitizado pelo NiceGUI)
-                    msg = ui.chat_message(name="Agente", sent=False)
+                    msg = ui.chat_message(name=sender, sent=False, avatar=_AVATAR_AGENT)
                     with msg:
-                        ui.markdown(event.text or "")
+                        for seg_kind, seg_raw in parse_artifacts(event.text or ""):
+                            render_artifact_segment(msg, seg_kind, seg_raw)
                 else:
-                    msg = ui.chat_message(text=text, name="Agente", sent=False)
+                    msg = ui.chat_message(text=text, name=sender, sent=False, avatar=_AVATAR_AGENT)
                     color_props = _GATE_COLOR_PROPS.get(event.kind)
                     if color_props:
                         msg.props(color_props)
@@ -186,15 +437,14 @@ def render_chat(system: System, user: User) -> None:
                     render_event(log_box, event)
                 current_run["shown"] = len(events)
             interrupt_btn.set_visibility(True)
-            state_label.set_text(
+            set_state(
                 "aguardando sua aprovação (gate de destrutivas)"
                 if any(e.kind == "gate_request" for e in (queue.buffers.get(current_run["id"]) or RunBuffer()).snapshot())
-                else "agente executando..."
+                else "agente executando...",
+                busy=True,
             )
             _render_approval()
         else:
-            # derrama o que faltou da run que acabou de terminar (o poll pode
-            # ter perdido a janela "running" de runs curtas)
             if current_run["id"] is not None:
                 buffer = queue.buffers.get(current_run["id"])
                 if buffer:
@@ -203,64 +453,32 @@ def render_chat(system: System, user: User) -> None:
                         render_event(log_box, event)
                     current_run["shown"] = len(events)
             if position:
-                state_label.set_text(f"{len(position)} pedido(s) na fila")
+                set_state(f"{len(position)} pedido(s) na fila", busy=True)
             else:
-                state_label.set_text("agente livre")
+                set_state("agente livre", busy=False)
             current_run["id"] = None
             interrupt_btn.set_visibility(False)
         if pending_prompt["text"] and state["running"] is None and not position:
             text = pending_prompt["text"]
             pending_prompt["text"] = None
-            run = queue.enqueue(system.id, user.id, text)
-            # current_run precisa ser atualizado ANTES de criar a bolha: criar
-            # ui.chat_message cede ao event loop o suficiente para o ui.timer
-            # de 0.5s dar refresh_state() concorrente nesse meio-tempo — se
-            # ele visse current_run["id"] ainda None aqui, achava que é uma
-            # run "nova" vinda de fora e limpava o log_box, apagando a bolha.
+            run = queue.enqueue(system.id, user.id, text, chat_session_id=active_session["id"])
+            # atualiza sessão ativa com a sessão criada/usada na run
+            active_session["id"] = run.chat_session_id
             current_run["id"] = run.id
             current_run["shown"] = 0
             with log_box:
-                ui.chat_message(text=text, name="Você", sent=True)
-
-    # runs anteriores (histórico persistido, sempre presente e vivo)
-    with ui.expansion("Execuções anteriores", icon="history").classes("w-full") as history_exp:
-        history_rows = ui.column().classes("w-full af-hide-commands")
-
-    def load_history() -> None:
-        from ..db import session_scope
-        from sqlalchemy import select
-
-        with session_scope() as s:
-            rows = s.execute(
-                select(AgentRun).where(AgentRun.system_id == system.id, AgentRun.status != RunStatus.queued)
-                .order_by(AgentRun.created_at.desc()).limit(10)
-            ).scalars().all()
-        fingerprint = tuple((r.id, r.status.value) for r in rows)
-        if fingerprint == getattr(load_history, "_last", None):
-            return
-        load_history._last = fingerprint
-        history_rows.clear()
-        with history_rows:
-            if not rows:
-                ui.label("Nenhuma execução ainda.").classes("text-xs text-gray-400")
-            for r in rows:
-                status_label = {
-                    RunStatus.succeeded: "concluída",
-                    RunStatus.interrupted: "interrompida",
-                    RunStatus.failed: "falhou",
-                }.get(r.status, r.status.value)
-                with ui.expansion(f"[{status_label}] {r.prompt[:60]} — {r.summary[:100] if r.summary else ''}").classes("w-full text-xs text-gray-500") as exp:
-                    _load_run_events(r.id)
+                ui.chat_message(text=text, name=_sender_label("Você", datetime.now(timezone.utc)),
+                                sent=True, avatar=_AVATAR_USER)
+            _load_sessions()
 
     def _load_run_events(run_id: str) -> None:
-        """Carregar e renderizar eventos persistidos da run (mesmo mapeamento do log ao vivo)."""
         from ..db import session_scope
-        from sqlalchemy import select
+        from sqlalchemy import select as sa_select
         from ..models import RunEventRecord
 
         with session_scope() as s:
             events = s.execute(
-                select(RunEventRecord).where(RunEventRecord.run_id == run_id)
+                sa_select(RunEventRecord).where(RunEventRecord.run_id == run_id)
                 .order_by(RunEventRecord.created_at)
             ).scalars().all()
         box = ui.column().classes("w-full gap-1 pl-4")
@@ -268,9 +486,8 @@ def render_chat(system: System, user: User) -> None:
             render_event(box, evt)
 
     def on_debug_change() -> None:
-        # alterna a classe que oculta os comandos (instantâneo, sem re-render)
         debug["on"] = bool(debug_switch.value)
-        for el in (log_box, history_rows):
+        for el in (log_box,):
             if debug["on"]:
                 el.classes(remove="af-hide-commands")
             else:
@@ -278,6 +495,6 @@ def render_chat(system: System, user: User) -> None:
 
     debug_switch.on_value_change(on_debug_change)
 
-    load_history()
-    ui.timer(2.0, load_history)
+    _load_sessions()
+    ui.timer(2.0, _load_sessions)
     ui.timer(0.5, refresh_state)

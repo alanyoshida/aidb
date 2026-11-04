@@ -15,6 +15,21 @@ services:
       timeout: 3s
       retries: 20
 
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: appaiforge
+      MYSQL_USER: appaiforge
+      MYSQL_PASSWORD: appaiforge
+      MYSQL_ROOT_PASSWORD: rootpw
+    volumes:
+      - mysqldata:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "appaiforge", "-pappaiforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   traefik:
     image: traefik:v3.1
     command: ["--configFile=/etc/traefik/traefik.yml"]
@@ -62,4 +77,5 @@ networks:
 
 volumes:
   pgdata:
+  mysqldata:
   dynamic:

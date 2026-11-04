@@ -8,7 +8,7 @@ from .. import guidelines
 from ..db import session_scope
 from ..models import System, User
 from ..services import audit, catalog, connections, directory, provider_keys
-from .common import get_current_user, render_header
+from .common import get_current_user, notify, render_header
 
 _USER_TYPES = ["admin", "editor", "app_user"]
 
@@ -65,7 +65,7 @@ def _users_panel(user: User) -> None:
                         ui.label(email).classes("font-semibold")
                         ui.label(utype).classes("text-xs text-gray-500")
                         ui.badge("Sim" if active else "Não").props(
-                            "color=positive" if active else "color=grey"
+                            "color=positive" if active else "color=neutral text-color=neutraltext"
                         )
                     with ui.row().classes("gap-2"):
                         ui.button("Editar tipo", icon="badge", on_click=lambda e=email, t=utype: open_type_dialog(e, t)).props("dense outline data-testid=user-edit-type")
@@ -187,7 +187,7 @@ def _groups_panel(user: User) -> None:
             try:
                 directory.create_group(gname.value, actor=user)
             except Exception as exc:
-                ui.notify(f"falha ao criar grupo: {exc}", type="negative")
+                notify(f"falha ao criar grupo: {exc}", "negative")
                 return
             refresh()
             group_dialog.close()
@@ -331,9 +331,9 @@ def _llm_keys_panel(user: User) -> None:
                         ui.icon("vpn_key").classes("text-gray-500")
                         ui.label(item["label"]).classes("font-semibold")
                         ui.label(provider).classes("text-xs text-gray-500")
-                        ui.badge("preset" if definition.get("is_preset") else definition.get("kind", "")).props("color=blue-grey")
+                        ui.badge("preset" if definition.get("is_preset") else definition.get("kind", "")).props("color=neutral text-color=neutraltext")
                         ui.badge("configurada" if item["configured"] else "sem chave").props(
-                            "color=positive" if item["configured"] else "color=grey"
+                            "color=positive" if item["configured"] else "color=neutral text-color=neutraltext"
                         )
                     if definition.get("base_url"):
                         ui.label(definition["base_url"]).classes("text-xs text-gray-500")
@@ -389,16 +389,16 @@ def _llm_keys_panel(user: User) -> None:
 
     def do_test(provider: str) -> None:
         ok, message = provider_keys.test_stored_key(provider)
-        ui.notify(f"{provider}: {message}", type="positive" if ok else "negative")
+        notify(f"{provider}: {message}", "positive" if ok else "negative")
 
     def do_discover(provider: str) -> None:
         try:
             models = catalog.discover_models(provider, actor=user)
         except catalog.DiscoveryFailed as exc:
-            ui.notify(f"{provider}: {exc}", type="negative")
+            notify(f"{provider}: {exc}", "negative")
             return
         refresh()
-        ui.notify(f"{provider}: {len(models)} modelo(s) encontrados", type="positive")
+        notify(f"{provider}: {len(models)} modelo(s) encontrados", "positive")
 
     with ui.dialog() as new_provider_dialog, ui.card().classes("w-96"):
         ui.label("Novo provedor").classes("font-semibold text-lg")

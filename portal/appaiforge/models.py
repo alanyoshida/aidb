@@ -60,6 +60,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     type: Mapped[UserType] = mapped_column(Enum(UserType, name="user_type"))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    theme: Mapped[str] = mapped_column(String(32), default="light-indigo", server_default="light-indigo")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     @property
@@ -146,6 +147,8 @@ class ChatSession(Base):
     system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     harness_session_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    context_reset: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

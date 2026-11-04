@@ -6,7 +6,7 @@ from ..models import System
 from ..rbac import can_access_system, can_manage_system
 from ..services import catalog, connections
 from ..services.systems import get_system, rename_system, set_provider
-from .common import get_current_user, render_header
+from .common import get_current_user, notify, render_header
 
 _STATUS_LABEL = {"provisioning": "provisionando", "active": "ativo", "error": "erro", "archived": "arquivado"}
 _STATUS_COLOR = {"active": "positive", "provisioning": "warning", "error": "negative"}
@@ -45,15 +45,17 @@ def register() -> None:
             ui.link("Sistemas", "/").classes("text-gray-500")
             ui.icon("chevron_right").classes("text-gray-500 text-sm")
             breadcrumb_label = ui.label(system.name).classes("text-gray-300")
-        name_label = ui.label(system.name).classes("text-2xl font-bold mx-4 mt-1")
-        provider_label = None
-        with ui.row().classes("mx-4 items-center"):
-            ui.label(f"/{system.slug}").classes("text-gray-500")
-            status_badge = ui.badge(_STATUS_LABEL.get(system.status.value, system.status.value))
-            if can_manage_system(user, system):
-                provider_label = ui.label(f"provedor: {system.provider} / modelo: {system.model}").classes("text-sm text-gray-600")
-
-        open_btn = ui.button("Abrir app", icon="open_in_new", on_click=lambda: ui.navigate.to(f"/entry/{system.slug}", new_tab=True)).props("data-testid=open-app")
+        # identidade à esquerda, ação principal à direita na mesma faixa
+        with ui.row().classes("mx-4 mt-1 w-full items-center justify-between no-wrap"):
+            with ui.column().classes("gap-1"):
+                name_label = ui.label(system.name).classes("text-2xl font-bold")
+                provider_label = None
+                with ui.row().classes("items-center"):
+                    ui.label(f"/{system.slug}").classes("text-gray-500")
+                    status_badge = ui.badge(_STATUS_LABEL.get(system.status.value, system.status.value))
+                    if can_manage_system(user, system):
+                        provider_label = ui.label(f"provedor: {system.provider} / modelo: {system.model}").classes("text-sm text-gray-600")
+            open_btn = ui.button("Abrir app", icon="open_in_new", on_click=lambda: ui.navigate.to(f"/entry/{system.slug}", new_tab=True)).props("size=lg unelevated data-testid=open-app").classes("mr-8")
         open_btn.set_visibility(system.status.value == "active")
 
         def refresh_status() -> None:
@@ -259,7 +261,7 @@ def _render_connections(system, user) -> None:
         feedback.set_text("")
         conn_dialog.open()
 
-    _CONN_STATUS_COLOR = {"healthy": "positive", "degraded": "negative", "unknown": "grey"}
+    _CONN_STATUS_COLOR = {"healthy": "positive", "degraded": "negative", "unknown": "neutral"}
     _CONN_STATUS_LABEL = {"healthy": "saudável", "degraded": "degradada", "unknown": "desconhecido"}
     _KIND_LABEL = {"postgres": "PostgreSQL", "mysql": "MySQL", "bigquery": "BigQuery"}
     edit_target: dict = {"id": None}
@@ -391,9 +393,13 @@ def _render_connections(system, user) -> None:
                     with ui.row().classes("items-center gap-2"):
                         ui.label(f"{c['name']}").classes("font-semibold")
                         status = c.get("status", "unknown")
+                        cor = _CONN_STATUS_COLOR.get(status, "neutral")
+                        # só o neutro precisa de texto próprio; os coloridos já
+                        # vêm com o par "on-" certo pelo CSS do tema
+                        texto_badge = " text-color=neutraltext" if cor == "neutral" else ""
                         ui.badge(
                             _CONN_STATUS_LABEL.get(status, status)
-                        ).props(f"color={_CONN_STATUS_COLOR.get(status, 'grey')} data-testid=conn-status-badge")
+                        ).props(f"color={cor}{texto_badge} data-testid=conn-status-badge")
                         if c.get("access_mode") == "read_only":
                             ui.badge("somente-leitura").props("color=info data-testid=conn-access-mode-badge")
                     if c.get("description"):
@@ -414,7 +420,18 @@ def _render_checkpoints(system, user) -> None:
     from .. import checkpoints as cp_service
 
     ui.label("Pontos salvos do código da app — restaure ou exclua").classes("text-sm text-gray-500 mb-2")
-    ui.button("Criar checkpoint agora", icon="add", on_click=lambda: (cp_service.record_checkpoint(system, None, "checkpoint manual", author=user), refresh_cps())).props("outline dense")
+
+    def create_checkpoint() -> None:
+        # record_checkpoint devolve None quando o git não tem nada para commitar;
+        # sem aviso o botão parece quebrado.
+        cp = cp_service.record_checkpoint(system, None, "checkpoint manual", author=user)
+        if cp is None:
+            notify("Nada mudou no workspace desde o último checkpoint.", "info")
+            return
+        notify(f"Checkpoint {cp.git_sha[:8]} criado.", "positive")
+        refresh_cps()
+
+    ui.button("Criar checkpoint agora", icon="add", on_click=create_checkpoint).props("outline dense")
     timeline_container = ui.column().classes("w-full max-w-3xl mt-2")
 
     delete_target: dict = {"id": None}
@@ -452,7 +469,7 @@ def _render_checkpoints(system, user) -> None:
 
                     def do_rollback(sha=cp["git_sha"]) -> None:
                         cp_service.rollback(system, sha)
-                        ui.notify(f"workspace restaurado para {sha[:8]}", type="positive")
+                        notify(f"workspace restaurado para {sha[:8]}", "positive")
 
                     with ui.timeline_entry(title=cp["git_sha"][:8], icon="commit"):
                         ui.label(cp["message"][:140]).classes("text-sm")

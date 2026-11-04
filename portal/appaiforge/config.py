@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     session_ttl_days: int = 7
     identity_token_ttl_seconds: int = 60
 
+    # Os horários são gravados em UTC; a UI os converte para este fuso.
+    display_timezone: str = "America/Sao_Paulo"
+
 
 @lru_cache
 def get_settings() -> Settings:

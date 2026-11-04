@@ -18,7 +18,7 @@ from typing import Callable
 
 import httpx
 
-from .base import HarnessPort, RunEvent
+from .base import HarnessPort, RunEvent, SessionExpiredError
 
 log = logging.getLogger(__name__)
 
@@ -81,11 +81,20 @@ class OpencodeHarness(HarnessPort):
     def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
         on_event(RunEvent("run_started", meta={"session_id": session_id}))
         base = self.resolve_base_url(system)
+        # Sem o modelo explícito o opencode cai no default dele, que é escolhido
+        # pelo catálogo e pode nem servir para chat (já veio um de imagem),
+        # respondendo sem nenhum texto. O provedor/modelo do sistema manda.
+        provider_id, _ = opencode_provider(system.get("provider", ""))
+        payload: dict = {"parts": [{"type": "text", "text": prompt}]}
+        if provider_id and system.get("model"):
+            payload["model"] = {"providerID": provider_id, "modelID": system["model"]}
         resp = httpx.post(
             f"{base}/session/{session_id}/prompt_async",
-            json={"parts": [{"type": "text", "text": prompt}]},
+            json=payload,
             timeout=self.timeout,
         )
+        if resp.status_code == 404:
+            raise SessionExpiredError(f"sessão opencode {session_id!r} não existe mais")
         resp.raise_for_status()
 
         try:

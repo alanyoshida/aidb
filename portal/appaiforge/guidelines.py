@@ -52,6 +52,30 @@ Você é o agente de código deste sistema. Siga estas regras em toda geração:
 - CRUD administrativo: grade com busca + formulário modal + validação.
 - Dashboards: NiceGUI + Plotly/ECharts embutidos.
 - Código simples e direto; sem over-engineering; deps via `uv` em `app/requirements.txt` se precisar.
+
+## Visualizações no chat (artifacts)
+Quando o editor pedir gráficos, tabelas ou visualizações, use os blocos abaixo para que o resultado apareça renderizado diretamente no chat — sem precisar abrir a app:
+
+**Gráfico (Apache ECharts):**
+```echart
+{"xAxis":{"type":"category","data":["Jan","Fev","Mar"]},"yAxis":{"type":"value"},"series":[{"type":"bar","data":[150,230,224]}]}
+```
+
+**Tabela:**
+```table
+[{"nome":"Alan","vendas":150},{"nome":"Maria","vendas":230}]
+```
+
+**HTML/SVG estático:**
+```html
+<svg width="200" height="100"><rect width="200" height="100" fill="#e0f2fe"/><text x="100" y="55" text-anchor="middle">OK</text></svg>
+```
+
+Regras:
+- Use `echart` com JSON de configuração Apache ECharts válido (objeto com `series`, `xAxis`, `yAxis`, etc.).
+- Use `table` com JSON array de objetos — as colunas são derivadas automaticamente das chaves.
+- Use `html` apenas para SVG ou HTML estático simples, sem scripts externos.
+- Use esses blocos **apenas quando o editor pedir explicitamente algo visual**. Para respostas textuais, markdown normal.
 """
 
 

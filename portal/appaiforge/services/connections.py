@@ -54,6 +54,17 @@ def test_connection(kind: str, host: str, port: int, database: str, username: st
         _test_postgres(host, port, database, username, password)
 
 
+def _connection_failed(exc: Exception, password: str) -> ConnectionFailed:
+    """Mensagem do driver (host, porta e motivo), que o nome da classe sozinho omite.
+
+    O texto vai para a tela, então a senha é removida caso o driver a inclua.
+    """
+    detail = str(exc).strip() or exc.__class__.__name__
+    if password and password in detail:
+        detail = detail.replace(password, "***")
+    return ConnectionFailed(f"não foi possível conectar: {detail}")
+
+
 def _test_postgres(host: str, port: int, database: str, username: str, password: str) -> None:
     try:
         with psycopg.connect(
@@ -64,7 +75,7 @@ def _test_postgres(host: str, port: int, database: str, username: str, password:
                 cur.execute("SELECT 1")
                 cur.fetchone()
     except psycopg.OperationalError as exc:
-        raise ConnectionFailed(f"não foi possível conectar: {exc.__class__.__name__}") from exc
+        raise _connection_failed(exc, password) from exc
     except psycopg.errors.AuthenticationFailed as exc:
         raise ConnectionFailed("credenciais recusadas pelo banco") from exc
 
@@ -101,7 +112,7 @@ def _test_mysql(host: str, port: int, database: str, username: str, password: st
         )
         cx.close()
     except pymysql.OperationalError as exc:
-        raise ConnectionFailed(f"não foi possível conectar: {exc.__class__.__name__}") from exc
+        raise _connection_failed(exc, password) from exc
 
 
 def _extract_sa_email(sa_json: str) -> str:
