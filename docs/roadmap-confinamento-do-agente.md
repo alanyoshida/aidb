@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | Higiene do container + `AgentProfile` | container não-root, perfil declarativo | ⬜ não iniciada |
 | 2 | seccomp + Landlock no `afsupervisor` | agente confinado a `/workspace` | ⬜ não iniciada |
-| 3 | Proxy de inferência | chave de LLM fora do container | ⬜ não iniciada |
+| 3 | Broker de inferência | nenhuma credencial de LLM no container | ⬜ não iniciada |
 | 4 | Proxy de banco + gate no data plane | gate independente do agente | ⬜ não iniciada |
 | 5 | Perímetro de egress | proxies inescapáveis | ⬜ não iniciada |
 | 6 | Telemetria OTel | um trace por execução | ⬜ não iniciada |
@@ -160,33 +160,72 @@ socket") exige `fromSource` do KubeArmor ou BPF-LSM — etapa 9.
 
 ---
 
-## Etapa 3 — Proxy de inferência (a chave de LLM sai do container)
+## Etapa 3 — Broker de inferência (nenhuma credencial de LLM no container)
 
-**Objetivo**: primeira credencial real a sair do container. Mais simples que o banco (HTTP, sem
-wire protocol, sem humano no loop) e constrói o componente que a etapa 4 estende.
+**Objetivo**: nem a chave real do provedor nem a virtual key do LiteLLM entram no container. O
+container carrega apenas um **token opaco emitido pelo portal**, que um broker troca pela
+credencial no caminho de saída.
 
-**Escopo**: LiteLLM como serviço na rede do portal. O portal emite **virtual key por sessão de
-chat**; `write_opencode_config` aponta o `baseURL`
-([`provisioning.py:124`](../portal/appaiforge/provisioning.py), já parametrizado) para ele, e
-`_provider_env` ([`provisioning.py:44`](../portal/appaiforge/provisioning.py)) injeta o token
-opaco no lugar da chave real.
+**Por que híbrido, e não a virtual key no env** (decidido em 2026-11-04): a credencial é injetada
+como env var do container, montada em `_provider_env` dentro do dict que vai para o
+`containers.run` ([`provisioning.py:196`](../portal/appaiforge/provisioning.py)). Env var de
+container é fixada na criação, e o opencode lê o `opencode.json` do cwd só no boot. Então
+**virtual key por sessão de chat é impossível via env**: trocar a key exigiria recriar o
+container, disparando o aviso *"Contexto do agente reiniciado"* a cada troca de sessão. Ou se
+aceita granularidade por sistema, ou se põe uma camada de troca. Escolhemos a camada.
+
+**Escopo**
+- **LiteLLM** permanece como backend de credencial e tradução de dialeto — o "buy" da etapa.
+- **Broker** novo: serviço **compartilhado** (não um sidecar por container) que valida o token do
+  container, resolve o run e a sessão ativos, escolhe a virtual key correspondente, injeta no
+  header e encaminha ao LiteLLM.
+- O container recebe `baseURL` → broker e, na env de credencial (cujo **nome** vem do perfil da
+  etapa 1, via `from_provider`), um **token opaco do portal** em vez de chave. Isso satisfaz o
+  client do opencode, que exige credencial configurada, e o token é **validado** pelo broker, não
+  ignorado.
+
+**A atribuição de sessão sai de graça**: o spec `agent-harness` garante *"Fila de um agente por
+sistema"* — no máximo um run ativo por sistema por vez. O broker não precisa de header nenhum do
+opencode (que não manda `session_id` na chamada ao LLM): ele pergunta ao portal qual run e sessão
+estão ativos naquele sistema. A serialização que já existe por razão de produto dá a atribuição.
+
+**Por que o broker pode ser compartilhado**: porque a identidade viaja no token, ele **não depende
+da forma do perímetro** (sidecar em netns no Docker vs `iptables` em k8s). Foi isso que permitiu
+trazer a camada de troca para esta etapa em vez de esperar a etapa 5.
 
 **Por que LiteLLM e não escrever**: multi-agente é **multi-dialeto**. opencode fala
 OpenAI-compatible; Claude Code fala Anthropic Messages. O LiteLLM expõe os dois — inclusive
 `/v1/messages` e `/v1/messages/count_tokens`, repassando `anthropic-beta`/`anthropic-version` —
-e traduz entre eles. Com um agente dava para improvisar; com três, não.
+e traduz entre eles. Com um agente dava para improvisar; com três, não. O broker fica **agnóstico
+de dialeto**: valida, injeta header e repassa.
 
 **Ganho colateral**: o `_token_count()` com gambiarra por provedor
 ([`opencode.py:119`](../portal/appaiforge/harness/opencode.py)) morre. Tokens e custo passam a
-vir do proxy, normalizados, reforçando o requirement *Visibilidade de uso de tokens*.
+vir do LiteLLM, normalizados, reforçando o requirement *Visibilidade de uso de tokens*. E o broker
+já conhece o `run_id`, o que dá correlação real (não por atributo) ao span de LLM na etapa 6.
 
-**Entrega verificável**: `docker exec <sys> env | grep -i key` mostra só o token de sessão;
-revogar a key de uma sessão derruba só aquela sessão.
+**Riscos próprios desta etapa** — são o custo do híbrido, e precisam de teste como o `gate.py`:
+- **SSE e cancelamento**: o broker tem que repassar streaming sem buffering, com backpressure e
+  timeout, e o `/session/{id}/abort` precisa cancelar a requisição ao provedor. Proxy de streaming
+  é onde moram os bugs sutis, e um proxy que bufferiza quebra o requirement *"Streaming do
+  trabalho em tempo real"*.
+- **Open relay interno**: o broker precisa de allowlist de destino e recusar requisição sem token
+  válido; sem isso ele vira saída livre para quem estiver na rede interna.
+- **Header do agente não sobrescreve a injeção**: o broker descarta credencial vinda do cliente.
+- **Superfície de revogação única**: com o container sem key, revogar a virtual key no LiteLLM não
+  derruba nada — o broker pediria outra. O broker **tem que ser a autoridade** de revogação
+  (token do container e mapeamento de sessão), para não haver duas superfícies que precisam
+  concordar.
+
+**Entrega verificável**: `docker exec <sys> env` não mostra nenhuma credencial utilizável, só o
+token opaco; revogar o token do container ou o mapeamento de sessão no broker derruba o acesso
+daquele sistema ou sessão sem afetar os outros.
 
 **Não resolve ainda**: nada impede o agente de chamar `api.z.ai` direto se descobrir o endereço.
-O proxy está **configurado**, não **imposto** — etapa 5.
+O broker está **configurado**, não **imposto** — etapa 5.
 
-**Specs/ADR**: `llm-provider-keys`. ADR 0020.
+**Specs/ADR**: `llm-provider-keys`. ADR 0020, registrando o híbrido como decisão e a virtual key
+no env como alternativa descartada, com o motivo (granularidade por sessão inviável por env).
 
 ---
 
@@ -242,6 +281,11 @@ próprias (ex.: 15432, 13306, 18080). O Landlock do agente usa `LANDLOCK_ACCESS_
 Funciona porque **Landlock é por árvore de processos, não por namespace**: o agente está
 confinado; o processo do proxy, no outro container, não.
 
+O **broker de inferência da etapa 3 é compartilhado**, não um sidecar: o agente o alcança por
+host:porta na rede interna. Como as regras de rede do Landlock são por **porta** e agnósticas de
+endereço, liberar a porta do broker cobre os dois casos sem mudança. E vale ser explícito: a
+**injeção de credencial é da etapa 3**; a etapa 5 só impõe que o caminho seja usado.
+
 HTTP(S) geral (`pip`, `npm`, `uv`): forçar `HTTP_PROXY`/`HTTPS_PROXY` e negar a 443. Ferramenta
 que ignora proxy env simplesmente falha — fail-closed, aceitável.
 
@@ -278,7 +322,8 @@ Collector → Prometheus (ou Mimir) + Tempo + Loki; Grafana em cima.
 
 **Expectativa calibrada**: a correlação é **por atributo** (`run_id`), **não** propagação W3C — o
 opencode não repassa `traceparent`. Cada proxy inicia um span filho resolvendo o `run_id` a
-partir da identidade da conexão.
+partir da identidade da conexão. Exceção: o **span `llm.request` vem do broker da etapa 3**, que
+já resolve run e sessão pelo token — ali a correlação é direta, não inferida.
 
 **Cuidados**: nada de evento de exec em label do Prometheus (cardinalidade). Eventos de kernel
 como OTLP logs são volume sério — filtrar no kernel **e** no collector, retenção curta.
@@ -458,6 +503,8 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 lsm=landlock,
 | S3 | Qual syscall do denylist quebra o runtime do opencode (Bun/Node)? | Etapa 2 |
 | S4 | LiteLLM cobre todos os provedores do catálogo (GLM, OpenRouter, openai-compatible)? | Etapa 3 |
 | S5 | Quanto falso-positivo o modo sombra do gate revela? | Etapa 4 |
+| S6 | SSE e cancelamento atravessam o broker sem buffering? | Etapa 3 |
+| S7 | O opencode aceita token opaco como credencial, sem validar formato? | Etapa 3 |
 
 ## Fora de escopo (limites aceitos)
 
@@ -502,7 +549,11 @@ quickstart deles roda o próprio opencode.
    (e é MITM com CA própria; `tls: skip` desliga o rewriting).
 
 **O que vale roubar já**: o desenho das etapas 2, 3 e 5 é o mesmo, e o denylist de seccomp deles
-é referência pronta.
+é referência pronta. O híbrido escolhido na etapa 3 **é** o modelo *endpoint-bound por
+placeholder* deles — o agente nunca vê credencial, e ela é adicionada só em requisições destinadas
+a endpoint aprovado — com o LiteLLM no papel de credential store, em vez de reescrevermos
+passthrough de `/v1/messages`, SSE e `count_tokens`. Que uma implementação independente tenha
+convergido no mesmo desenho é o melhor sinal que temos de que ele está certo.
 
 ## Referências
 
