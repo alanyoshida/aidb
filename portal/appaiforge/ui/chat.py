@@ -153,9 +153,10 @@ _GATE_COLOR_PROPS = {
 _QUIET_KINDS = {"tool_output", "usage"}  # detalhe técnico: fora do chat
                                          # (tokens ficam no painel "Uso de tokens")
 
-# Modo debug: os comandos executados ficam no DOM mas ocultos enquanto o debug
-# está desligado; alternar o switch é instantâneo (não precisa re-renderizar).
-_DEBUG_CSS = ".af-hide-commands .af-command { display: none !important; }"
+# Detalhe técnico da execução: fica no DOM mas oculto enquanto o debug está
+# desligado; alternar o switch é instantâneo (não precisa re-renderizar).
+_DEBUG_KINDS = {"command_run", "file_edited"}
+_DEBUG_CSS = ".af-hide-debug .af-debug { display: none !important; }"
 
 
 def render_chat(system: System, user: User) -> None:
@@ -190,7 +191,7 @@ def render_chat(system: System, user: User) -> None:
 
     # --- log do chat ---------------------------------------------------------
     with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
-        log_box = ui.column().classes("w-full gap-1 p-2 af-hide-commands")
+        log_box = ui.column().classes("w-full gap-1 p-2 af-hide-debug")
         approval_box = ui.column().classes("w-full")
     with ui.row().classes("w-full items-center justify-center gap-2"):
         state_dot = ui.element("span").classes("ap-dot")
@@ -203,7 +204,7 @@ def render_chat(system: System, user: User) -> None:
         else:
             state_dot.classes(remove="ap-dot--busy")
     debug = {"on": False}
-    debug_switch = ui.switch("Debug (mostrar comandos executados)").props("data-testid=chat-debug")
+    debug_switch = ui.switch("Debug (mostrar comandos e arquivos alterados)").props("data-testid=chat-debug")
     input_row = ui.row().classes("w-full items-center")
     with input_row:
         prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props("data-testid=chat-input borderless")
@@ -405,7 +406,7 @@ def render_chat(system: System, user: User) -> None:
             text = event.text or event.kind
 
         with box:
-            row_classes = "w-full items-center gap-1" + (" af-command" if event.kind == "command_run" else "")
+            row_classes = "w-full items-center gap-1" + (" af-debug" if event.kind in _DEBUG_KINDS else "")
             with ui.row().classes(row_classes):
                 icon = _EVENT_ICON.get(event.kind)
                 if icon:
@@ -489,9 +490,9 @@ def render_chat(system: System, user: User) -> None:
         debug["on"] = bool(debug_switch.value)
         for el in (log_box,):
             if debug["on"]:
-                el.classes(remove="af-hide-commands")
+                el.classes(remove="af-hide-debug")
             else:
-                el.classes(add="af-hide-commands")
+                el.classes(add="af-hide-debug")
 
     debug_switch.on_value_change(on_debug_change)
 
