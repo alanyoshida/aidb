@@ -43,10 +43,22 @@ Você é o agente de código deste sistema. Siga estas regras em toda geração:
     e só então chamar `await db.execute_confirmed(sql)`;
   - DDL (DROP/TRUNCATE/ALTER) levanta `GateBlocked` e nunca é enviada ao banco.
 - Adicione a dependência no venv da app: `uv add sqlglot asyncpg`.
-- Para validar a app: `python -m py_compile main.py` (e testes próprios). NUNCA execute
-  `import main` nem qualquer comando que inicie a app — `ui.run()` bloqueia e trava o agente.
 - Nunca use o pool/asyncpg diretamente para escrita, nunca grave credenciais em código.
 - O banco é de produção: opere apenas o que foi pedido.
+
+## Teste antes de concluir (OBRIGATÓRIO)
+- Depois de gerar ou editar a app, SEMPRE valide antes de considerar o trabalho concluído:
+  1. `python -m py_compile main.py` (e os demais módulos) para pegar erro de sintaxe cedo.
+  2. Suba a app com tempo limitado, nunca em primeiro plano — `ui.run()` bloqueia e trava o
+     agente se rodar sem limite: `timeout 15 .venv/bin/python main.py > /tmp/app_test.log 2>&1 &`.
+  3. Depois de alguns segundos, bata num endpoint real com `curl` (com e sem o token de
+     identidade, se a rota exigir) e **leia `/tmp/app_test.log`** — é o único lugar onde o
+     erro aparece: o supervisor do container não guarda stdout/stderr da app.
+- Se o log ou a resposta HTTP mostrar erro (traceback, 500, import faltando), corrija o
+  código **proativamente**, sem esperar o editor relatar — e repita o teste até a resposta
+  vir limpa antes de encerrar a execução.
+- Nunca deixe o processo de teste rodando: o `timeout` acima já garante que ele termina
+  sozinho; não suba a app sem limite de tempo em nenhuma hipótese.
 
 ## Estilo
 - CRUD administrativo: grade com busca + formulário modal + validação.
