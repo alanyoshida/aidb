@@ -4,6 +4,7 @@ Runs enfileiradas por ordem de chegada; worker por sistema executa em série.
 Eventos vão para assinantes em memória (chat) e o resumo persiste na run.
 """
 
+import json
 import logging
 import re
 import threading
@@ -71,6 +72,18 @@ def redact(text: str) -> str:
     for pattern, replacement in _REDACT_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
+
+
+def _event_key(event: RunEvent) -> tuple:
+    """Identidade de um evento para deduplicação (ver _dispatch): o harness opencode
+    reemite o mesmo estado de uma tool call (ou o mesmo uso de tokens) em updates
+    sucessivos do SSE — sem isso, o mesmo comando/uso aparece repetido no chat e na
+    auditoria (TokenUsage somado em dobro)."""
+    try:
+        meta_repr = json.dumps(event.meta or {}, sort_keys=True, default=str)
+    except TypeError:
+        meta_repr = repr(event.meta)
+    return (event.kind, event.text, meta_repr)
 
 
 class RunBuffer:
@@ -228,6 +241,8 @@ class AgentQueue:
                 cs.harness_session_id = session_id
                 cs.context_reset = False
 
+        last_dispatched: dict = {"key": None}
+
         def on_event(event: RunEvent) -> None:
             try:
                 _dispatch(event)
@@ -242,6 +257,20 @@ class AgentQueue:
             if event.kind == "gate_request":
                 self._handle_gate_request(system_dict, run_id, run.user_id, run.user_email, event, buffer, session_id)
                 return
+            # tool em progresso: opencode manda o "pending" antes de preencher o comando —
+            # nada para mostrar ainda (o próximo update deste mesmo comando chega em seguida)
+            if event.kind == "command_run" and not (event.meta.get("command") or "").strip():
+                return
+            # opencode também reemite "usage" com zeros depois do uso real do mesmo turno
+            if event.kind == "usage" and not (event.meta.get("input_tokens") or event.meta.get("output_tokens")):
+                return
+            # opencode reemite o mesmo estado (ex.: a cada tick de uma tool em andamento,
+            # ou o mesmo "usage" duas vezes) — sem isto, o comando aparece duplicado no
+            # chat e o uso de tokens é contado em dobro na auditoria
+            key = _event_key(event)
+            if key == last_dispatched["key"]:
+                return
+            last_dispatched["key"] = key
             buffer.push(event)
             if event.kind == "usage":
                 # nem todo provedor reporta modelo no evento; cai para o config do sistema
@@ -349,14 +378,42 @@ class AgentQueue:
 
         bloqueada -> recusa automática; normal -> aprova automática; confirmável
         -> pendência aguardando o editor no chat (estado awaiting_approval).
+
+        O harness (opencode) pede permissão para mais coisas do que comando de
+        banco via bash — por exemplo acesso a diretório fora do workspace
+        (`permission: "external_directory"`). Só "bash" passa pelo classificador
+        de SQL (ADR 0017); qualquer outro tipo vira uma pendência genérica, sem
+        fingir que é uma decisão de banco (`sql=None`: `decide_gate` não grava
+        no histórico do gate de destrutivas por não ser uma decisão de SQL).
         """
         from . import gate
 
+        request_id = event.meta.get("request_id", "")
+        permission = event.meta.get("permission", "")
+        system_id = system_dict["system_id"]
+
+        if permission != "bash":
+            self.pending_gates[run_id] = {
+                "request_id": request_id,
+                "session_id": session_id,
+                "sql": None,
+                "permission": permission,
+                "detail": event.text or permission or "ação do agente",
+                "connection_name": "",
+                "reason": "",
+                "system_id": system_id,
+                "system_slug": system_dict["slug"],
+            }
+            with session_scope() as s:
+                run = s.get(AgentRun, run_id)
+                if run is not None:
+                    run.status = RunStatus.awaiting_approval
+            buffer.push(event)
+            return
+
         command = event.text
         sql = gate.extract_sql(command)
-        request_id = event.meta.get("request_id", "")
 
-        system_id = system_dict["system_id"]
         if sql is None:
             classification, reason = gate.GateClass.CONFIRMABLE, "comando de banco sem SQL identificável"
         else:
@@ -407,16 +464,21 @@ class AgentQueue:
             if author is not None:
                 s.expunge(author)
         self.harness.reply_gate({"slug": info["system_slug"]}, info["session_id"], request_id, approve)
-        gate.record_decision(
-            info["system_id"], info["sql"], origin="agente", connection_name=info["connection_name"],
-            classification=gate.GateClass.CONFIRMABLE,
-            decision="aprovada" if approve else "recusada", run_id=run_id,
-            author_id=author.id if author else None, author_email=author.email if author else None,
-        )
+        # pendências sem SQL (permissão fora do domínio do gate, ex.: acesso a
+        # diretório) não entram no histórico de decisões de banco — gravar ali
+        # seria uma decisão de SQL inventada, sem statement nenhuma por trás
+        if info["sql"] is not None:
+            gate.record_decision(
+                info["system_id"], info["sql"], origin="agente", connection_name=info["connection_name"],
+                classification=gate.GateClass.CONFIRMABLE,
+                decision="aprovada" if approve else "recusada", run_id=run_id,
+                author_id=author.id if author else None, author_email=author.email if author else None,
+            )
         self.pending_gates.pop(run_id, None)
         buffer = self.buffers.get(run_id)
         if buffer:
-            buffer.push(RunEvent("gate_resolved", text=f"{'aprovada' if approve else 'recusada'} pelo editor: {info['sql'][:80]}"))
+            label = info["sql"][:80] if info["sql"] is not None else info.get("detail", "")
+            buffer.push(RunEvent("gate_resolved", text=f"{'aprovada' if approve else 'recusada'} pelo editor: {label}"))
         with session_scope() as s:
             run = s.get(AgentRun, run_id)
             if run is not None and run.status == RunStatus.awaiting_approval:
@@ -430,11 +492,12 @@ class AgentQueue:
             from . import gate
 
             self.harness.reply_gate({"slug": system.slug}, pending["session_id"], pending["request_id"], approve=False)
-            gate.record_decision(
-                system.id, pending["sql"], origin="agente", connection_name=pending["connection_name"],
-                classification=gate.GateClass.CONFIRMABLE, decision="recusada",
-                run_id=run_id, author_id=None,
-            )
+            if pending["sql"] is not None:
+                gate.record_decision(
+                    system.id, pending["sql"], origin="agente", connection_name=pending["connection_name"],
+                    classification=gate.GateClass.CONFIRMABLE, decision="recusada",
+                    run_id=run_id, author_id=None,
+                )
             buffer = self.buffers.get(run_id)
             if buffer:
                 buffer.push(RunEvent("gate_resolved", text="recusada: execução interrompida"))

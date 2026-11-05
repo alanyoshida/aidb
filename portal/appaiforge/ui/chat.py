@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from nicegui import ui
 
-from ..agent_queue import RunBuffer, get_queue
+from ..agent_queue import get_queue
 from ..config import get_settings
 from ..models import AgentRun, ChatSession, RunStatus, System, User
 from ..rbac import can_chat, can_manage_system
@@ -209,7 +209,9 @@ def render_chat(system: System, user: User) -> None:
     with input_row:
         prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props("data-testid=chat-input borderless")
         send_btn = ui.button(icon="send").classes("af-chat-send").props("flat round data-testid=chat-send")
-        interrupt_btn = ui.button(icon="stop").props("color=negative flat round data-testid=chat-interrupt")
+        interrupt_btn = ui.button(icon="stop").props(
+            'color=negative flat round data-testid=chat-interrupt aria-label="Interromper"'
+        ).tooltip("Interromper")
         interrupt_btn.set_visibility(False)
 
     current_run: dict = {"id": None, "shown": 0}
@@ -361,9 +363,17 @@ def render_chat(system: System, user: User) -> None:
         approval_box.clear()
         with approval_box:
             with ui.card().classes("w-full border-orange-400"):
-                ui.label("O agente pede aprovação para uma operação destrutiva").classes("font-semibold text-orange-700")
-                ui.label(f"SQL: {info['sql']}").classes("text-sm").style("white-space: pre-wrap")
-                ui.label(f"motivo: {info['reason']}").classes("text-xs text-gray-600")
+                if info.get("sql") is not None:
+                    ui.label("O agente pede aprovação para uma operação destrutiva").classes("font-semibold text-orange-700")
+                    ui.label(f"SQL: {info['sql']}").classes("text-sm").style("white-space: pre-wrap")
+                    ui.label(f"motivo: {info['reason']}").classes("text-xs text-gray-600")
+                else:
+                    # permissão fora do domínio do gate de SQL (ex.: acesso a diretório
+                    # fora do workspace) — não finge ser uma decisão de banco
+                    ui.label("O agente pede permissão para uma ação fora do escopo usual").classes("font-semibold text-orange-700")
+                    ui.label(f"tipo: {info.get('permission') or 'desconhecido'}").classes("text-sm")
+                    if info.get("detail"):
+                        ui.label(info["detail"]).classes("text-xs text-gray-600").style("white-space: pre-wrap")
 
                 def decide(approve: bool) -> None:
                     from ..models import User as UserM
@@ -393,8 +403,13 @@ def render_chat(system: System, user: User) -> None:
             return
 
         if event.kind == "gate_request":
-            command = event.meta.get("command") or event.text or "comando"
-            text = f"PEDIDO DE APROVAÇÃO — comando de banco: {command}"
+            permission = event.meta.get("permission") or ""
+            if permission == "bash":
+                command = event.meta.get("command") or event.text or "comando"
+                text = f"PEDIDO DE APROVAÇÃO — comando de banco: {command}"
+            else:
+                detail = event.meta.get("command") or event.text or permission or "ação do agente"
+                text = f"PEDIDO DE APROVAÇÃO — permissão '{permission or 'desconhecida'}': {detail}"
         elif event.kind == "command_run":
             text = f"comando: {(event.meta.get('command') or event.text or 'comando')[:160]}"
         elif event.kind == "file_edited":
@@ -438,9 +453,12 @@ def render_chat(system: System, user: User) -> None:
                     render_event(log_box, event)
                 current_run["shown"] = len(events)
             interrupt_btn.set_visibility(True)
+            # queue.pending_gates reflete só o pedido ATUALMENTE pendente — ao contrário
+            # de varrer o histórico do buffer, que continuaria "True" para sempre depois
+            # que o editor já aprovou (o evento gate_request fica no buffer até o fim da run)
             set_state(
                 "aguardando sua aprovação (gate de destrutivas)"
-                if any(e.kind == "gate_request" for e in (queue.buffers.get(current_run["id"]) or RunBuffer()).snapshot())
+                if queue.pending_gates.get(current_run["id"]) is not None
                 else "agente executando...",
                 busy=True,
             )

@@ -78,7 +78,9 @@ def test_chat_gera_app_e_registra_uso_e_checkpoint(page, suffix):
     page.locator('[data-testid=create-system]').click()
     _wait_system_active(page)
 
-    # chat: envia pedido e acompanha o streaming de eventos
+    # chat: envia pedido e acompanha o streaming de eventos; "arquivo alterado"
+    # é detalhe técnico e só aparece com o debug ligado (spec agent-harness)
+    page.locator('[data-testid=chat-debug]').click()
     page.locator('[data-testid=chat-input]').fill("crie o painel de clientes")
     page.locator('[data-testid=chat-send]').click()
     page.get_by_text("Entendi o pedido").wait_for(timeout=30_000)
@@ -131,8 +133,7 @@ def test_editor_interrompe_execucao(page, suffix):
     page.get_by_role("button", name="Interromper").click()
     page.get_by_text("agente livre").wait_for(timeout=30_000)
 
-    # a execução consta como interrompida no histórico
-    page.get_by_text("Execuções anteriores").click()
+    # a execução consta como interrompida (marcador de transição no log do chat)
     page.get_by_text("interrompida").first.wait_for(timeout=30_000)
 
 
