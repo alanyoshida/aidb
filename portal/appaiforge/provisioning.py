@@ -17,11 +17,17 @@ from sqlalchemy import func, select, update
 from .config import get_settings
 from .db import session_scope
 from .edge import publish_app, system_container_name, unpublish_app
-from .models import ChatSession, DbConnection, ProviderKey, System, SystemStatus
+from .models import ChatSession, DbConnection, ExecutionMode, ProviderKey, System, SystemStatus
 from .security import decrypt_secret
 from .services.connections import connection_string, get_connection_secret
 
 log = logging.getLogger(__name__)
+
+# uid/gid do usuário não-root da imagem base (ADR 0018) — deve casar com o
+# `useradd --uid 1000 --gid agent` de base-image/Dockerfile. Só se aplica a
+# sistemas em ExecutionMode.reduced; o modo legacy sobe como root explícito.
+AGENT_UID = 1000
+AGENT_GID = 1000
 
 
 class CapacityReached(Exception):
@@ -141,6 +147,30 @@ def write_opencode_config(system: System, config_dir: str) -> None:
         json.dump(config, f, indent=2)
 
 
+def write_agent_profile(system: System, config_dir: str) -> dict:
+    """Serializa o perfil de runtime do agente (capability agent-runtime) como
+    JSON em config_dir, ao lado do config do agente. Contém só o NOME da env
+    de credencial, nunca o valor de nenhum segredo."""
+    from .agent_profiles import get_profile, resolve_credential_env
+
+    profile = get_profile()
+    payload = {
+        "agent": profile["agent"],
+        "command": profile["command"],
+        "cwd": profile["cwd"],
+        "config_path": profile["config_path"],
+        "config_format": profile["config_format"],
+        "credential_env": resolve_credential_env(profile, system.provider),
+        "harness_port": profile["harness_port"],
+        "readable_paths": profile["readable_paths"],
+        "writable_paths": profile["writable_paths"],
+    }
+    os.makedirs(config_dir, exist_ok=True)
+    with open(os.path.join(config_dir, "agent-profile.json"), "w") as f:
+        json.dump(payload, f, indent=2)
+    return payload
+
+
 def refresh_connections(system: System) -> None:
     """Reaplica as conexões vigentes: recria o container (env + opencode.json
     são fixados na criação; o workspace persiste no volume)."""
@@ -183,16 +213,26 @@ def provision_system(system: System) -> str:
     host_dir = os.path.join(settings.host_workspaces_dir, system.slug)
     portal_dir = os.path.join(settings.workspaces_dir, system.slug)
     os.makedirs(portal_dir, exist_ok=True)
+    if system.execution_mode == ExecutionMode.reduced:
+        # dono do usuário do agente (ADR 0018): sem isto, o workspace criado
+        # pelo portal (root) não seria gravável pelo container não-root.
+        # Sistemas legacy não passam por aqui — workspace existente intacto.
+        os.chown(portal_dir, AGENT_UID, AGENT_GID)
 
     host_config_slug = os.path.join(settings.host_config_dir, system.slug)
     portal_config_dir = os.path.join(settings.configs_dir, system.slug)
     write_opencode_config(system, portal_config_dir)
+    write_agent_profile(system, portal_config_dir)
 
     env = {
         "APP_IDENTITY_SECRET": system.identity_secret,
         "APPAIFORGE_SLUG": system.slug,
         "APP_PORT": str(settings.app_port),
         "APP_ROOT_PATH": f"/apps/{system.slug}",
+        # Único ponto de entrada fixo do supervisor (ADR 0018, D2): todo o resto
+        # do runtime do agente (comando, cwd, porta, credencial) vem de dentro
+        # do arquivo que esta env aponta, não de constante nenhuma no supervisor.
+        "AIDB_AGENT_PROFILE": "/opencode-config/agent-profile.json",
         **_provider_env(system.provider),
         **_connection_env(system.id),
     }
@@ -200,6 +240,7 @@ def provision_system(system: System) -> str:
     limits = {
         "nano_cpus": int(settings.container_cpus * 1e9),
         "mem_limit": f"{settings.container_mem_mb}m",
+        "pids_limit": settings.container_pids_limit,
     }
     storage_opt = {"size": f"{settings.container_disk_gb}g"}
 
@@ -220,6 +261,7 @@ def provision_system(system: System) -> str:
         },
         "restart_policy": {"Name": "unless-stopped"},
         **limits,
+        **_execution_identity(system.execution_mode),
     }
     try:
         container = client.containers.run(detach=True, **kwargs, storage_opt=storage_opt)
@@ -234,6 +276,24 @@ def provision_system(system: System) -> str:
 
     set_container(system.id, container.id)
     return container.id
+
+
+def _execution_identity(mode: ExecutionMode) -> dict:
+    """kwargs de identidade de execução do container (ADR 0018, spec container-lifecycle).
+
+    reduced: usuário não-root da imagem, sem capabilities, sem escalada de
+    privilégio. legacy: `user="root"` explícito — a imagem passou a ter
+    usuário não-root como padrão (base-image/Dockerfile), então sistemas
+    criados antes desta mudança exigem a sobrescrita para continuar
+    acessando o workspace existente (dono root) sem migração.
+    """
+    if mode == ExecutionMode.reduced:
+        return {
+            "user": f"{AGENT_UID}:{AGENT_GID}",
+            "cap_drop": ["ALL"],
+            "security_opt": ["no-new-privileges"],
+        }
+    return {"user": "root"}
 
 
 def _check_capacity(system_id: str) -> None:

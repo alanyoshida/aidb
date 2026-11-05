@@ -167,6 +167,7 @@ def test_provision_system_invalida_todas_as_sessions(clean_db, fake_workspace, m
     monkeypatch.setattr("appaiforge.provisioning._docker", lambda: FakeClient())
     monkeypatch.setattr("appaiforge.provisioning.ensure_network", lambda: None)
     monkeypatch.setattr("appaiforge.provisioning.write_opencode_config", lambda *a, **kw: None)
+    monkeypatch.setattr("appaiforge.provisioning.write_agent_profile", lambda *a, **kw: None)
     monkeypatch.setattr("appaiforge.provisioning._provider_env", lambda *a: {})
     monkeypatch.setattr("appaiforge.provisioning._connection_env", lambda *a: {})
     monkeypatch.setattr("appaiforge.provisioning._check_capacity", lambda *a: None)

@@ -10,7 +10,7 @@
 
 | # | Etapa | Entregável | Status |
 |---|---|---|---|
-| 1 | Higiene do container + `AgentProfile` | container não-root, perfil declarativo | ⬜ não iniciada |
+| 1 | Higiene do container + `AgentProfile` | container não-root, perfil declarativo | ✅ concluída (change `agent-runtime-profile-and-hardening`, ADR 0018) |
 | 2 | seccomp + Landlock no `afsupervisor` | agente confinado a `/workspace` | ⬜ não iniciada |
 | 3 | Broker de inferência | nenhuma credencial de LLM no container | ⬜ não iniciada |
 | 4 | Proxy de banco + gate no data plane | gate independente do agente | ⬜ não iniciada |
@@ -86,33 +86,41 @@ na [etapa 9](#ebpf-substitui-seccomp--landlock-não--e-por-quê).
 
 ---
 
-## Etapa 1 — Higiene do container + `AgentProfile`
+## Etapa 1 — Higiene do container + `AgentProfile` ✅ concluída
 
 **Objetivo**: a base que todas as outras etapas leem. Nada de kernel.
 
-**Escopo**
-- `AgentProfile` declarativo, com **um** perfil (`opencode`): comando de exec, caminho e
-  formato do config, nome da env de credencial, caminhos graváveis/legíveis, porta do harness,
-  uid de execução. Consumido pelo `afsupervisor` em vez do `HARNESS_CMD` hardcoded em
-  [`supervisor.py:20`](../base-image/afsupervisor/supervisor.py) e por `write_opencode_config`
-  ([`provisioning.py:76`](../portal/appaiforge/provisioning.py)).
-- `USER` não-root na imagem; `cap_drop: ALL`, `no-new-privileges`, `pids_limit`, rootfs
-  `read_only` + tmpfs, nos kwargs de [`provisioning.py:206`](../portal/appaiforge/provisioning.py).
+**Entregue** (change `agent-runtime-profile-and-hardening`, ADR 0018 — ver
+[`docs/adr/0018-...md`](adr/0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md)):
+- Perfil declarativo em `portal/appaiforge/agent_profiles.py`, com **um** perfil (`opencode`):
+  comando, cwd, caminho do config, porta do harness, caminhos legíveis/graváveis, e o nome da env
+  de credencial (literal ou `from_provider`, delegando ao catálogo). Serializado como JSON em
+  `configs_dir/<slug>/agent-profile.json` e entregue via `AIDB_AGENT_PROFILE` — único ponto de
+  entrada fixo do supervisor, que não embute mais `HARNESS_CMD` nenhum.
+- Imagem base com usuário não-root (`agent`, uid/gid 1000) como padrão, opencode relocado para
+  fora de `/root`.
+- `cap_drop: ALL`, `no-new-privileges` e `pids_limit` nos kwargs do container — **só** no modo de
+  execução `reduced`. **Rootfs `read_only` ficou fora**: decisão explícita, deferida para a etapa
+  2, porque o cache do opencode (pacotes de provedor baixados em runtime) vive em `HOME`, e medir
+  o mapa de escrita antes de tornar o filesystem imutável evita quebrar isso sem necessidade.
 
-**Por que o perfil aqui**: Landlock (2), seccomp (2), endpoints de proxy (3, 4) e regras
-`fromSource` (9) todos leem dele. Se vier depois, as etapas 2 e 3 são refeitas.
+**Mudança em relação ao plano original — sem migração, com modo persistido**: a "migração
+irreversível" prevista aqui (chown na reconciliação) **não aconteceu**. Decisão explícita do
+usuário: só sistemas **novos** usam a identidade reduzida; sistemas existentes continuam como
+root, sem nenhuma intervenção. Isso exigiu um campo novo — `execution_mode` (`legacy`/`reduced`)
+em `System`, fixado na criação e imutável — porque sem estado persistido a reconciliação não
+teria como saber qual container recriar com qual identidade. `legacy` é o `server_default` da
+migração (preserva todo sistema existente); `reduced` é o default do modelo (todo sistema novo).
 
-**Entrega verificável**: mesma funcionalidade; teste de integração afirma `id` não-root e
-`capsh --print` sem capabilities.
+**Entrega verificável**: testes de integração confirmam, nos dois modos, o `user` e `cap_drop`
+corretos nos atributos do container e via `id` dentro dele (não foi preciso `capsh` — os
+atributos do Docker já expõem `HostConfig.CapDrop` diretamente). Migração Alembic testada ponta a
+ponta contra Postgres descartável: uma linha inserida antes da migração vira `legacy` depois do
+upgrade; `alembic heads` lista um único head.
 
-**Não resolve ainda**: nenhum confinamento real. Credenciais continuam em env var e o agente
-continua lendo `/proc/self/environ`.
-
-**Migração irreversível — a única do roteiro**: os workspaces existentes no host são de root.
-Precisa de `chown` na reconciliação, com cuidado para não quebrar o git dos checkpoints.
-Fazer nesta etapa, enquanto é barato.
-
-**Specs/ADR**: `container-lifecycle`. ADR 0018 — *um agente por container, com perfil declarativo*.
+**Não resolve ainda**: nenhum confinamento real de kernel. Credenciais continuam em env var e o
+agente continua lendo `/proc/self/environ`. Regra por binário e rootfs imutável ficam para a
+etapa 2.
 
 ---
 

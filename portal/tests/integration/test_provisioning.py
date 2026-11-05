@@ -170,3 +170,130 @@ def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
             last_error = exc
         time.sleep(2)
     raise AssertionError(f"container não refletiu as conexões em 60s: {last_error}")
+
+
+@pytest.fixture()
+def hardened_image(monkeypatch):
+    """Imagem base com a identidade não-root (ADR 0018) — não é a tag de
+    produção (appaiforge/base:0.1.0); evita afetar sistemas reais do host."""
+    monkeypatch.setenv("APPAIFORGE_BASE_IMAGE", "appaiforge/base:adr18-test")
+    from appaiforge.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _set_mode_and_provision(system, mode):
+    from appaiforge.db import session_scope
+    from appaiforge.models import System as SystemModel
+    from appaiforge.provisioning import provision_system
+
+    with session_scope() as s:
+        s.get(SystemModel, system.id).execution_mode = mode
+    system.execution_mode = mode
+    provision_system(system)
+    return system
+
+
+def test_container_reduzido_sobe_sem_root_e_sem_capabilities(system, hardened_image):
+    """Task 5.1: modo reduzido não-root, sem capability nenhuma, sem escalada."""
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import ExecutionMode
+
+    _set_mode_and_provision(system, ExecutionMode.reduced)
+
+    container = _client().containers.get(system_container_name(system.slug))
+    attrs = container.attrs
+    assert attrs["Config"]["User"] == "1000:1000"
+    assert attrs["HostConfig"]["CapDrop"] == ["ALL"]
+    assert "no-new-privileges" in (attrs["HostConfig"]["SecurityOpt"] or [])
+
+    result = container.exec_run(["id"])
+    out = result.output.decode()
+    assert "uid=1000" in out
+    assert "uid=0(root)" not in out
+
+
+def test_container_legacy_sobe_como_root_explicito(system, hardened_image):
+    """Task 5.1/D5: sistema legacy sobrescreve o padrão não-root da imagem com root."""
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import ExecutionMode
+
+    _set_mode_and_provision(system, ExecutionMode.legacy)
+
+    container = _client().containers.get(system_container_name(system.slug))
+    attrs = container.attrs
+    assert attrs["Config"]["User"] == "root"
+    assert not attrs["HostConfig"]["CapDrop"]
+
+    result = container.exec_run(["id"])
+    assert "uid=0(root)" in result.output.decode()
+
+
+@pytest.mark.parametrize("mode_name", ["reduced", "legacy"])
+def test_agente_grava_no_workspace_nos_dois_modos(system, hardened_image, mode_name):
+    """Task 5.2: o workspace é gravável pelo agente em qualquer um dos modos."""
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import ExecutionMode
+
+    mode = ExecutionMode.reduced if mode_name == "reduced" else ExecutionMode.legacy
+    _set_mode_and_provision(system, mode)
+
+    container = _client().containers.get(system_container_name(system.slug))
+    result = container.exec_run(["sh", "-c", "echo gravado > /workspace/prova.txt && cat /workspace/prova.txt"])
+    assert result.exit_code == 0, result.output.decode()
+    assert "gravado" in result.output.decode()
+
+
+def test_workspace_de_sistema_reduzido_pertence_ao_agente_no_host(system, hardened_image):
+    """Task 5.2: o diretório de workspace de um sistema novo já nasce com o
+    dono do usuário do agente (verificado pelo lado do portal, que vê o
+    mesmo bind do host)."""
+    from appaiforge.config import get_settings
+    from appaiforge.models import ExecutionMode
+
+    _set_mode_and_provision(system, ExecutionMode.reduced)
+
+    workspace = os.path.join(get_settings().workspaces_dir, system.slug)
+    st = os.stat(workspace)
+    assert (st.st_uid, st.st_gid) == (1000, 1000)
+
+
+@pytest.mark.parametrize("mode_name", ["reduced", "legacy"])
+def test_reconciliacao_preserva_o_modo_de_execucao(system, hardened_image, mode_name):
+    """Task 5.4: container recriado pela reconciliação mantém a identidade
+    de execução original do sistema."""
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import ExecutionMode, SystemStatus
+    from appaiforge.provisioning import reconcile
+    from appaiforge.services.systems import set_status
+
+    mode = ExecutionMode.reduced if mode_name == "reduced" else ExecutionMode.legacy
+    _set_mode_and_provision(system, mode)
+    set_status(system.id, SystemStatus.active, "")  # visível para reconcile()
+
+    _client().containers.get(system_container_name(system.slug)).remove(force=True)
+    reconcile()
+
+    container = _client().containers.get(system_container_name(system.slug))
+    expected_user = "1000:1000" if mode == ExecutionMode.reduced else "root"
+    assert container.attrs["Config"]["User"] == expected_user
+
+
+@pytest.mark.parametrize("mode_name", ["reduced", "legacy"])
+def test_refresh_connections_preserva_o_modo_de_execucao(system, hardened_image, mode_name):
+    """Task 5.4: recriação via refresh_connections (registro de conexão) também
+    preserva o modo de execução original do sistema."""
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import ExecutionMode
+    from appaiforge.provisioning import refresh_connections
+
+    mode = ExecutionMode.reduced if mode_name == "reduced" else ExecutionMode.legacy
+    _set_mode_and_provision(system, mode)
+
+    refresh_connections(system)
+
+    container = _client().containers.get(system_container_name(system.slug))
+    expected_user = "1000:1000" if mode == ExecutionMode.reduced else "root"
+    assert container.attrs["Config"]["User"] == expected_user

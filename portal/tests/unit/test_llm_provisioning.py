@@ -124,3 +124,166 @@ def test_write_opencode_config_grava_em_config_dir_nao_no_workspace(editor, tmp_
 
     assert os.path.isfile(config_dir / "opencode.json"), "opencode.json deve estar em config_dir"
     assert not os.path.exists(workspace_dir / "opencode.json"), "opencode.json NÃO deve estar no workspace_dir"
+
+def test_write_agent_profile_sem_segredo(editor, tmp_path):
+    from appaiforge.provisioning import write_agent_profile
+
+    system = create_system(editor, "PERF", "prov-perfil")
+    payload = write_agent_profile(system, str(tmp_path))
+
+    with open(tmp_path / "agent-profile.json") as f:
+        on_disk = json.load(f)
+    assert on_disk == payload
+    assert on_disk["credential_env"] == "ZHIPU_API_KEY"  # glm é o padrão; resolvido, não "from_provider"
+    serialized = json.dumps(on_disk)
+    assert "from_provider" not in serialized
+    # nenhum valor de segredo: nem chave de provedor, nem connection string
+    assert "api.z.ai" not in serialized
+    assert "://" not in serialized
+
+
+def test_write_agent_profile_declara_comando_cwd_e_porta(editor, tmp_path):
+    from appaiforge.provisioning import write_agent_profile
+
+    system = create_system(editor, "PERF2", "prov-perfil-2")
+    payload = write_agent_profile(system, str(tmp_path))
+
+    assert payload["command"][0] == "opencode"
+    assert payload["cwd"] == "/opencode-config"
+    assert payload["harness_port"] == 4096
+
+
+def test_provision_system_passa_aidb_agent_profile_no_env(editor, tmp_path, monkeypatch):
+    """O container recebe AIDB_AGENT_PROFILE apontando para o perfil no mount
+    somente-leitura; o supervisor não embute nenhum caminho literal de agente."""
+    import docker
+
+    class FakeContainer:
+        id = "fake-id"
+
+    captured = {}
+
+    class FakeContainers:
+        def get(self, name):
+            raise docker.errors.NotFound("not found")
+
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            return FakeContainer()
+
+    class FakeNetworks:
+        def get(self, name):
+            raise docker.errors.NotFound("not found")
+
+        def create(self, name, driver=None):
+            pass
+
+    class FakeClient:
+        containers = FakeContainers()
+        networks = FakeNetworks()
+
+    monkeypatch.setattr("appaiforge.provisioning._docker", lambda: FakeClient())
+    monkeypatch.setattr("appaiforge.provisioning.set_container", lambda *a: None)
+    monkeypatch.setenv("APPAIFORGE_WORKSPACES_DIR", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("APPAIFORGE_HOST_WORKSPACES_DIR", str(tmp_path / "host-workspaces"))
+    monkeypatch.setenv("APPAIFORGE_CONFIGS_DIR", str(tmp_path / "configs"))
+    monkeypatch.setenv("APPAIFORGE_HOST_CONFIG_DIR", str(tmp_path / "host-configs"))
+    from appaiforge.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        from appaiforge.provisioning import provision_system
+
+        system = create_system(editor, "ENV", "prov-env")
+        provision_system(system)
+    finally:
+        get_settings.cache_clear()
+
+    assert captured["environment"]["AIDB_AGENT_PROFILE"] == "/opencode-config/agent-profile.json"
+    assert "ANTHROPIC_API_KEY" not in captured["environment"]  # sem chave real injetada à toa
+
+
+def _provision_with_fake_docker(system, tmp_path, monkeypatch):
+    """Monta um provision_system() que não toca o daemon Docker; devolve os
+    kwargs que seriam passados a client.containers.run()."""
+    import docker
+
+    class FakeContainer:
+        id = "fake-id"
+
+    captured = {}
+
+    class FakeContainers:
+        def get(self, name):
+            raise docker.errors.NotFound("not found")
+
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            return FakeContainer()
+
+    class FakeNetworks:
+        def get(self, name):
+            raise docker.errors.NotFound("not found")
+
+        def create(self, name, driver=None):
+            pass
+
+    class FakeClient:
+        containers = FakeContainers()
+        networks = FakeNetworks()
+
+    monkeypatch.setattr("appaiforge.provisioning._docker", lambda: FakeClient())
+    monkeypatch.setattr("appaiforge.provisioning.set_container", lambda *a: None)
+    monkeypatch.setenv("APPAIFORGE_WORKSPACES_DIR", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("APPAIFORGE_HOST_WORKSPACES_DIR", str(tmp_path / "host-workspaces"))
+    monkeypatch.setenv("APPAIFORGE_CONFIGS_DIR", str(tmp_path / "configs"))
+    monkeypatch.setenv("APPAIFORGE_HOST_CONFIG_DIR", str(tmp_path / "host-configs"))
+    from appaiforge.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        from appaiforge.provisioning import provision_system
+
+        provision_system(system)
+    finally:
+        get_settings.cache_clear()
+    return captured
+
+
+def test_sistema_reduzido_recebe_identidade_nao_root(editor, tmp_path, monkeypatch):
+    system = create_system(editor, "RED", "prov-reduced")
+    kwargs = _provision_with_fake_docker(system, tmp_path, monkeypatch)
+    assert kwargs["user"] == "1000:1000"
+    assert kwargs["cap_drop"] == ["ALL"]
+    assert kwargs["security_opt"] == ["no-new-privileges"]
+
+
+def test_sistema_legacy_sobe_como_root_explicito(editor, tmp_path, monkeypatch):
+    from appaiforge.models import ExecutionMode
+    from appaiforge.db import session_scope
+    from appaiforge.models import System as SystemModel
+
+    system = create_system(editor, "OLD", "prov-legacy")
+    with session_scope() as s:
+        s.get(SystemModel, system.id).execution_mode = ExecutionMode.legacy
+    system.execution_mode = ExecutionMode.legacy
+
+    kwargs = _provision_with_fake_docker(system, tmp_path, monkeypatch)
+    assert kwargs["user"] == "root"
+    assert "cap_drop" not in kwargs
+    assert "security_opt" not in kwargs
+
+
+def test_teto_de_processos_configuravel_chega_ao_container(editor, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPAIFORGE_CONTAINER_PIDS_LIMIT", "77")
+    system = create_system(editor, "PIDS", "prov-pids")
+    kwargs = _provision_with_fake_docker(system, tmp_path, monkeypatch)
+    assert kwargs["pids_limit"] == 77
+
+
+def test_workspace_de_sistema_reduzido_pertence_ao_usuario_do_agente(editor, tmp_path, monkeypatch):
+    system = create_system(editor, "CHOWN", "prov-chown")
+    _provision_with_fake_docker(system, tmp_path, monkeypatch)
+    workspace = tmp_path / "workspaces" / system.slug
+    st = workspace.stat()
+    assert (st.st_uid, st.st_gid) == (1000, 1000)

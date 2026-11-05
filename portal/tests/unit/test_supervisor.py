@@ -1,5 +1,7 @@
-"""Unitários do supervisor (task 4.2): backoff, mudança de arquivos, decisões."""
+"""Unitários do supervisor (task 4.2; tasks 2.1/2.2/2.3 do perfil de runtime):
+backoff, mudança de arquivos, decisões, e subida do agente dirigida pelo perfil."""
 
+import json
 import os
 import time
 
@@ -8,7 +10,13 @@ from afsupervisor.supervisor import (
     app_entry_exists,
     backoff_seconds,
     dir_signature,
+    load_agent_profile,
 )
+
+FAKE_PROFILE = {
+    "command": ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"],
+    "cwd": "/opencode-config",
+}
 
 
 class FakeRunner:
@@ -50,7 +58,7 @@ def test_assinatura_muda_quando_arquivo_muda(tmp_path):
 
 def test_supervisor_sobe_placeholder_sem_app(tmp_path):
     runner = FakeRunner()
-    sup = Supervisor(runner=runner, workspace=str(tmp_path), app_port=8080)
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), app_port=8080, agent_profile=FAKE_PROFILE)
     sup.start_harness()
     sup.start_app()
     assert sup.harness_pid is not None
@@ -58,6 +66,85 @@ def test_supervisor_sobe_placeholder_sem_app(tmp_path):
     cmds = [c for c, _ in runner.spawned]
     assert any("-c" in c for c in cmds)
     assert not any("main.py" in c for c in cmds)
+
+
+def test_supervisor_sobe_agente_conforme_o_perfil(tmp_path):
+    """Task 2.1: comando e cwd do harness vêm do perfil, não de constante embutida."""
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+    sup.start_harness()
+    assert sup.harness_pid is not None
+    assert sup.harness_failed is False
+    cmd, cwd = runner.spawned[0]
+    assert cmd == FAKE_PROFILE["command"]
+    assert cwd == FAKE_PROFILE["cwd"]
+
+
+def test_supervisor_outro_perfil_sobe_outro_comando(tmp_path):
+    """Conjunto de perfis extensível: trocar o perfil troca o comando sem tocar o supervisor."""
+    runner = FakeRunner()
+    outro_perfil = {"command": ["um-outro-agente", "serve"], "cwd": "/outro-config"}
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=outro_perfil)
+    sup.start_harness()
+    cmd, cwd = runner.spawned[0]
+    assert cmd == ["um-outro-agente", "serve"]
+    assert cwd == "/outro-config"
+
+
+def test_supervisor_sem_perfil_nao_sobe_agente_nenhum(tmp_path):
+    """Task 2.2: perfil ausente é falha explícita, nunca um agente embutido."""
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=None)
+    sup.start_harness()
+    assert sup.harness_pid is None
+    assert sup.harness_failed is True
+    assert runner.spawned == []
+
+
+def test_load_agent_profile_caminho_ausente_devolve_none():
+    assert load_agent_profile(None) is None
+    assert load_agent_profile("") is None
+
+
+def test_load_agent_profile_arquivo_inexistente_devolve_none(tmp_path):
+    assert load_agent_profile(str(tmp_path / "nao-existe.json")) is None
+
+
+def test_load_agent_profile_json_invalido_devolve_none(tmp_path):
+    bad = tmp_path / "ruim.json"
+    bad.write_text("{nao e json valido")
+    assert load_agent_profile(str(bad)) is None
+
+
+def test_load_agent_profile_le_perfil_valido(tmp_path):
+    good = tmp_path / "perfil.json"
+    good.write_text(json.dumps(FAKE_PROFILE))
+    assert load_agent_profile(str(good)) == FAKE_PROFILE
+
+
+def test_supervisor_run_forever_nao_falha_sem_perfil_e_app_sobe(tmp_path, monkeypatch):
+    """Task 2.3: app gerada/placeholder sobem independentemente do perfil do agente."""
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "main.py").write_text("print('oi')\n")
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), app_port=9000, agent_profile=None)
+
+    calls = {"n": 0}
+
+    def fake_sleep(_):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    try:
+        sup.run_forever(poll_interval=0)
+    except KeyboardInterrupt:
+        pass
+    assert sup.harness_failed is True
+    assert sup.app_pid is not None
+    assert "main.py" in str(runner.spawned[-1][0][-1])
 
 
 def test_supervisor_sobe_app_e_detecta_mudanca(tmp_path):

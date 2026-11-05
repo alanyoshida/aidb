@@ -11,6 +11,11 @@ def docker_env(tmp_path, monkeypatch):
     monkeypatch.setenv("APPAIFORGE_WORKSPACES_DIR", str(tmp_path / "workspaces"))
     monkeypatch.setenv("APPAIFORGE_HOST_WORKSPACES_DIR", str(tmp_path / "workspaces"))
     monkeypatch.setenv("APPAIFORGE_DYNAMIC_CONFIG_DIR", str(tmp_path / "dynamic"))
+    # configs_dir/host_config_dir também precisam ser isolados: write_opencode_config
+    # e write_agent_profile escrevem ali, e o default (/configs) não é gravável
+    # fora do container do portal.
+    monkeypatch.setenv("APPAIFORGE_CONFIGS_DIR", str(tmp_path / "configs"))
+    monkeypatch.setenv("APPAIFORGE_HOST_CONFIG_DIR", str(tmp_path / "configs"))
     from appaiforge.config import get_settings
 
     get_settings.cache_clear()
