@@ -423,6 +423,13 @@ def _render_editor(system, user) -> None:
     """Aba Editor: árvore do projeto gerado (`<workspace>/app`) à esquerda,
     conteúdo somente-leitura à direita (capability workspace-viewer)."""
     from .. import workspace_files
+    from . import theme as _theme
+
+    mode, _accent = _theme.parse_key(user.theme)
+    # tema do CodeMirror segue o modo do portal: sem isso, o painel aparece
+    # sempre com fundo claro (basicLight), destoando do resto da página no
+    # modo escuro/pastel.
+    cm_theme = "vscodeDark" if mode == "dark" else "vscodeLight"
 
     state: dict = {"selected": None}
 
@@ -448,7 +455,12 @@ def _render_editor(system, user) -> None:
                 with ui.card().classes("w-full border border-amber-300 bg-amber-50 p-2").props("data-testid=editor-binary-warning"):
                     ui.label(f"Pré-visualização não disponível para {rel_path} (arquivo binário ou ilegível como texto).").classes("text-xs text-amber-800 font-medium")
                 return
-            ui.codemirror(content.text or "", language=content.language).props("data-testid=editor-content").classes("w-full h-full").disable()
+            with ui.row().classes("w-full items-center gap-2 q-mb-sm").props("data-testid=editor-file-header"):
+                ui.icon(workspace_files.icon_for(rel_path)).classes("text-sm")
+                ui.label(rel_path).classes("text-sm font-medium")
+                if content.language:
+                    ui.badge(content.language, color="grey-6").props("data-testid=editor-file-language")
+            ui.codemirror(content.text or "", language=content.language, theme=cm_theme).props("data-testid=editor-content").classes("w-full h-full").disable()
 
     def select_file(e) -> None:
         state["selected"] = e.value

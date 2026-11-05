@@ -30,6 +30,44 @@ EXT_LANGUAGE: dict[str, str] = {
     ".xml": "XML",
 }
 
+FOLDER_ICON = "folder"
+DEFAULT_FILE_ICON = "insert_drive_file"
+
+# Nomes de ícones do Material Icons (já embutido no NiceGUI, sem CDN externo)
+# — não há logos por linguagem nesse conjunto, então agrupamos por categoria
+# ampla em vez de tentar imitar os ícones coloridos por extensão do VS Code.
+_ICON_BY_EXT: dict[str, str] = {
+    ".py": "code",
+    ".js": "code",
+    ".ts": "code",
+    ".html": "code",
+    ".css": "code",
+    ".sh": "terminal",
+    ".sql": "code",
+    ".json": "data_object",
+    ".toml": "settings",
+    ".lock": "settings",
+    ".yml": "settings",
+    ".yaml": "settings",
+    ".ini": "settings",
+    ".cfg": "settings",
+    ".env": "settings",
+    ".md": "article",
+    ".txt": "article",
+    ".xml": "data_object",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".svg": "image",
+}
+
+
+def icon_for(rel_path: str) -> str:
+    """Ícone (Material Icons) para o arquivo, inferido pela extensão."""
+    _, ext = os.path.splitext(rel_path)
+    return _ICON_BY_EXT.get(ext.lower(), DEFAULT_FILE_ICON)
+
 
 class FileContent:
     def __init__(self, text: str | None, language: str | None, binary: bool):
@@ -60,9 +98,9 @@ def _build_nodes(root: str, rel: str = "") -> list[dict]:
             children = _build_nodes(root, rel_path)
             if not children:
                 continue
-            nodes.append({"id": rel_path, "label": entry.name, "children": children})
+            nodes.append({"id": rel_path, "label": entry.name, "icon": FOLDER_ICON, "children": children})
         else:
-            nodes.append({"id": rel_path, "label": entry.name})
+            nodes.append({"id": rel_path, "label": entry.name, "icon": icon_for(entry.name)})
     return nodes
 
 

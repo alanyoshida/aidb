@@ -53,8 +53,12 @@ def test_list_tree_reflete_estrutura_real(system):
     assert labels == {"main.py", "templates"}
 
     templates_node = next(n for n in tree if n["label"] == "templates")
+    assert templates_node["icon"] == workspace_files.FOLDER_ICON
     assert templates_node["children"][0]["label"] == "base.html"
     assert templates_node["children"][0]["id"] == os.path.join("templates", "base.html")
+
+    main_node = next(n for n in tree if n["label"] == "main.py")
+    assert main_node["icon"] == "code"
 
 
 def test_list_tree_omite_diretorios_tecnicos(system):
@@ -98,3 +102,14 @@ def test_language_for_mapeia_extensoes_conhecidas():
 def test_language_for_extensao_desconhecida_devolve_none():
     assert workspace_files.language_for("README.XYZ") is None
     assert workspace_files.language_for("Dockerfile") is None
+
+
+def test_icon_for_mapeia_categorias_conhecidas():
+    assert workspace_files.icon_for("main.py") == "code"
+    assert workspace_files.icon_for("data.json") == "data_object"
+    assert workspace_files.icon_for("pyproject.toml") == "settings"
+    assert workspace_files.icon_for("README.md") == "article"
+
+
+def test_icon_for_extensao_desconhecida_devolve_padrao():
+    assert workspace_files.icon_for("Dockerfile") == workspace_files.DEFAULT_FILE_ICON

@@ -191,6 +191,17 @@ body, .nicegui-content, .q-layout, .q-page-container, .q-page {
 .q-table, .q-table tbody td, .q-table thead th { background: var(--ap-surface) !important; color: var(--ap-text) !important; }
 .q-table thead th { color: var(--ap-muted) !important; }
 .q-item { color: var(--ap-text) !important; }
+.q-item__label, .q-item__label--caption { color: var(--ap-text) !important; }
+/* Árvore da aba Editor: o Quasar fixa a cor da .q-tree na própria raiz
+   (preto) e só troca com body--dark, que este tema não usa. O rótulo do
+   nó é um div sem classe, então a correção precisa ser na raiz da árvore. */
+.q-tree { color: var(--ap-text) !important; }
+.q-tree .q-tree__icon { color: var(--ap-text) !important; }
+.q-tree .q-tree__node-header-content div { color: var(--ap-text) !important; }
+.q-tree .q-tree__node--selected .q-tree__node-header-content {
+  color: var(--ap-accent) !important; }
+.q-tree .q-tree__node--selected .q-tree__node-header-content div {
+  color: var(--ap-accent) !important; }
 
 /* As utilitárias de cor do Tailwind quebrariam no modo escuro (vermelho escuro
    sobre fundo escuro, p.ex.): mapeia todas para tokens que acompanham o modo. */
