@@ -11,7 +11,7 @@
 | # | Etapa | Entregável | Status |
 |---|---|---|---|
 | 1 | Higiene do container + `AgentProfile` | container não-root, perfil declarativo | ✅ concluída (change `agent-runtime-profile-and-hardening`, ADR 0018) |
-| 2 | seccomp + Landlock no `afsupervisor` | agente confinado a `/workspace` | ⬜ não iniciada |
+| 2 | seccomp + Landlock no `afsupervisor` | agente confinado a `/workspace` | ✅ concluída (change `agent-sandbox-seccomp-landlock`, capability `agent-sandbox`) |
 | 3 | Broker de inferência | nenhuma credencial de LLM no container | ⬜ não iniciada |
 | 4 | Proxy de banco + gate no data plane | gate independente do agente | ⬜ não iniciada |
 | 5 | Perímetro de egress | proxies inescapáveis | ⬜ não iniciada |
@@ -136,7 +136,7 @@ etapa 2.
 
 ---
 
-## Etapa 2 — seccomp + Landlock no `afsupervisor`
+## Etapa 2 — seccomp + Landlock no `afsupervisor` ✅ concluída
 
 **Objetivo**: confinar a árvore de processos do agente. Depende do `no-new-privileges` da etapa 1.
 
