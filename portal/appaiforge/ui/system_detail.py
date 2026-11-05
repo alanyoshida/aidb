@@ -75,6 +75,7 @@ def register() -> None:
 
         with ui.tabs().classes("mx-4 w-full") as tabs:
             chat_tab = ui.tab("chat", label="Chat", icon="chat")
+            editor_tab = ui.tab("editor", label="Editor", icon="code").props("data-testid=tab-editor")
             conn_tab = ui.tab("conn", label="Conexões", icon="storage")
             ckpt_tab = ui.tab("ckpt", label="Checkpoints", icon="history")
             cfg_tab = ui.tab("cfg", label="Configurações", icon="settings")
@@ -85,6 +86,8 @@ def register() -> None:
                 from .chat import render_chat
 
                 render_chat(system, user)
+            with ui.tab_panel(editor_tab):
+                _render_editor(system, user)
             with ui.tab_panel(conn_tab):
                 _render_connections(system, user)
             with ui.tab_panel(ckpt_tab):
@@ -414,6 +417,68 @@ def _render_connections(system, user) -> None:
                             ui.button("Remover", icon="delete", on_click=lambda c=c: ask_remove(c)).props("dense outline color=negative data-testid=conn-remove")
 
     refresh_conns()
+
+
+def _render_editor(system, user) -> None:
+    """Aba Editor: árvore do projeto gerado (`<workspace>/app`) à esquerda,
+    conteúdo somente-leitura à direita (capability workspace-viewer)."""
+    from .. import workspace_files
+
+    state: dict = {"selected": None}
+
+    with ui.splitter(value=25).classes("w-full h-[32rem]") as splitter:
+        with splitter.before:
+            tree_box = ui.column().classes("w-full h-full overflow-auto")
+        with splitter.after:
+            content_box = ui.column().classes("w-full h-full pl-4")
+
+    def render_content() -> None:
+        content_box.clear()
+        with content_box:
+            rel_path = state["selected"]
+            if rel_path is None:
+                ui.label("Selecione um arquivo na árvore para ver o conteúdo.").classes("text-gray-500 text-sm")
+                return
+            try:
+                content = workspace_files.read_file(system, rel_path)
+            except (ValueError, OSError):
+                ui.label("Não foi possível ler este arquivo.").classes("text-gray-500 text-sm")
+                return
+            if content.binary:
+                with ui.card().classes("w-full border border-amber-300 bg-amber-50 p-2").props("data-testid=editor-binary-warning"):
+                    ui.label(f"Pré-visualização não disponível para {rel_path} (arquivo binário ou ilegível como texto).").classes("text-xs text-amber-800 font-medium")
+                return
+            ui.codemirror(content.text or "", language=content.language).props("data-testid=editor-content").classes("w-full h-full").disable()
+
+    def select_file(e) -> None:
+        state["selected"] = e.value
+        render_content()
+
+    def _node_ids(nodes: list[dict]) -> set[str]:
+        ids: set[str] = set()
+        for node in nodes:
+            ids.add(node["id"])
+            ids |= _node_ids(node.get("children", []))
+        return ids
+
+    def refresh_tree() -> None:
+        """Reconstrói a árvore a partir do workspace atual. Preserva a seleção
+        (D3: `id` é o caminho relativo, estável) quando o arquivo continuar
+        existindo; limpa o painel quando ele sumiu."""
+        nodes = workspace_files.list_tree(system)
+        if state["selected"] is not None and state["selected"] not in _node_ids(nodes):
+            state["selected"] = None
+            render_content()
+        tree_box.clear()
+        with tree_box:
+            if not nodes:
+                ui.label("Nenhum arquivo gerado ainda.").props("data-testid=editor-empty").classes("text-gray-500 text-sm")
+                return
+            ui.tree(nodes, on_select=select_file).props("data-testid=editor-tree")
+
+    refresh_tree()
+    render_content()
+    ui.timer(2.0, refresh_tree)
 
 
 def _render_checkpoints(system, user) -> None:
