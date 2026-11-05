@@ -116,7 +116,19 @@ migração (preserva todo sistema existente); `reduced` é o default do modelo (
 corretos nos atributos do container e via `id` dentro dele (não foi preciso `capsh` — os
 atributos do Docker já expõem `HostConfig.CapDrop` diretamente). Migração Alembic testada ponta a
 ponta contra Postgres descartável: uma linha inserida antes da migração vira `legacy` depois do
-upgrade; `alembic heads` lista um único head.
+upgrade; `alembic heads` lista um único head. **Geração real completa verificada** (task 7.1,
+2026-11-05, OpenRouter/deepseek numa stack E2E isolada): app gerada, `uv venv` criado, checkpoint
+git registrado (com o próprio relato de teste da guideline da etapa 1), app respondendo 200 em
+`/apps/<slug>`, todo arquivo do agente com dono uid 1000 — nunca root.
+
+**Achado real durante a verificação, corrigido**: `/opencode-config` chegava **vazio** no
+container tanto no stack E2E quanto em produção — nem `docker-compose.yml` nem
+`docker-compose.e2e.yml` montavam `/configs` no serviço do portal (só `/workspaces`), então
+`write_opencode_config`/`write_agent_profile` escreviam num diretório efêmero da própria imagem
+do portal, nunca visível ao container do sistema. Bug pré-existente, introduzido pela change
+arquivada `db-config-fora-do-workspace` (2026-11-03), antes do início deste roadmap — não
+causado pela etapa 1, mas só descoberto ao tentar rodar opencode de verdade pela primeira vez
+desde então. Os dois compose ganharam o mount `/configs` (mesmo padrão de `/workspaces`).
 
 **Não resolve ainda**: nenhum confinamento real de kernel. Credenciais continuam em env var e o
 agente continua lendo `/proc/self/environ`. Regra por binário e rootfs imutável ficam para a
@@ -141,10 +153,39 @@ etapa 2.
 **Escopo**: o supervisor instala os dois a partir do profile e **só então** dá `exec`. Tudo que
 nascer dali — opencode, bash, python, script que o agente escreveu — herda e não sai.
 
-Política inicial: rw abaixo de `/workspace`; read+execute em `/usr`, `/lib`, `/opt`; negado
-`/proc/*/mem` e montagens do host desnecessárias; denylist de syscalls `bpf`, `ptrace`, `mount`,
-`setns`, `perf_event_open`, `process_vm_readv/writev`, `unshare(CLONE_NEWUSER)`,
-`io_uring_setup`, `memfd_create`, `pivot_root`; só `AF_UNIX`, `AF_NETLINK` (proto 0) e `AF_INET`.
+**Mapa de caminhos observado (task 7.2 da etapa 1 — geração real, OpenRouter/deepseek, 2026-11-05)**:
+uma geração completa (app + `uv venv` + `py_compile` + teste HTTP com log, seguindo a própria
+guideline de teste proativo) tocou, além de `/workspace`, dois caminhos que a política inicial
+**não previa**:
+- `/home/agent` (HOME): `.cache/opencode`, `.cache/uv`, `.cache/uv/{interpreter,sdists,wheels,simple,archive}-v*`,
+  `.npm/_cacache`, `.config`, `.local` — cache do opencode, do `uv` e do `npm`. Sem rw aqui o
+  agente não consegue nem resolver o interpretador Python para o venv.
+- `/tmp`: a técnica de teste da guideline (`PORT=8099 timeout 15 ... main.py > /tmp/app_test.log
+  2>&1 & ... curl -o /tmp/app_resp.html ...`) grava log e resposta HTTP ali. Negar `/tmp` quebra
+  exatamente o fluxo de autoteste que a etapa 1 ensinou o agente a seguir.
+
+Política revisada: rw abaixo de `/workspace`, `/home/agent` e `/tmp`; read+execute em `/usr`,
+`/lib`, `/opt`, `/opencode-config`; negado `/proc/*/mem` e montagens do host desnecessárias;
+denylist de syscalls `bpf`, `ptrace`, `mount`, `setns`, `perf_event_open`,
+`process_vm_readv/writev`, `unshare(CLONE_NEWUSER)`, `io_uring_setup`, `pivot_root`; só
+`AF_UNIX`, `AF_NETLINK` (proto 0) e `AF_INET`.
+
+**`memfd_create` sai do denylist original — achado de pesquisa, não observação da execução**: o
+binário do opencode é um executável Bun compilado (~214 MB, confirmado via `file`/header ELF
+neste host). O JavaScriptCore de Bun usa `memfd_create` para memória de JIT compatível com W^X
+(mapeamento dual RW→RX); a alternativa (memory protection keys da CPU, via
+`BUN_JSC_useJITProtectionKeyUnderSeccompFilter=1`) não está disponível neste host (`grep pku
+/proc/cpuinfo` vazio — sem suporte a MPK). Bloquear quebraria o JIT do próprio agente. Em
+contraste, `io_uring_setup` **é seguro de bloquear**: Bun tenta io_uring e cai para epoll de
+forma automática e não-fatal quando a chamada retorna `EPERM`/`ENOSYS` — e bloquear é bom por si
+só, já que io_uring é um vetor conhecido de bypass de seccomp em kernels mais antigos.
+
+**Verificado neste host antes de desenhar a política** (não apenas lido na documentação):
+`pyseccomp` instala e aplica um filtro de verdade (testado: syscall negada devolve `EPERM`,
+demais seguem permitidas); as 3 syscalls do Landlock (`landlock_create_ruleset`,
+`landlock_add_rule`, `landlock_restrict_self`) também — um processo de teste confinado a um
+diretório permitido lê/escreve nele e tem leitura **negada** (`PermissionError`) num diretório
+irmão não declarado.
 
 **Implementação**: começar em **Python** (`pyseccomp` + ctypes para as 3 syscalls do Landlock) —
 mantém a convenção do repo e não introduz toolchain. Upgrade path: shim compilado em Rust
@@ -507,8 +548,8 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 lsm=landlock,
 | # | Pergunta | Bloqueia |
 |---|---|---|
 | S1 | Regras de rede do Landlock se aplicam a loopback? | Etapa 5 |
-| S2 | `pyseccomp` + ctypes dão conta, ou precisa de shim compilado? | Etapa 2 |
-| S3 | Qual syscall do denylist quebra o runtime do opencode (Bun/Node)? | Etapa 2 |
+| ~~S2~~ | ✅ `pyseccomp` dá conta sozinho — verificado neste host (filtro real, nega syscall com EPERM, resto passa) | Etapa 2 |
+| ~~S3~~ | ✅ `memfd_create` quebraria o JIT de Bun (sem MPK neste host) — tirado do denylist; `io_uring_setup` confirmado seguro (fallback automático do Bun) | Etapa 2 |
 | S4 | LiteLLM cobre todos os provedores do catálogo (GLM, OpenRouter, openai-compatible)? | Etapa 3 |
 | S5 | Quanto falso-positivo o modo sombra do gate revela? | Etapa 4 |
 | S6 | SSE e cancelamento atravessam o broker sem buffering? | Etapa 3 |

@@ -52,6 +52,8 @@ services:
       APPAIFORGE_DOCKER_NETWORK: appaiforge-net
       APPAIFORGE_WORKSPACES_DIR: /workspaces
       APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_WORKSPACES_DIR:-/opt/appaiforge/workspaces}
+      APPAIFORGE_CONFIGS_DIR: /configs
+      APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_CONFIGS_DIR:-/opt/appaiforge/configs}
       APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
       APPAIFORGE_HARNESS_MODE: ${APPAIFORGE_HARNESS_MODE:-fake}
       APPAIFORGE_FAKE_DELAY: ${APPAIFORGE_FAKE_DELAY:-1.5}
@@ -59,6 +61,7 @@ services:
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
     volumes:
       - ${APPAIFORGE_WORKSPACES_DIR:-/opt/appaiforge/workspaces}:/workspaces
+      - ${APPAIFORGE_CONFIGS_DIR:-/opt/appaiforge/configs}:/configs
       - dynamic:/dynamic
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

@@ -55,6 +55,8 @@ services:
       APPAIFORGE_DOCKER_NETWORK: appaiforge-e2e-net
       APPAIFORGE_WORKSPACES_DIR: /workspaces
       APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_E2E_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e}
+      APPAIFORGE_CONFIGS_DIR: /configs
+      APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_E2E_CONFIGS_DIR:-/opt/appaiforge/configs-e2e}
       APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
       APPAIFORGE_HARNESS_MODE: fake
       BIGQUERY_EMULATOR_HOST: bigquery-emulator:9050
@@ -64,6 +66,7 @@ services:
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
     volumes:
       - ${APPAIFORGE_E2E_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e}:/workspaces
+      - ${APPAIFORGE_E2E_CONFIGS_DIR:-/opt/appaiforge/configs-e2e}:/configs
       - dynamic:/dynamic
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

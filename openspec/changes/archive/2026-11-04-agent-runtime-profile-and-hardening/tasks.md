@@ -39,8 +39,8 @@
 
 ## 7. Verificação integrada
 
-- [ ] 7.1 Rodar uma geração real num sistema novo (cenário `@llm_real`, fora de CI) e verificar ponta a ponta: o agente gera a app, o `uv` cria o venv, o checkpoint git é criado, a app responde em `/apps/<slug>` e nada no workspace precisou de root
-- [ ] 7.2 Registrar o mapa de caminhos que o agente efetivamente escreveu durante 7.1 na etapa 2 do roadmap, como insumo da política de Landlock e da decisão de rootfs somente-leitura; verificar que a etapa 2 do roadmap cita os caminhos observados
+- [x] 7.1 Rodar uma geração real num sistema novo (cenário `@llm_real`, fora de CI) e verificar ponta a ponta: o agente gera a app, o `uv` cria o venv, o checkpoint git é criado, a app responde em `/apps/<slug>` e nada no workspace precisou de root
+- [x] 7.2 Registrar o mapa de caminhos que o agente efetivamente escreveu durante 7.1 na etapa 2 do roadmap, como insumo da política de Landlock e da decisão de rootfs somente-leitura; verificar que a etapa 2 do roadmap cita os caminhos observados
 
 ## Workflow follow-up
 
