@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     container_cpus: float = 2.0
     container_mem_mb: int = 2048
     container_disk_gb: int = 10
+    # Teto de processos (pids_limit), ADR 0018. Valor provisório, generoso o
+    # bastante para uv/npm abrirem muitos processos curtos durante a geração;
+    # calibrar com margem a partir de uma execução real (roadmap, etapa 2).
+    container_pids_limit: int = 512
     max_systems: int = 10
 
     # Infra do container de sistema

@@ -1,7 +1,9 @@
-"""Supervisor do container de sistema (PID 1) — ADR 0003.
+"""Supervisor do container de sistema (PID 1) — ADR 0003, ADR 0018.
 
 Responsabilidades:
-- subir o harness `opencode serve` (porta 4096 interna);
+- subir o agente conforme o perfil de runtime (capability agent-runtime)
+  apontado por AIDB_AGENT_PROFILE — o supervisor não embute comando, cwd nem
+  porta de nenhum agente específico;
 - gerir a app gerada em /workspace/app: sobe `python main.py` (cwd=app),
   reinicia com backoff em falha e reinicia quando arquivos mudam;
 - servir um placeholder na porta da app enquanto não há app gerada, para a
@@ -11,13 +13,27 @@ Lógica de decisão (backoff, assinatura de mudança) é funções puras testáv
 a classe Supervisor orquestra subprocessos via ProcessRunner (fake nos testes).
 """
 
+import json
 import os
 import signal
 import subprocess
 import sys
 import time
 
-HARNESS_CMD = ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"]
+
+def load_agent_profile(path: str | None) -> dict | None:
+    """Carrega o perfil de runtime do agente do caminho em AIDB_AGENT_PROFILE.
+
+    Devolve None quando o caminho não está definido, o arquivo não existe ou
+    não é um JSON válido — o chamador trata isso como falha explícita, nunca
+    recorrendo silenciosamente a um agente padrão embutido (spec agent-runtime)."""
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def backoff_seconds(failures: int, base: float = 1.0, cap: float = 30.0) -> float:
@@ -125,20 +141,30 @@ class ProcessRunner:
 class Supervisor:
     def __init__(self, runner: ProcessRunner | None = None,
                  workspace: str = "/workspace", app_port: int = 8080,
-                 root_path: str | None = None):
+                 root_path: str | None = None, agent_profile: dict | None = None):
         self.runner = runner or ProcessRunner()
         self.workspace = workspace
         self.app_dir = os.path.join(workspace, "app")
         self.app_port = app_port
         self.root_path = root_path or os.environ.get("APP_ROOT_PATH", "/")
+        self.agent_profile = agent_profile
         self.harness_pid: int | None = None
+        self.harness_failed = False
         self.app_pid: int | None = None
         self.app_failures = 0
         self.is_placeholder = True
         self._signature: tuple | None = dir_signature(self.app_dir) if app_entry_exists(self.app_dir) else None
 
     def start_harness(self) -> None:
-        self.harness_pid = self.runner.spawn(HARNESS_CMD, cwd="/opencode-config")
+        if self.agent_profile is None:
+            self.harness_failed = True
+            print(
+                "[afsupervisor] perfil de agente ausente ou ilegível (AIDB_AGENT_PROFILE); "
+                "harness não iniciado",
+                file=sys.stderr,
+            )
+            return
+        self.harness_pid = self.runner.spawn(self.agent_profile["command"], cwd=self.agent_profile["cwd"])
 
     def app_python(self) -> str:
         """Python da app: venv criado pelo agente (uv) quando existir, senão o do sistema."""
@@ -195,7 +221,8 @@ class Supervisor:
 
 def main() -> None:
     port = int(os.environ.get("APP_PORT", "8080"))
-    Supervisor(app_port=port).run_forever()
+    profile = load_agent_profile(os.environ.get("AIDB_AGENT_PROFILE"))
+    Supervisor(app_port=port, agent_profile=profile).run_forever()
 
 
 if __name__ == "__main__":

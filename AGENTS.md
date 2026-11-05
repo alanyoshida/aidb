@@ -51,6 +51,11 @@ Não há config de lint/format (ruff/black) no repositório — não invente uma
   `confirmável` aguarda aprovação, **DDL é sempre bloqueada** (ADR 0017, spec `destructive-gate`). Não burle essa camada.
 - Credenciais são cifradas nos metadados (ADR 0007); nunca logue segredos nem os inclua em commits.
   A config do agente (chaves, MCP) vive em `CONFIGS_DIR`, fora do workspace que o agente edita.
+- O runtime de cada agente se declara em `appaiforge/agent_profiles.py` (comando, cwd, config,
+  env de credencial, caminhos) — o supervisor e o provisionamento lêem o perfil, nunca embutem um
+  agente por nome (ADR 0018). Adicionar um agente é registrar um perfil, não editar os dois.
+  Containers de sistema novos sobem com identidade de execução reduzida (não-root, sem
+  capabilities); sistemas criados antes do ADR 0018 ficam no modo antigo, sem migração automática.
 - Cores da UI: use os tokens `--ap-*` / `--ch-*` e `ui/common.py:notify()`; não fixe cores nem use
   `ui.notify(type=...)` (o Quasar sobrescreve o tema). Todo par texto/fundo novo deve manter contraste
   WCAG AA nas 12 combinações de tema (spec `portal-theming`).
@@ -65,4 +70,4 @@ Mudanças seguem o workflow OpenSpec (specs em `openspec/specs/`, propostas em
 `openspec/changes/`). Antes de implementar, leia a change ativa (se houver) e a spec afetada. Não edite
 specs diretamente para refletir código novo sem passar pelo fluxo de change: propor → aplicar →
 arquivar (o arquivamento sincroniza os deltas para `openspec/specs/`). Mudança de decisão arquitetural
-vira ADR sequencial em `docs/adr/` (o próximo número é 0018).
+vira ADR sequencial em `docs/adr/` (o próximo número é 0019).

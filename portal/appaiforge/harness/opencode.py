@@ -200,13 +200,19 @@ class OpencodeHarness(HarnessPort):
             metadata = props.get("metadata") or {}
             if not isinstance(metadata, dict):
                 metadata = {}
+            command = str(metadata.get("command", ""))
             return RunEvent(
                 "gate_request",
-                text=str(metadata.get("command", "")),
+                text=command,
                 meta={
                     "request_id": props.get("id", ""),
                     "session_id": props.get("sessionID", ""),
+                    # "bash" é o único tipo que o gate de SQL sabe classificar (ADR 0017);
+                    # opencode também pede permissão para outras coisas (ex.: acesso a
+                    # diretório fora do workspace) — o portal trata isso à parte,
+                    # nunca como se fosse uma operação de banco.
                     "permission": props.get("permission", ""),
+                    "command": command,
                 },
             )
 

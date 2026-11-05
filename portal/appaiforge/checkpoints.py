@@ -38,6 +38,15 @@ def ensure_repo(system: System) -> None:
     """git init idempotente + user do commit configurado."""
     ensure = workspace_dir(system)
     os.makedirs(ensure, exist_ok=True)
+    # git recusa operar num diretório cujo dono não é o uid que roda o comando
+    # ("dubious ownership") — o portal roda git como root (checkpoints.py), mas
+    # o workspace de um sistema em modo de execução reduzido (ADR 0018) pertence
+    # ao usuário do agente, não a root. O portal é o único processo que gerencia
+    # esses repositórios, então confia em todos — não é exposição nova.
+    subprocess.run(
+        ["git", "config", "--global", "--replace-all", "safe.directory", "*"],
+        capture_output=True, text=True, timeout=10,
+    )
     if not os.path.isdir(os.path.join(ensure, ".git")):
         _git(system, "init", "-q", "-b", "main")
     _git(system, "config", "user.email", "appaiforge@portal")

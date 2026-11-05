@@ -39,6 +39,20 @@ class SystemStatus(str, enum.Enum):
     archived = "archived"
 
 
+class ExecutionMode(str, enum.Enum):
+    """Modo de execução do container do sistema (ADR 0018, spec container-lifecycle).
+
+    Fixado na criação do sistema e imutável depois: `legacy` é o comportamento
+    anterior a esta mudança (container roda como root); `reduced` é a
+    identidade de execução reduzida (não-root, sem capabilities). Sistemas
+    criados antes desta mudança ficam em `legacy` sem migração de dono do
+    workspace; sistemas novos nascem em `reduced`.
+    """
+
+    legacy = "legacy"
+    reduced = "reduced"
+
+
 class RunStatus(str, enum.Enum):
     queued = "queued"
     running = "running"
@@ -108,6 +122,9 @@ class System(Base):
     status: Mapped[SystemStatus] = mapped_column(Enum(SystemStatus, name="system_status"), default=SystemStatus.provisioning)
     status_message: Mapped[str] = mapped_column(Text, default="")
     container_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    execution_mode: Mapped[ExecutionMode] = mapped_column(
+        Enum(ExecutionMode, name="execution_mode"), default=ExecutionMode.reduced
+    )
     identity_secret: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
