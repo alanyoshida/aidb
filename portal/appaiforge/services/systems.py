@@ -8,6 +8,7 @@ from sqlalchemy import select
 from ..db import session_scope
 from ..edge import publish_app, unpublish_app
 from ..models import System, SystemStatus, User
+from ..provisioning import decide_execution_mode
 from ..rbac import can_create_systems, can_manage_system
 from ..security import generate_secret
 from ..config import get_settings
@@ -38,6 +39,11 @@ def create_system(user: User, name: str, slug: str, provider: str | None = None,
     if not _SLUG_RE.match(slug):
         raise InvalidSlug("slug deve ser kebab-case: letras minúsculas, dígitos e hífen")
     settings = get_settings()
+    # Decidido aqui, não em provision_system: o modo de execução é fixado na
+    # criação do sistema e fica imutável depois (spec container-lifecycle).
+    # Pode levantar SandboxUnavailable (host sem Landlock, require_sandbox
+    # ligado) — nesse caso o sistema não deve ser criado.
+    execution_mode, sandbox_warning = decide_execution_mode()
     with session_scope() as s:
         exists = s.execute(select(System.id).where(System.slug == slug)).scalar_one_or_none()
         if exists is not None:
@@ -49,7 +55,8 @@ def create_system(user: User, name: str, slug: str, provider: str | None = None,
             provider=provider or settings.default_provider,
             model=model or settings.default_model,
             status=SystemStatus.provisioning,
-            status_message="",
+            status_message=sandbox_warning,
+            execution_mode=execution_mode,
             identity_secret=generate_secret(),
         )
         s.add(system)

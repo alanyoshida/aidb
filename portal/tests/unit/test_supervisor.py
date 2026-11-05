@@ -22,13 +22,15 @@ FAKE_PROFILE = {
 class FakeRunner:
     def __init__(self):
         self.spawned: list[tuple[list, str | None]] = []
+        self.preexec_fns: list = []
         self.killed: list[int] = []
         self.dead: set[int] = set()
         self._next = 100
 
-    def spawn(self, cmd, env=None, cwd=None):
+    def spawn(self, cmd, env=None, cwd=None, preexec_fn=None):
         self._next += 1
         self.spawned.append((cmd, cwd))
+        self.preexec_fns.append(preexec_fn)
         return self._next
 
     def alive(self, pid):
@@ -89,6 +91,46 @@ def test_supervisor_outro_perfil_sobe_outro_comando(tmp_path):
     cmd, cwd = runner.spawned[0]
     assert cmd == ["um-outro-agente", "serve"]
     assert cwd == "/outro-config"
+
+
+def test_supervisor_sandboxed_instala_confinamento_antes_do_spawn_do_agente(tmp_path):
+    """Task 6.1: em modo sandboxed, o confinamento é passado como preexec_fn
+    (roda no filho, entre o fork e o exec) — nunca no processo do supervisor."""
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE, execution_mode="sandboxed")
+    sup.start_harness()
+    assert sup.harness_failed is False
+    assert sup.harness_pid is not None
+    assert runner.preexec_fns[0] is not None
+
+
+def test_supervisor_sandboxed_confinamento_falha_impede_subida_do_agente(tmp_path, monkeypatch):
+    """Task 6.2: confinamento sandboxed que falha é falha explícita — mesmo
+    contrato de perfil ausente, nunca sobe o agente menos confinado."""
+
+    class FailingRunner(FakeRunner):
+        def spawn(self, cmd, env=None, cwd=None, preexec_fn=None):
+            if preexec_fn is not None:
+                raise OSError("landlock_restrict_self")
+            return super().spawn(cmd, env=env, cwd=cwd, preexec_fn=preexec_fn)
+
+    runner = FailingRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE, execution_mode="sandboxed")
+    sup.start_harness()
+    assert sup.harness_failed is True
+    assert sup.harness_pid is None
+
+
+def test_supervisor_reduced_e_legacy_sobem_sem_confinamento(tmp_path):
+    """Task 6.3: regressão da etapa 1 — modos reduced/legacy continuam subindo
+    o agente sem seccomp/Landlock (preexec_fn=None)."""
+    for mode in ("reduced", "legacy"):
+        runner = FakeRunner()
+        sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE, execution_mode=mode)
+        sup.start_harness()
+        assert sup.harness_failed is False
+        assert sup.harness_pid is not None
+        assert runner.preexec_fns[0] is None
 
 
 def test_supervisor_sem_perfil_nao_sobe_agente_nenhum(tmp_path):

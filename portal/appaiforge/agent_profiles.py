@@ -24,8 +24,39 @@ PROFILES: dict[str, dict] = {
         "config_format": "opencode-json",
         "credential_env": FROM_PROVIDER,
         "harness_port": 4096,
-        "readable_paths": ["/opencode-config", "/usr", "/lib", "/opt"],
-        "writable_paths": ["/workspace"],
+        # /proc: achado da verificação real da etapa 2 (task 7) — sem leitura
+        # de /proc, o runtime Bun do opencode (provavelmente /proc/self/maps,
+        # usado pelo JIT do JSC) aborta com SIGABRT ~12s depois de subir, sob
+        # Landlock. Não amplia o que o agente já enxerga: supervisor e agente
+        # rodam como o mesmo uid no mesmo container, então /proc de um já era
+        # visível ao outro pela permissão Unix normal, com ou sem Landlock.
+        # /etc: outro achado da task 7 — sem leitura de /etc (provavelmente
+        # /etc/resolv.conf, que o resolvedor DNS do Bun lê direto, fora da
+        # NSS da glibc), toda chamada de rede do agente falhava com
+        # "getaddrinfo EAI_AGAIN", mesmo com DNS funcionando normalmente para
+        # qualquer outro processo do container. Também não amplia o que já
+        # era acessível: /etc/shadow e /etc/gshadow são 0640 root:shadow,
+        # fora do alcance do usuário `agent` por permissão Unix comum,
+        # Landlock nunca concede além do que a permissão do arquivo permite.
+        # /dev: terceiro achado da task 7 — sem leitura de /dev (provavelmente
+        # /dev/null, usado para redirecionar a saída de um subprocesso de
+        # sondagem), `uv sync` falhava com "Could not detect either glibc
+        # version nor musl libc version" e nenhuma dependência era instalada.
+        "readable_paths": ["/opencode-config", "/usr", "/lib", "/opt", "/proc", "/etc", "/dev"],
+        # Além de /workspace, o mapa real de escrita de uma geração completa
+        # (etapa 1, docs/roadmap-confinamento-do-agente.md) mostrou o agente
+        # escrevendo em caminhos sob o HOME do usuário `agent` e em /tmp —
+        # sem eles, o Landlock da etapa 2 negaria escrita que o agente
+        # legitimamente precisa.
+        "writable_paths": [
+            "/workspace",
+            "/home/agent/.cache/opencode",
+            "/home/agent/.cache/uv",
+            "/home/agent/.npm",
+            "/home/agent/.config",
+            "/home/agent/.local",
+            "/tmp",
+        ],
     },
 }
 

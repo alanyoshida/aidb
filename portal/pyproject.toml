@@ -28,6 +28,7 @@ dev = [
     "testcontainers[postgres]>=4.8",
     "pytest-asyncio>=0.24",
     "asyncpg>=0.30",
+    "pyseccomp>=0.1.2",
 ]
 
 [project.scripts]
@@ -48,4 +49,5 @@ markers = [
     "e2e: testes end-to-end pelo browser (stack de teste via Traefik)",
     "integration: testes que exigem Docker ou serviços reais",
     "llm_real: cenário manual com provedor de LLM real (nunca roda em CI)",
+    "sandbox: confinamento real via seccomp/Landlock (opt-in, pode faltar no host de CI)",
 ]

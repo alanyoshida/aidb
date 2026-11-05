@@ -12,6 +12,7 @@ import re
 import time
 
 import docker
+from afsupervisor.sandbox import landlock_abi
 from sqlalchemy import func, select, update
 
 from .config import get_settings
@@ -32,6 +33,37 @@ AGENT_GID = 1000
 
 class CapacityReached(Exception):
     pass
+
+
+class SandboxUnavailable(Exception):
+    """Host sem suporte a Landlock e `require_sandbox` ligado (produção)."""
+
+    pass
+
+
+def decide_execution_mode() -> tuple[ExecutionMode, str]:
+    """Modo de execução de um sistema novo, pela sonda de Landlock do host
+    (capability agent-sandbox, etapa 2 do confinamento).
+
+    Chamado por `services.systems.create_system` no momento em que a linha
+    é criada — nunca em `provision_system`, que só consome o modo já
+    persistido. Devolve (modo, aviso); aviso é "" quando não há degradação
+    a comunicar. Levanta `SandboxUnavailable` quando o host não suporta
+    Landlock e `settings.require_sandbox` é `True`: a chamadora não deve
+    criar a linha do sistema nesse caso, para não prometer um confinamento
+    que o host não tem como entregar."""
+    if landlock_abi() > 0:
+        return ExecutionMode.sandboxed, ""
+    settings = get_settings()
+    if settings.require_sandbox:
+        raise SandboxUnavailable(
+            "host sem suporte a Landlock; defina APPAIFORGE_REQUIRE_SANDBOX=false "
+            "para permitir sistemas em modo reduced neste host"
+        )
+    return (
+        ExecutionMode.reduced,
+        "sistema criado em modo reduced: host sem suporte a Landlock (confinamento desligado)",
+    )
 
 
 def _docker() -> docker.DockerClient:
@@ -213,10 +245,11 @@ def provision_system(system: System) -> str:
     host_dir = os.path.join(settings.host_workspaces_dir, system.slug)
     portal_dir = os.path.join(settings.workspaces_dir, system.slug)
     os.makedirs(portal_dir, exist_ok=True)
-    if system.execution_mode == ExecutionMode.reduced:
+    if system.execution_mode in (ExecutionMode.reduced, ExecutionMode.sandboxed):
         # dono do usuário do agente (ADR 0018): sem isto, o workspace criado
-        # pelo portal (root) não seria gravável pelo container não-root.
-        # Sistemas legacy não passam por aqui — workspace existente intacto.
+        # pelo portal (root) não seria gravável pelo container não-root, que
+        # tanto reduced quanto sandboxed usam. Sistemas legacy não passam por
+        # aqui — workspace existente intacto.
         os.chown(portal_dir, AGENT_UID, AGENT_GID)
 
     host_config_slug = os.path.join(settings.host_config_dir, system.slug)
@@ -233,6 +266,10 @@ def provision_system(system: System) -> str:
         # do runtime do agente (comando, cwd, porta, credencial) vem de dentro
         # do arquivo que esta env aponta, não de constante nenhuma no supervisor.
         "AIDB_AGENT_PROFILE": "/opencode-config/agent-profile.json",
+        # Diz ao supervisor se ele deve instalar seccomp/Landlock antes do
+        # exec do agente (capability agent-sandbox, etapa 2). O modo já está
+        # fixado desde a criação do sistema; o supervisor só confia nele.
+        "AIDB_EXECUTION_MODE": system.execution_mode.value,
         **_provider_env(system.provider),
         **_connection_env(system.id),
     }
@@ -281,13 +318,16 @@ def provision_system(system: System) -> str:
 def _execution_identity(mode: ExecutionMode) -> dict:
     """kwargs de identidade de execução do container (ADR 0018, spec container-lifecycle).
 
-    reduced: usuário não-root da imagem, sem capabilities, sem escalada de
-    privilégio. legacy: `user="root"` explícito — a imagem passou a ter
+    reduced e sandboxed: usuário não-root da imagem, sem capabilities, sem
+    escalada de privilégio — sandboxed ganha a camada adicional de
+    seccomp/Landlock dentro do container, instalada pelo supervisor (etapa 2,
+    capability agent-sandbox), mas a identidade no `docker.containers.run()`
+    é a mesma. legacy: `user="root"` explícito — a imagem passou a ter
     usuário não-root como padrão (base-image/Dockerfile), então sistemas
     criados antes desta mudança exigem a sobrescrita para continuar
     acessando o workspace existente (dono root) sem migração.
     """
-    if mode == ExecutionMode.reduced:
+    if mode in (ExecutionMode.reduced, ExecutionMode.sandboxed):
         return {
             "user": f"{AGENT_UID}:{AGENT_GID}",
             "cap_drop": ["ALL"],

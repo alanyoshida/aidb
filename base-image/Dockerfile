@@ -7,10 +7,12 @@ ARG MCP_POSTGRES_VERSION=0.6.2
 ENV NODE_VERSION=22.14.0
 
 # node é necessário para os MCP servers (npx); default-libmysqlclient-dev
-# + pkg-config para o build do pacote python mysqlclient
+# + pkg-config para o build do pacote python mysqlclient; libseccomp2/-dev
+# para o pyseccomp do supervisor (etapa 2 do confinamento, ADR em curso)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl xz-utils ca-certificates git bash procps \
         default-libmysqlclient-dev pkg-config gcc \
+        libseccomp2 libseccomp-dev \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
         | tar -xJ -C /usr/local --strip-components=1
@@ -24,6 +26,9 @@ RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "${OPENCODE_VE
 
 # uv para rodar a app gerada com deps próprias
 RUN pip install --no-cache-dir uv
+
+# pyseccomp para o filtro de syscalls do supervisor (etapa 2 do confinamento)
+RUN pip install --no-cache-dir pyseccomp
 
 # MCP server de leitura do AIDB + deps (mcp/sqlglot/asyncpg no python do sistema)
 COPY gated-mcp /opt/gated-mcp

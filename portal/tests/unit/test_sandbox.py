@@ -1,0 +1,237 @@
+"""Unitários do confinamento seccomp/Landlock (tasks 2.1/2.2/2.3 da etapa 2,
+change agent-sandbox-seccomp-landlock)."""
+
+import errno
+import os
+
+import pyseccomp as seccomp
+import pytest
+
+from afsupervisor import sandbox
+
+FAKE_PROFILE = {
+    "readable_paths": ["/usr", "/opt"],
+    "writable_paths": ["/workspace"],
+}
+
+
+def test_build_seccomp_filter_nega_cada_syscall_do_denylist():
+    sfilter = sandbox.build_seccomp_filter(["ptrace", "bpf"])
+    assert isinstance(sfilter, seccomp.SyscallFilter)
+
+
+def test_build_seccomp_filter_usa_denylist_padrao_quando_nao_informado():
+    sfilter_padrao = sandbox.build_seccomp_filter()
+    assert isinstance(sfilter_padrao, seccomp.SyscallFilter)
+    assert "memfd_create" not in sandbox.DEFAULT_DENY_SYSCALLS
+    assert "unshare" not in sandbox.DEFAULT_DENY_SYSCALLS  # unshare é tratado à parte (CLONE_NEWUSER)
+    for nome in (
+        "ptrace", "bpf", "mount", "setns", "perf_event_open",
+        "process_vm_readv", "process_vm_writev", "pivot_root", "io_uring_setup",
+    ):
+        assert nome in sandbox.DEFAULT_DENY_SYSCALLS
+
+
+def test_apply_sandbox_chama_seccomp_e_landlock_com_os_caminhos_do_perfil(monkeypatch):
+    chamadas = {}
+
+    def fake_build_filter(deny_syscalls=None):
+        chamadas["deny_syscalls"] = deny_syscalls
+
+        class FakeFilter:
+            def load(self):
+                chamadas["loaded"] = True
+
+        return FakeFilter()
+
+    def fake_apply_landlock(readable_paths, writable_paths):
+        chamadas["readable_paths"] = readable_paths
+        chamadas["writable_paths"] = writable_paths
+
+    monkeypatch.setattr(sandbox, "build_seccomp_filter", fake_build_filter)
+    monkeypatch.setattr(sandbox, "apply_landlock", fake_apply_landlock)
+
+    sandbox.apply_sandbox(FAKE_PROFILE, deny_syscalls=["ptrace"])
+
+    assert chamadas["loaded"] is True
+    assert chamadas["deny_syscalls"] == ["ptrace"]
+    assert chamadas["readable_paths"] == FAKE_PROFILE["readable_paths"]
+    assert chamadas["writable_paths"] == FAKE_PROFILE["writable_paths"]
+
+
+def test_apply_sandbox_instala_seccomp_antes_de_landlock(monkeypatch):
+    ordem = []
+    monkeypatch.setattr(sandbox, "build_seccomp_filter", lambda deny_syscalls=None: type(
+        "F", (), {"load": lambda self: ordem.append("seccomp")}
+    )())
+    monkeypatch.setattr(sandbox, "apply_landlock", lambda **kw: ordem.append("landlock"))
+
+    sandbox.apply_sandbox(FAKE_PROFILE)
+
+    assert ordem == ["seccomp", "landlock"]
+
+
+def test_landlock_abi_fora_de_x86_64_devolve_zero(monkeypatch):
+    fake_uname = type("U", (), {"machine": "aarch64"})()
+    monkeypatch.setattr(os, "uname", lambda: fake_uname)
+    assert sandbox.landlock_abi() == 0
+
+
+def test_fs_access_bits_cresce_com_o_abi():
+    bits_abi1 = sandbox._fs_access_bits(1)
+    bits_abi2 = sandbox._fs_access_bits(2)
+    bits_abi3 = sandbox._fs_access_bits(3)
+    assert bits_abi1 < bits_abi2 < bits_abi3
+    assert bits_abi2 & (1 << 13)  # REFER só a partir do ABI 2
+    assert not bits_abi1 & (1 << 13)
+    assert bits_abi3 & (1 << 14)  # TRUNCATE só a partir do ABI 3
+
+
+def test_apply_landlock_sem_suporte_levanta_oserror(monkeypatch):
+    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
+    with pytest.raises(OSError):
+        sandbox.apply_landlock(readable_paths=["/usr"], writable_paths=["/workspace"])
+
+
+@pytest.mark.sandbox
+def test_apply_landlock_real_confina_escrita_a_caminhos_declarados(tmp_path):
+    """Confinamento real via fork: landlock_restrict_self é irrevogável, então
+    só é seguro exercitar num processo descartável (marker `sandbox`, opt-in —
+    pode faltar Landlock no host de CI)."""
+    if sandbox.landlock_abi() <= 0:
+        pytest.skip("host sem suporte a Landlock")
+
+    writable = tmp_path / "writable"
+    readable = tmp_path / "readable"
+    outside = tmp_path / "outside"
+    writable.mkdir()
+    readable.mkdir()
+    outside.mkdir()
+    (readable / "preexistente.txt").write_text("ja estava aqui")
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        resultado = {}
+        try:
+            sandbox.apply_landlock(readable_paths=[str(readable)], writable_paths=[str(writable)])
+            (writable / "ok.txt").write_text("ok")
+            resultado["escreveu_no_writable"] = True
+            try:
+                (outside / "nope.txt").write_text("nope")
+                resultado["escreveu_fora"] = True
+            except PermissionError:
+                resultado["escreveu_fora"] = False
+            try:
+                (readable / "nope.txt").write_text("nope")
+                resultado["escreveu_no_readable"] = True
+            except PermissionError:
+                resultado["escreveu_no_readable"] = False
+            resultado["leu_preexistente"] = (readable / "preexistente.txt").read_text() == "ja estava aqui"
+        except Exception as exc:
+            resultado["erro"] = str(exc)
+        os.write(write_fd, repr(resultado).encode())
+        os._exit(0)
+    else:
+        os.close(write_fd)
+        saida = b""
+        while True:
+            chunk = os.read(read_fd, 4096)
+            if not chunk:
+                break
+            saida += chunk
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        resultado = eval(saida.decode())
+
+    assert resultado.get("erro") is None, resultado
+    assert resultado["escreveu_no_writable"] is True
+    assert resultado["escreveu_fora"] is False
+    assert resultado["escreveu_no_readable"] is False
+    assert resultado["leu_preexistente"] is True
+
+
+@pytest.mark.sandbox
+def test_apply_landlock_cria_writable_path_que_ainda_nao_existe(tmp_path):
+    """Achado real da task 7: Landlock só autoriza um caminho que já existe
+    (precisa abrir um fd pra ele). Sem criar `writable_paths` ausentes antes
+    de declarar a regra, a regra era omitida em silêncio e a escrita negada
+    — era exatamente o que quebrava o `mkdir('/home/agent/.local')` do
+    opencode no primeiro boot do container."""
+    if sandbox.landlock_abi() <= 0:
+        pytest.skip("host sem suporte a Landlock")
+
+    ainda_nao_existe = tmp_path / "cache" / "nested" / "dir"
+    assert not ainda_nao_existe.exists()
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        resultado = {}
+        try:
+            sandbox.apply_landlock(readable_paths=[], writable_paths=[str(ainda_nao_existe)])
+            resultado["foi_criado"] = ainda_nao_existe.is_dir()
+            (ainda_nao_existe / "ok.txt").write_text("ok")
+            resultado["escreveu_dentro"] = True
+        except Exception as exc:
+            resultado["erro"] = str(exc)
+        os.write(write_fd, repr(resultado).encode())
+        os._exit(0)
+    else:
+        os.close(write_fd)
+        saida = b""
+        while True:
+            chunk = os.read(read_fd, 4096)
+            if not chunk:
+                break
+            saida += chunk
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        resultado = eval(saida.decode())
+
+    assert resultado.get("erro") is None, resultado
+    assert resultado["foi_criado"] is True
+    assert resultado["escreveu_dentro"] is True
+
+
+@pytest.mark.sandbox
+def test_build_seccomp_filter_real_nega_ptrace_e_permite_memfd_create():
+    """Mesma lógica do marker `sandbox`: carregar um filtro real num processo
+    é irrevogável, então roda num fork descartável."""
+    import ctypes
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        resultado = {}
+        try:
+            sandbox.build_seccomp_filter(["ptrace"]).load()
+            libc = ctypes.CDLL(None, use_errno=True)
+            r_ptrace = libc.syscall(101, 0, 0, 0, 0)
+            resultado["ptrace_negado"] = r_ptrace == -1 and ctypes.get_errno() == errno.EPERM
+            fd = libc.syscall(319, b"teste", 0)  # memfd_create
+            resultado["memfd_create_permitido"] = fd >= 0
+            if fd >= 0:
+                os.close(fd)
+        except Exception as exc:
+            resultado["erro"] = str(exc)
+        os.write(write_fd, repr(resultado).encode())
+        os._exit(0)
+    else:
+        os.close(write_fd)
+        saida = b""
+        while True:
+            chunk = os.read(read_fd, 4096)
+            if not chunk:
+                break
+            saida += chunk
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        resultado = eval(saida.decode())
+
+    assert resultado.get("erro") is None, resultado
+    assert resultado["ptrace_negado"] is True
+    assert resultado["memfd_create_permitido"] is True

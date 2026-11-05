@@ -207,6 +207,61 @@ socket") exige `fromSource` do KubeArmor ou BPF-LSM — etapa 9.
 
 **Specs/ADR**: capacidade nova `agent-sandbox`. ADR 0019.
 
+**Status: ✅ concluída** (change `agent-sandbox-seccomp-landlock`, capability `agent-sandbox`).
+
+**Entregue**: `base-image/afsupervisor/sandbox.py` (seccomp via `pyseccomp` + Landlock via `ctypes`
+direto); `ExecutionMode.sandboxed` (terceiro valor, ao lado de `legacy`/`reduced`), decidido na
+criação do sistema por `provisioning.decide_execution_mode()` (sonda `landlock_abi()` do próprio
+processo do portal — não do container de sistema); `require_sandbox` (fail-closed em produção,
+`APPAIFORGE_REQUIRE_SANDBOX=false` degrada para `reduced` com aviso em dev/CI sem Landlock, mesmo
+precedente do `storage_opt`); confinamento instalado via `preexec_fn` do `subprocess.Popen` que
+sobe o harness — no processo **filho**, nunca no supervisor (PID 1), que precisa continuar livre
+para gerenciar a app depois.
+
+**Correção de design durante a implementação**: o esboço original cogitava o supervisor se
+auto-restringir antes do `exec`. Isso prenderia o supervisor pelo resto da vida do container à
+política pensada só para o agente — qualquer caminho que ele precisasse tocar depois (gerenciar a
+app, servir o placeholder) e que não estivesse no perfil quebraria o supervisor inteiro.
+`preexec_fn` resolve isso: roda no filho, entre o `fork()` e o `exec()`, sem afetar o pai.
+
+**Verificação real (task 7, 2026-11-05, OpenRouter/deepseek, sistema `sandboxed` numa stack e2e
+isolada)** — achou e corrigiu 4 lacunas que nenhuma leitura de documentação teria previsto:
+1. **`/proc` ausente de `readable_paths`**: o runtime Bun do opencode abortava (`SIGABRT`) ~12s
+   depois de subir, sob Landlock — provável leitura de `/proc/self/maps` pelo JIT do JSC para
+   gerenciar memória W^X. Não amplia o que o agente já enxerga (supervisor e agente são o mesmo
+   uid no mesmo container).
+2. **`writable_paths` que ainda não existem no primeiro boot**: Landlock só autoriza um caminho
+   que já tem um inode pra abrir; `_add_path_rule` pulava em silêncio qualquer caminho ausente, e
+   nenhum dos caminhos de cache do perfil existe antes da primeira escrita real do agente —
+   `mkdir('/home/agent/.local')` falhava com `EACCES`. Corrigido: `apply_landlock` cria
+   (`os.makedirs`) cada `writable_path` ausente antes de declarar sua regra.
+3. **`/etc` ausente**: toda chamada de rede do opencode falhava com `getaddrinfo EAI_AGAIN`,
+   mesmo com o DNS do container funcionando normalmente pra qualquer outro processo — o
+   resolvedor de rede do Bun lê algo sob `/etc` direto (provável `/etc/resolv.conf`), fora da NSS
+   da glibc. Não amplia o que já era acessível (`/etc/shadow`/`/etc/gshadow` são `0640
+   root:shadow`, fora do alcance do usuário `agent` de qualquer forma).
+4. **`/dev` ausente**: com os 3 achados acima corrigidos, o harness subia e gerava a app, mas `uv
+   sync` falhava com "Could not detect either glibc version nor musl libc version" e nenhuma
+   dependência era instalada — provável abertura de `/dev/null` por um subprocesso de sondagem do
+   `uv`. Perfil final: `readable_paths = [/opencode-config, /usr, /lib, /opt, /proc, /etc, /dev]`.
+
+Com os 4 corrigidos: o agente escreveu `/workspace/app/main.py`, criou `pyproject.toml`, rodou
+`uv sync` com sucesso (venv real, `nicegui` instalado), o supervisor trocou o placeholder pela app
+automaticamente, a app respondeu `200` tanto direto (porta 8080) quanto via Traefik
+(`/apps/etapa2-verify`), e os checkpoints git foram criados — nada precisou de root em nenhum
+momento. Cada aprovação de `external_directory` pedida pelo próprio opencode (não-Landlock — gate
+de permissão da ferramenta, já corrigido na etapa 1) funcionou normalmente.
+
+**Observação não resolvida, sem evidência de ser causada pelo confinamento**: numa chamada de
+continuação do chat pedindo para configurar `uv sync` explicitamente, uma tool call `read` do
+opencode (lendo um arquivo de 55 bytes já lido antes com sucesso na mesma sessão) travou por mais
+de 3 minutos sem erro nem timeout — interrompida manualmente pelo chat sem efeito colateral
+(harness e app seguiram saudáveis). Inspecionado via `/proc/<pid>/task/*/status`+`wchan`: nenhuma
+thread do processo estava bloqueada numa syscall (todas em `futex_do_wait`/`ep_poll`, estado
+ocioso normal de thread-pool), o que não aponta para Landlock/seccomp como causa — parece uma
+falha de aplicação do próprio opencode/Bun (promise perdida, thread-pool starvation). Registrado
+aqui para o caso de reaparecer; não bloqueou nenhum critério de aceite desta etapa.
+
 ---
 
 ## Etapa 3 — Broker de inferência (nenhuma credencial de LLM no container)

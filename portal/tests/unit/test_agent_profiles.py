@@ -16,6 +16,45 @@ def test_perfil_padrao_resolvido_pelo_nome():
     assert "/opencode-config" in profile["readable_paths"]
 
 
+def test_readable_paths_inclui_proc_achado_da_verificacao_real_da_etapa_2():
+    """Sem /proc legível, o runtime Bun do opencode aborta sob Landlock
+    (achado da task 7 — ver docs/roadmap-confinamento-do-agente.md, etapa 2)."""
+    profile = get_profile("opencode")
+    assert "/proc" in profile["readable_paths"]
+
+
+def test_readable_paths_inclui_etc_achado_da_verificacao_real_da_etapa_2():
+    """Sem /etc legível, chamadas de rede do opencode falham com
+    getaddrinfo EAI_AGAIN sob Landlock — o resolvedor DNS do Bun lê algo em
+    /etc (provavelmente resolv.conf) direto, fora da NSS da glibc."""
+    profile = get_profile("opencode")
+    assert "/etc" in profile["readable_paths"]
+
+
+def test_readable_paths_inclui_dev_achado_da_verificacao_real_da_etapa_2():
+    """Sem /dev legível, `uv sync` falhava ao detectar a glibc do sistema
+    (provavelmente precisa de /dev/null para um subprocesso de sondagem) e
+    nenhuma dependência da app gerada era instalada."""
+    profile = get_profile("opencode")
+    assert "/dev" in profile["readable_paths"]
+
+
+def test_writable_paths_inclui_mapa_real_de_escrita_da_etapa_1():
+    """Task 3.1 da etapa 2: sem esses caminhos, o Landlock negaria escrita que
+    o agente legitimamente precisa (mapa observado numa geração real)."""
+    profile = get_profile("opencode")
+    for caminho in (
+        "/workspace",
+        "/home/agent/.cache/opencode",
+        "/home/agent/.cache/uv",
+        "/home/agent/.npm",
+        "/home/agent/.config",
+        "/home/agent/.local",
+        "/tmp",
+    ):
+        assert caminho in profile["writable_paths"]
+
+
 def test_sem_nome_devolve_perfil_padrao_da_plataforma():
     assert get_profile() == get_profile("opencode")
 

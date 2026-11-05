@@ -248,6 +248,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "asyncpg" },
+    { name = "pyseccomp" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-bdd" },
@@ -276,6 +277,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "asyncpg", specifier = ">=0.30" },
+    { name = "pyseccomp", specifier = ">=0.1.2" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-bdd", specifier = ">=7.2" },
@@ -2064,6 +2066,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b1/d4/c15b459e25a23767d2f4065ef40968920320f04e302889574310c21c96a3/pymysql-1.2.3.tar.gz", hash = "sha256:d5b288529782e536ae171866df3ca9dc4f6cbfb3cc2f18e6f837fbb90dbc262b", size = 50629, upload-time = "2026-09-17T12:22:49.146Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/4b/0a906d8184f011ff8dbd4722743783867589b33269d2c5fff238d636fdcb/pymysql-1.2.3-py3-none-any.whl", hash = "sha256:14f1c68e2ed859243ae5ca41ffbe677027fc46bc136a9f0be8a4e928e5e7415a", size = 46740, upload-time = "2026-09-17T12:22:47.826Z" },
+]
+
+[[package]]
+name = "pyseccomp"
+version = "0.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/e2/f761ad7bd34745af8c8aa6d76a71a240eef45ee4635e2022dcc1b133b4d8/pyseccomp-0.1.2.tar.gz", hash = "sha256:0d54efacf71bda4bdfd21233f5444b730cbecf593d602f796e6412a8682258bd", size = 4943, upload-time = "2021-01-02T22:48:01.278Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cd/5a/2c454fe11c9bf0d8d77a8d89d05e9f2f4203b39c000d0e38a060c273ab7f/pyseccomp-0.1.2-py3-none-any.whl", hash = "sha256:19177748e1202603ca4b2c41d728916402c018c4fee49dca1e3568ea218b7c23", size = 5667, upload-time = "2021-01-02T22:48:00.578Z" },
 ]
 
 [[package]]

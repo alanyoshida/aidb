@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # calibrar com margem a partir de uma execução real (roadmap, etapa 2).
     container_pids_limit: int = 512
     max_systems: int = 10
+    # Etapa 2 do confinamento (capability agent-sandbox): exige Landlock no
+    # host para criar sistemas novos (sandboxed), em vez de degradar
+    # silenciosamente para reduced. Hosts de dev/CI sem Landlock desligam
+    # (APPAIFORGE_REQUIRE_SANDBOX=false) e aceitam a degradação visível.
+    require_sandbox: bool = True
 
     # Infra do container de sistema
     harness_port: int = 4096

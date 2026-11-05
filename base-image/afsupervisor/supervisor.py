@@ -115,9 +115,17 @@ class ProcessRunner:
     def __init__(self) -> None:
         self._children: dict[int, subprocess.Popen] = {}
 
-    def spawn(self, cmd: list[str], env: dict | None = None, cwd: str | None = None) -> int:
+    def spawn(self, cmd: list[str], env: dict | None = None, cwd: str | None = None,
+              preexec_fn=None) -> int:
+        """`preexec_fn`, quando dado, roda no filho entre o fork e o exec —
+        é aí que o confinamento sandboxed é instalado, nunca no processo do
+        supervisor em si (que precisa continuar operando sem a restrição
+        pensada para o agente). Uma exceção levantada dentro de `preexec_fn`
+        é propagada de volta para este processo pelo próprio `subprocess`,
+        então nunca falha silenciosamente no filho."""
         popen = subprocess.Popen(
             cmd, env=env, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
+            preexec_fn=preexec_fn,
         )
         self._children[popen.pid] = popen
         return popen.pid
@@ -141,13 +149,15 @@ class ProcessRunner:
 class Supervisor:
     def __init__(self, runner: ProcessRunner | None = None,
                  workspace: str = "/workspace", app_port: int = 8080,
-                 root_path: str | None = None, agent_profile: dict | None = None):
+                 root_path: str | None = None, agent_profile: dict | None = None,
+                 execution_mode: str = "legacy"):
         self.runner = runner or ProcessRunner()
         self.workspace = workspace
         self.app_dir = os.path.join(workspace, "app")
         self.app_port = app_port
         self.root_path = root_path or os.environ.get("APP_ROOT_PATH", "/")
         self.agent_profile = agent_profile
+        self.execution_mode = execution_mode
         self.harness_pid: int | None = None
         self.harness_failed = False
         self.app_pid: int | None = None
@@ -164,7 +174,31 @@ class Supervisor:
                 file=sys.stderr,
             )
             return
-        self.harness_pid = self.runner.spawn(self.agent_profile["command"], cwd=self.agent_profile["cwd"])
+        confine = None
+        if self.execution_mode == "sandboxed":
+            # Roda no filho entre o fork e o exec (preexec_fn) — confina o
+            # processo do agente e tudo que ele gerar, sem restringir o
+            # supervisor (PID 1), que precisa continuar livre para gerenciar
+            # a app depois (capability agent-sandbox, etapa 2).
+            from . import sandbox
+
+            confine = lambda: sandbox.apply_sandbox(self.agent_profile, sandbox.DEFAULT_DENY_SYSCALLS)  # noqa: E731
+        try:
+            self.harness_pid = self.runner.spawn(
+                self.agent_profile["command"], cwd=self.agent_profile["cwd"], preexec_fn=confine,
+            )
+        except Exception as exc:
+            # modo sandboxed promete confinamento; nunca sobe o agente menos
+            # confinado do que o modo diz, mesmo que o host devesse suportar
+            # Landlock (o portal já sondou o mesmo kernel antes de persistir
+            # este modo) — mesmo contrato de perfil ausente.
+            if confine is None:
+                raise
+            self.harness_failed = True
+            print(
+                f"[afsupervisor] confinamento sandboxed falhou ({exc}); harness não iniciado",
+                file=sys.stderr,
+            )
 
     def app_python(self) -> str:
         """Python da app: venv criado pelo agente (uv) quando existir, senão o do sistema."""
@@ -222,7 +256,8 @@ class Supervisor:
 def main() -> None:
     port = int(os.environ.get("APP_PORT", "8080"))
     profile = load_agent_profile(os.environ.get("AIDB_AGENT_PROFILE"))
-    Supervisor(app_port=port, agent_profile=profile).run_forever()
+    execution_mode = os.environ.get("AIDB_EXECUTION_MODE", "legacy")
+    Supervisor(app_port=port, agent_profile=profile, execution_mode=execution_mode).run_forever()
 
 
 if __name__ == "__main__":

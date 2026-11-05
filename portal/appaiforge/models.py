@@ -43,14 +43,20 @@ class ExecutionMode(str, enum.Enum):
     """Modo de execução do container do sistema (ADR 0018, spec container-lifecycle).
 
     Fixado na criação do sistema e imutável depois: `legacy` é o comportamento
-    anterior a esta mudança (container roda como root); `reduced` é a
-    identidade de execução reduzida (não-root, sem capabilities). Sistemas
-    criados antes desta mudança ficam em `legacy` sem migração de dono do
-    workspace; sistemas novos nascem em `reduced`.
+    anterior à etapa 1 (container roda como root); `reduced` é a identidade de
+    execução reduzida da etapa 1 (não-root, sem capabilities), sem o
+    confinamento por seccomp/Landlock; `sandboxed` é `reduced` mais o
+    confinamento da etapa 2 (capability `agent-sandbox`) — syscalls e
+    caminhos filtrados pelo próprio supervisor antes de executar o agente.
+    Sistemas criados antes da etapa 1 ficam em `legacy` sem migração de dono
+    do workspace; sistemas novos nascem em `sandboxed` quando o host suporta
+    Landlock, ou em `reduced` quando não suporta e `require_sandbox` está
+    desligado (`provisioning.decide_execution_mode`).
     """
 
     legacy = "legacy"
     reduced = "reduced"
+    sandboxed = "sandboxed"
 
 
 class RunStatus(str, enum.Enum):
