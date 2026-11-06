@@ -255,3 +255,37 @@ def test_record_usage_idempotente(owner_system):
 
 def test_record_usage_sem_metadados_nao_registra():
     assert record_usage({"id": "x", "usage": {}}) is False
+
+
+def test_record_usage_agregacao_apos_duas_requisicoes(owner_system):
+    """Duas requisições distintas para o mesmo run/sessão → duas linhas em
+    TokenUsage, e a agregação (soma) reflete os dois eventos."""
+    editor, system = owner_system
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.running, prompt="duas requisições",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+
+    def payload(event_id, inp, out, cost):
+        return {
+            "id": event_id,
+            "metadata": {"system_id": system.id, "run_id": run_id},
+            "model": "gpt-4o",
+            "custom_llm_provider": "openai",
+            "usage": {"prompt_tokens": inp, "completion_tokens": out},
+            "response_cost": cost,
+        }
+
+    assert record_usage(payload("req-1", 100, 50, 0.01)) is True
+    assert record_usage(payload("req-2", 200, 80, 0.02)) is True
+
+    with session_scope() as s:
+        rows = s.execute(select(TokenUsage).where(TokenUsage.run_id == run_id)).scalars().all()
+        assert len(rows) == 2
+        assert sum(r.input_tokens for r in rows) == 300
+        assert sum(r.output_tokens for r in rows) == 130
+        assert sum(r.cost for r in rows) == pytest.approx(0.03)

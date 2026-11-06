@@ -119,17 +119,6 @@ class OpencodeHarness(HarnessPort):
         finally:
             self._aborting.discard(session_id)
 
-    @staticmethod
-    def _token_count(value) -> int:
-        """Uso de tokens vem em formatos diferentes por provedor (dict do
-        opencode ou int direto de alguns provedores como o GLM)."""
-        if isinstance(value, dict):
-            value = value.get("tokens", 0)
-        try:
-            return int(value or 0)
-        except (TypeError, ValueError):
-            return 0
-
     def _normalize(self, envelope: dict, session_id: str) -> RunEvent | None:
         etype = envelope.get("type")
         props = envelope.get("properties", {})
@@ -147,14 +136,18 @@ class OpencodeHarness(HarnessPort):
                 return RunEvent("run_error", text=message or error.get("name") or "erro desconhecido do provedor de LLM")
             model = info.get("model") or {}
             tokens = info.get("tokens") or {}
-            if isinstance(model, dict) and tokens:
+            # Uso normalizado vem do callback do LiteLLM via broker (D6); o
+            # evento do harness só é emitido quando ele já traz inteiros.
+            input_tokens = tokens.get("input")
+            output_tokens = tokens.get("output")
+            if isinstance(model, dict) and isinstance(input_tokens, int) and isinstance(output_tokens, int):
                 return RunEvent(
                     "usage",
                     meta={
                         "provider": model.get("providerID", ""),
                         "model": model.get("modelID", ""),
-                        "input_tokens": self._token_count(tokens.get("input")),
-                        "output_tokens": self._token_count(tokens.get("output")),
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
                     },
                 )
             return None

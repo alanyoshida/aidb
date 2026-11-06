@@ -83,7 +83,7 @@ def test_cria_sessao(fake_opencode):
 
 def test_fluxo_completo_normaliza_eventos(fake_opencode):
     fake_opencode["events"] = [
-        _evt("message.updated", sessionID=SESSION, info={"role": "assistant", "model": {"providerID": "zhipuai", "modelID": "glm-4.6"}, "tokens": {"input": {"tokens": 100}, "output": {"tokens": 50}}}),
+        _evt("message.updated", sessionID=SESSION, info={"role": "assistant", "model": {"providerID": "zhipuai", "modelID": "glm-4.6"}, "tokens": {"input": 100, "output": 50}}),
         _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "vou criar o arquivo"}),
         _evt("message.part.updated", sessionID=SESSION, part={"type": "tool", "tool": "edit", "state": {"input": {"filePath": "/workspace/app/main.py"}, "output": "ok"}}),
         _evt("message.part.updated", sessionID=SESSION, part={"type": "tool", "tool": "bash", "state": {"input": {"command": "pytest"}, "output": "1 passed"}}),
@@ -99,6 +99,20 @@ def test_fluxo_completo_normaliza_eventos(fake_opencode):
     assert usage.meta["input_tokens"] == 100 and usage.meta["model"] == "glm-4.6"
     edited = next(e for e in events if e.kind == "file_edited")
     assert edited.meta["file"].endswith("main.py")
+
+
+def test_usage_em_formato_de_dict_nao_emite_evento(fake_opencode):
+    """Contagem por provedor saiu do harness (D6): com o broker, o uso
+    autoritativo vem do callback do LiteLLM; dicts aninhados do opencode
+    não são mais desembrulhados aqui."""
+    fake_opencode["events"] = [
+        _evt("message.updated", sessionID=SESSION, info={"role": "assistant", "model": {"providerID": "zhipuai", "modelID": "glm-4.6"}, "tokens": {"input": {"tokens": 100}, "output": {"tokens": 50}}}),
+        _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
+    ]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    events = _run(harness, {"slug": "erp"})
+    assert all(e.kind != "usage" for e in events)
+    assert events[-1].kind == "run_finished"
 
 
 def test_eventos_de_outra_sessao_sao_ignorados(fake_opencode):
