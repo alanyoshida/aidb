@@ -132,6 +132,9 @@ class System(Base):
         Enum(ExecutionMode, name="execution_mode"), default=ExecutionMode.reduced
     )
     identity_secret: Mapped[str] = mapped_column(String(64))
+    # Versão do token opaco de inferência (etapa 3, ADR 0020). Revogar o acesso
+    # de um sistema = incrementar esta versão; o token antigo deixa de validar.
+    inference_token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

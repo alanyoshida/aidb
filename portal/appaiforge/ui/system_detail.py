@@ -5,7 +5,7 @@ from nicegui import ui
 from ..models import System
 from ..rbac import can_access_system, can_manage_system
 from ..services import catalog, connections
-from ..services.systems import get_system, rename_system, set_provider
+from ..services.systems import get_system, rename_system, revoke_inference_access, set_provider
 from .common import get_current_user, notify, render_header
 
 _STATUS_LABEL = {"provisioning": "provisionando", "active": "ativo", "error": "erro", "archived": "arquivado"}
@@ -157,6 +157,31 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
         provider_feedback.set_text("")
         provider_dialog.open()
 
+    with ui.dialog() as revoke_dialog, ui.card().classes("w-96"):
+        ui.label("Revogar acesso de inferência").classes("font-semibold text-lg")
+        ui.label(
+            "O token atual do sistema deixa de valer e um novo é gerado. "
+            "O container será recriado com o novo token; execuções em andamento serão interrompidas."
+        ).classes("text-sm text-gray-600")
+        revoke_feedback = ui.label("").classes("text-sm")
+
+        def do_revoke() -> None:
+            try:
+                revoke_inference_access(system.id, actor=user)
+            except Exception as exc:  # noqa: BLE001 - feedback direto ao operador
+                revoke_feedback.classes(remove="text-green-600", add="text-red-600").set_text(str(exc))
+                return
+            revoke_dialog.close()
+            notify("Acesso de inferência revogado; o container será recriado com o novo token.", kind="positive")
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=revoke_dialog.close).props("flat")
+            ui.button("Revogar acesso", icon="key_off", on_click=do_revoke).props("color=negative data-testid=confirm-revoke-access")
+
+    def open_revoke_dialog() -> None:
+        revoke_feedback.set_text("")
+        revoke_dialog.open()
+
     # ciclo de vida: arquivar (dono) e excluir definitivamente (admin, arquivado)
     with ui.row().classes("mt-4"):
 
@@ -167,6 +192,8 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
             ui.navigate.to("/")
 
         ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
+
+        ui.button("Revogar acesso de inferência", icon="key_off", on_click=open_revoke_dialog).props("color=negative outline data-testid=revoke-access")
 
         if user.is_admin and system.status.value == "archived":
 

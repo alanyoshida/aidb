@@ -5,6 +5,7 @@ import re
 
 from sqlalchemy import select
 
+from .. import inference_token
 from ..db import session_scope
 from ..edge import publish_app, unpublish_app
 from ..models import System, SystemStatus, User
@@ -144,6 +145,28 @@ def _reprovision_async(system_id: str) -> None:
             log.exception("não foi possível aplicar o provedor ao sistema %s", system_id)
 
     threading.Thread(target=work, daemon=True, name=f"refresh-provider-{system_id}").start()
+
+
+def revoke_inference_access(system_id: str, actor: User) -> str:
+    """Revoga o token opaco de inferência do sistema (incrementa a versão).
+
+    Apenas dono ou admin. A recriação do container aplica o novo token
+    (a env de credencial é fixada na criação).
+    """
+    with session_scope() as s:
+        system = s.get(System, system_id)
+        if system is None:
+            raise ValueError(f"sistema {system_id} não encontrado")
+        if not can_manage_system(actor, system):
+            raise NotPermitted("somente o dono ou um admin podem revogar o acesso de inferência")
+    new_version, token = inference_token.rotate(system_id)
+    audit.record(
+        actor_id=actor.id, actor_email=actor.email, action="system.revoke_inference",
+        resource_type="system", resource_id=system_id, system_id=system_id,
+        details={"inference_version": new_version},
+    )
+    _reprovision_async(system_id)
+    return token
 
 
 def set_container(system_id: str, container_id: str) -> None:
