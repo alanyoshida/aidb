@@ -58,6 +58,30 @@ curl -s https://api.z.ai/api/coding/paas/v4/chat/completions \
   -d '{"model":"glm-4.6","messages":[{"role":"user","content":"ok"}]}'
 ```
 
+## Broker de inferência (opcional — etapa 3 do confinamento)
+
+Por padrão, a chave do provedor entra no container do sistema via env var. Com o **broker de inferência** ligado ([ADR 0020](docs/adr/0020-broker-de-inferencia-com-litellm.md)), o container passa a carregar apenas um **token opaco** — o broker valida o token, resolve a execução ativa e injeta a credencial só no caminho de saída, com o [LiteLLM](https://docs.litellm.ai/) como backend de credencial e tradução de dialeto.
+
+Para ligar, defina em `deploy/.env`:
+
+```bash
+APPAIFORGE_INFERENCE_BROKER_ENABLED=true
+APPAIFORGE_LITELLM_API_KEY=sk-uma-chave-master-do-litellm
+APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN=um-token-entre-portal-e-broker
+```
+
+e suba o stack (`docker compose -f deploy/docker-compose.yml up -d --build`). Os serviços `litellm` e `broker` sobem na rede interna, sem porta publicada.
+
+Como funciona:
+
+- **Chaves**: o portal continua sendo a fonte única (cifradas no Postgres, ADR 0007). Ao cadastrar/remover uma chave na UI — e no boot do portal — os deployments são empurrados para a API administrativa do LiteLLM. Nada de chave de provedor em arquivo ou env do compose.
+- **Containers**: com a flag ligada, sistemas novos (e existentes, recriados pela reconciliação) recebem o token opaco na env de credencial e o `opencode.json` aponta o provedor para o broker. `docker exec <sys> env` mostra só o token.
+- **Revogação**: dono/admin pode revogar o acesso de um sistema (aba Configurações → "Revogar acesso de inferência": a versão do token sobe e o container é recriado) ou de uma sessão (botão na lista de sessões do chat — só aquela sessão é bloqueada).
+- **Uso/custo**: o LiteLLM envia tokens e custo por execução para o portal (callback idempotente); a contagem caseira por provedor fica desligada.
+- **Rollback**: desligar a flag e recriar os sistemas volta a injetar a chave do catálogo.
+
+> A revogação por sistema e a rota do broker são **configuradas, não impostas** — fechar o perímetro de rede é a etapa 5 do [roadmap](docs/roadmap-confinamento-do-agente.md).
+
 ## Criar um sistema (fluxo do usuário)
 
 1. Login como **editor** → "Novo sistema" → nome + slug.
@@ -119,6 +143,8 @@ Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador can
 | `DYNAMIC_CONFIG_DIR` | /dynamic | rotas dinâmicas do Traefik (volume compartilhado) |
 | `CONFIGS_DIR` / `HOST_CONFIG_DIR` | /configs | config do agente (MCP, provedor, chaves) **fora do workspace**, montada read-only no container do sistema |
 | `DISPLAY_TIMEZONE` | America/Sao_Paulo | fuso das datas exibidas (gravadas em UTC) |
+| `INFERENCE_BROKER_ENABLED` | `false` | broker de inferência: token opaco no container + LiteLLM (ADR 0020) |
+| `LITELLM_API_KEY` / `INFERENCE_BROKER_SERVICE_TOKEN` | — | master key do LiteLLM e segredo portal↔broker (obrigatórias com o broker ligado) |
 | `SEED_DEMO_ADMIN` | — | `1` semeia o admin de dev quando não há usuários (nunca em produção) |
 
 Limites: CPU/memória aplicados via Docker; **quota de disco** requer storage driver com suporte a `storage-opt` (overlay2/ext4 não suporta — o container sobe sem quota e o portal registra a ressalva).

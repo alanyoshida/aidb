@@ -30,3 +30,5 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0016](0016-testes-em-tres-camadas-unit-bdd-e2e.md) | Testes em três camadas: unitários, BDD e E2E pelo browser | aceito |
 | [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md) | Gate de operações destrutivas com classificador SQL único (sqlglot) | aceito |
 | [0018](0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md) | Perfil de runtime do agente declarativo; identidade de execução reduzida por sistema | aceito |
+| [0019](0019-sandbox-seccomp-landlock-no-supervisor.md) | Sandbox do agente: seccomp + Landlock instalados pelo supervisor antes do exec | aceito |
+| [0020](0020-broker-de-inferencia-com-litellm.md) | Broker de inferência: token opaco no container, LiteLLM como backend de credencial | aceito |

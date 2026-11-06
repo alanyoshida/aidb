@@ -39,8 +39,8 @@
 
 ## 6. Uso de tokens normalizado
 
-- [ ] 6.1 Remover o `_token_count()` e a contagem por provedor do `harness/opencode.py`, mantendo o evento `usage` apenas quando ainda vier do harness; testar que o fluxo de chat não quebra
-- [ ] 6.2 Persistir tokens e custo a partir do callback do LiteLLM em `TokenUsage` (ou campo derivado, conforme a decisão de schema), preservando a visibilidade por run/sessão; testar agregação após duas requisições
+- [x] 6.1 Remover o `_token_count()` e a contagem por provedor do `harness/opencode.py`, mantendo o evento `usage` apenas quando ainda vier do harness; testar que o fluxo de chat não quebra
+- [x] 6.2 Persistir tokens e custo a partir do callback do LiteLLM em `TokenUsage` (ou campo derivado, conforme a decisão de schema), preservando a visibilidade por run/sessão; testar agregação após duas requisições
 
 ## 7. Testes de aceitação
 
@@ -51,6 +51,6 @@
 
 ## 8. Documentação e decisão
 
-- [ ] 8.1 Reconciliar a numeração de ADR (o ADR 0019 da etapa 2 não existe em `docs/adr/`) e registrar o ADR 0020 do broker/LiteLLM, documentando o híbrido e a virtual key no env como alternativa descartada
-- [ ] 8.2 Atualizar a linha da etapa 3 no `docs/roadmap-confinamento-do-agente.md` com o status e os artefatos entregues
-- [ ] 8.3 Documentar no `README.md`/guia operacional como configurar LiteLLM, o broker e o rollout por flag
+- [x] 8.1 Reconciliar a numeração de ADR (o ADR 0019 da etapa 2 não existe em `docs/adr/`) e registrar o ADR 0020 do broker/LiteLLM, documentando o híbrido e a virtual key no env como alternativa descartada
+- [x] 8.2 Atualizar a linha da etapa 3 no `docs/roadmap-confinamento-do-agente.md` com o status e os artefatos entregues
+- [x] 8.3 Documentar no `README.md`/guia operacional como configurar LiteLLM, o broker e o rollout por flag

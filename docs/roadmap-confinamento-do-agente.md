@@ -1,6 +1,6 @@
 # Roadmap — confinamento e política do agente
 
-> **Status**: planejamento aceito, nenhuma etapa implementada.
+> **Status**: plano aceito; etapas 1–2 concluídas, etapa 3 implementada (verificação real pendente).
 > **Última revisão**: 2026-11-04.
 > Documento de trabalho de longa duração: uma change OpenSpec por etapa, na ordem abaixo.
 > Ao concluir uma etapa, marque na tabela e registre o ADR correspondente em
@@ -12,7 +12,7 @@
 |---|---|---|---|
 | 1 | Higiene do container + `AgentProfile` | container não-root, perfil declarativo | ✅ concluída (change `agent-runtime-profile-and-hardening`, ADR 0018) |
 | 2 | seccomp + Landlock no `afsupervisor` | agente confinado a `/workspace` | ✅ concluída (change `agent-sandbox-seccomp-landlock`, capability `agent-sandbox`) |
-| 3 | Broker de inferência | nenhuma credencial de LLM no container | ⬜ não iniciada |
+| 3 | Broker de inferência | nenhuma credencial de LLM no container | 🚧 implementada (change `inference-broker`, ADR 0020) — verificação real pendente |
 | 4 | Proxy de banco + gate no data plane | gate independente do agente | ⬜ não iniciada |
 | 5 | Perímetro de egress | proxies inescapáveis | ⬜ não iniciada |
 | 6 | Telemetria OTel | um trace por execução | ⬜ não iniciada |
@@ -265,6 +265,10 @@ aqui para o caso de reaparecer; não bloqueou nenhum critério de aceite desta e
 ---
 
 ## Etapa 3 — Broker de inferência (nenhuma credencial de LLM no container)
+
+**Status: 🚧 implementada** (change `inference-broker`, capability `inference-broker`, [ADR 0020](adr/0020-broker-de-inferencia-com-litellm.md)) — código, testes unitários e spikes fechados; pendentes a verificação real (tasks 4.4, 5.3, 7.x): rollout com flag ligada, callback de uso fim a fim e testes de integração/E2E.
+
+**Entregue**: token opaco HMAC versionado por sistema (`inference_token.py`, revogação por incremento de versão + ação administrativa); broker compartilhado (`broker_app.py`/`broker.py`) com validação de token, resolução de run/sessão no portal, injeção de credencial no caminho de saída, allowlist de destino, streaming sem buffer e cancelamento via `/internal/cancel`; revogação seletiva de sessão (`chat_sessions.inference_revoked`, ação na UI do chat); uso/custo via callback do LiteLLM com idempotência (`token_usage.cost`, `external_id`); LiteLLM e broker nos dois compose, com o portal sincronizando as chaves do catálogo para a API administrativa do LiteLLM (fonte única, ADR 0007); rollout por `APPAIFORGE_INFERENCE_BROKER_ENABLED`. Spikes S4/S6/S7 fechados empiricamente (incluindo o achado de que o opencode usa `/v1/responses`).
 
 **Objetivo**: nem a chave real do provedor nem a virtual key do LiteLLM entram no container. O
 container carrega apenas um **token opaco emitido pelo portal**, que um broker troca pela
