@@ -14,27 +14,27 @@
 
 ## 3. Broker de inferência
 
-- [ ] 3.1 Criar o serviço do broker (entrypoint ASGI dedicado na imagem do portal) com healthcheck, configuração por env e roteamento `/v1/...` (OpenAI-compatible) e `/v1/messages` (Anthropic); testar que sobe e responde health
-- [ ] 3.2 Implementar validação do token (assinatura + versão) e recusa sem token válido; testar requisição sem token, token adulterado e token revogado
-- [ ] 3.3 Implementar a resolução de contexto com o portal (`system_id` → run/sessão ativos, provedor/modelo, revogação de sessão) com autenticação de serviço; testar sistema com execução ativa, sem execução ativa e com sessão revogada
-- [ ] 3.4 Implementar injeção da credencial no caminho de saída e descarte do header de credencial do cliente; testar que o backend recebe apenas a credencial injetada
-- [ ] 3.5 Implementar allowlist de destino de LLM e recusa de destino fora dela; testar destino permitido e destino recusado
-- [ ] 3.6 Implementar proxy de streaming sem buffer e repasse na ordem; testar com upstream de chunks e assert de chegada incremental
-- [ ] 3.7 Implementar cancelamento via chamada interna do portal (`/internal/cancel`) que encerra a conexão upstream; testar abort durante uma requisição em andamento
-- [ ] 3.8 Implementar a superfície de revogação de sessão (portal marca, broker recusa) sem afetar outras sessões do mesmo sistema; testar revogação seletiva
-- [ ] 3.9 Implementar o callback de uso do LiteLLM para o portal com `metadata` (`system_id`, `run_id`, `session_id`) e idempotência por evento; testar registro único e sem duplicar `TokenUsage`
+- [x] 3.1 Criar o serviço do broker (entrypoint ASGI dedicado na imagem do portal) com healthcheck, configuração por env e roteamento `/v1/...` (OpenAI-compatible) e `/v1/messages` (Anthropic); testar que sobe e responde health
+- [x] 3.2 Implementar validação do token (assinatura + versão) e recusa sem token válido; testar requisição sem token, token adulterado e token revogado
+- [x] 3.3 Implementar a resolução de contexto com o portal (`system_id` → run/sessão ativos, provedor/modelo, revogação de sessão) com autenticação de serviço; testar sistema com execução ativa, sem execução ativa e com sessão revogada
+- [x] 3.4 Implementar injeção da credencial no caminho de saída e descarte do header de credencial do cliente; testar que o backend recebe apenas a credencial injetada
+- [x] 3.5 Implementar allowlist de destino de LLM e recusa de destino fora dela; testar destino permitido e destino recusado
+- [x] 3.6 Implementar proxy de streaming sem buffer e repasse na ordem; testar com upstream de chunks e assert de chegada incremental
+- [x] 3.7 Implementar cancelamento via chamada interna do portal (`/internal/cancel`) que encerra a conexão upstream; testar abort durante uma requisição em andamento
+- [x] 3.8 Implementar a superfície de revogação de sessão (portal marca, broker recusa) sem afetar outras sessões do mesmo sistema; testar revogação seletiva
+- [x] 3.9 Implementar o callback de uso do LiteLLM para o portal com `metadata` (`system_id`, `run_id`, `session_id`) e idempotência por evento; testar registro único e sem duplicar `TokenUsage`
 
 ## 4. Provisionamento e config do agente
 
-- [ ] 4.1 Adicionar a flag `APPAIFORGE_INFERENCE_BROKER_ENABLED` (default false) em `config.py` e nos compose, mantendo o comportamento atual quando desligada
-- [ ] 4.2 Com a flag ligada, `write_opencode_config()` passa a gravar `baseURL` do provedor apontando para o broker (por dialeto); testar que o `opencode.json` gerado contém o broker e não o provedor direto
-- [ ] 4.3 Com a flag ligada, `provisioning` injeta o token opaco na env de credencial do perfil em vez da chave real, e não injeta a virtual key do LiteLLM; testar inspeção de env do container sem credencial utilizável
+- [x] 4.1 Adicionar a flag `APPAIFORGE_INFERENCE_BROKER_ENABLED` (default false) em `config.py` e nos compose, mantendo o comportamento atual quando desligada
+- [x] 4.2 Com a flag ligada, `write_opencode_config()` passa a gravar `baseURL` do provedor apontando para o broker (por dialeto); testar que o `opencode.json` gerado contém o broker e não o provedor direto
+- [x] 4.3 Com a flag ligada, `provisioning` injeta o token opaco na env de credencial do perfil em vez da chave real, e não injeta a virtual key do LiteLLM; testar inspeção de env do container sem credencial utilizável
 - [ ] 4.4 Garantir que a reconciliação reentrega o mesmo token (versionado) e que a recriação de um sistema existente aplica o novo caminho; testar em sistema `sandboxed`
 
 ## 5. LiteLLM e deploy
 
-- [ ] 5.1 Adicionar o serviço `litellm` ao `deploy/docker-compose.yml` e ao `docker-compose.e2e.yml`, com config de provedores do catálogo e virtual key por sistema, sem porta publicada
-- [ ] 5.2 Adicionar o serviço `broker` aos dois compose, na rede interna, com as envs de serviço (segredo HMAC compartilhado, master key do LiteLLM, URL do portal)
+- [x] 5.1 Adicionar o serviço `litellm` ao `deploy/docker-compose.yml` e ao `docker-compose.e2e.yml`, com config de provedores do catálogo e virtual key por sistema, sem porta publicada
+- [x] 5.2 Adicionar o serviço `broker` aos dois compose, na rede interna, com as envs de serviço (segredo HMAC compartilhado, master key do LiteLLM, URL do portal)
 - [ ] 5.3 Configurar o callback de uso do LiteLLM apontando para o portal e validar a chamada fim a fim em ambiente local
 
 ## 6. Uso de tokens normalizado

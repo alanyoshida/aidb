@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -175,6 +176,8 @@ class ChatSession(Base):
     harness_session_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     title: Mapped[str | None] = mapped_column(String(100), nullable=True)
     context_reset: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Revogação seletiva da inferência desta sessão (etapa 3, ADR 0020).
+    inference_revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -219,6 +222,9 @@ class TokenUsage(Base):
     model: Mapped[str] = mapped_column(String(120))
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cost: Mapped[float] = mapped_column(Float, default=0.0)
+    # Id do evento no LiteLLM: garante idempotência do callback de uso.
+    external_id: Mapped[str | None] = mapped_column(String(120), nullable=True, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

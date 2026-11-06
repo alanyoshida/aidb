@@ -245,10 +245,31 @@ def render_chat(system: System, user: User) -> None:
                 label = r.title or "sessão sem título"
                 is_active = r.id == active_session["id"]
                 btn_classes = "text-xs text-left w-full " + ("font-bold text-primary" if is_active else "text-gray-600")
-                ui.button(
-                    label,
-                    on_click=lambda sid=sess_id: _switch_session(sid),
-                ).props("flat dense align=left").classes(btn_classes)
+                with ui.row().classes("w-full items-center no-wrap gap-1"):
+                    ui.button(
+                        label,
+                        on_click=lambda sid=sess_id: _switch_session(sid),
+                    ).props("flat dense align=left").classes(btn_classes + " grow")
+                    if r.inference_revoked:
+                        ui.icon("block").classes("text-xs text-red-500").tooltip("Inferência revogada")
+                    else:
+                        ui.button(
+                            icon="block",
+                            on_click=lambda sid=sess_id: _revoke_session_inference(sid),
+                        ).props("flat dense round size=sm").tooltip("Revogar inferência desta sessão")
+
+    def _revoke_session_inference(sess_id: str) -> None:
+        from .common import notify
+        from ..services.systems import revoke_session_inference
+
+        try:
+            revoke_session_inference(sess_id, user)
+        except Exception as exc:  # noqa: BLE001 - feedback direto ao operador
+            notify(str(exc), kind="negative")
+            return
+        notify("Inferência revogada para esta sessão.", kind="warning")
+        _load_sessions._last = None
+        _load_sessions()
 
     def _switch_session(sess_id: str) -> None:
         from ..db import session_scope

@@ -77,6 +77,23 @@ class Settings(BaseSettings):
     harness_mode: str = "opencode"
     opencode_port: int = 4096
 
+    # Broker de inferência (etapa 3, ADR 0020). Desligado por padrão: o
+    # provisionamento continua injetando a chave real até o rollout.
+    inference_broker_enabled: bool = False
+    inference_broker_port: int = 4001
+    # Base do LiteLLM vista pelo broker na rede interna (sem porta publicada).
+    litellm_base_url: str = "http://litellm:4000"
+    # Chave do LiteLLM usada/injetada pelo broker (nunca vai ao container).
+    litellm_api_key: str = ""
+    # Allowlist de hosts de destino do broker (separados por vírgula).
+    inference_broker_allowed_hosts: str = "litellm,localhost,127.0.0.1"
+    # Portal visto pelo broker para resolver run/sessão e registrar uso.
+    portal_internal_url: str = "http://portal:8080"
+    # Broker visto pelo portal para cancelar requisições em andamento.
+    inference_broker_url: str = "http://broker:4001"
+    # Segredo compartilhado entre portal e broker nas chamadas internas.
+    inference_broker_service_token: str = ""
+
     session_ttl_days: int = 7
     identity_token_ttl_seconds: int = 60
 

@@ -43,6 +43,9 @@ def set_key(provider: str, key: str, actor: User | None = None) -> None:
         action="provider_key.set", resource_type="provider_key", resource_id=provider,
         details={"provider": provider},
     )
+    from . import litellm_sync
+
+    litellm_sync.sync_provider(provider)
 
 
 def remove_key(provider: str, actor: User | None = None) -> None:
@@ -56,6 +59,9 @@ def remove_key(provider: str, actor: User | None = None) -> None:
         action="provider_key.remove", resource_type="provider_key", resource_id=provider,
         details={"provider": provider},
     )
+    from . import litellm_sync
+
+    litellm_sync.remove_provider(provider)
 
 
 def _stored_key(provider: str) -> str | None:

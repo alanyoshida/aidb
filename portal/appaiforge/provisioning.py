@@ -93,6 +93,22 @@ def _provider_env(provider: str) -> dict[str, str]:
     return env
 
 
+def _broker_base(provider_id: str) -> str:
+    """BaseURL do broker vista pelo container do agente, por dialeto."""
+    base = get_settings().inference_broker_url.rstrip("/")
+    # Anthropic usa /v1/messages a partir da raiz; os demais usam o prefixo /v1.
+    return base if provider_id == "anthropic" else f"{base}/v1"
+
+
+def _broker_credential_env(system: System) -> dict[str, str]:
+    """Token opaco na env de credencial do perfil, no lugar da chave real."""
+    from . import inference_token
+    from .agent_profiles import get_profile, resolve_credential_env
+
+    env_name = resolve_credential_env(get_profile(), system.provider)
+    return {env_name: inference_token.token_for_system(system)}
+
+
 def _connection_env(system_id: str) -> dict[str, str]:
     from .services.connections import get_connection_secret
 
@@ -160,18 +176,22 @@ def write_opencode_config(system: System, config_dir: str) -> None:
     if provider is not None and provider["kind"] == "openai-compatible":
         models = {m: {} for m in (provider["models"] or [])}
         models.setdefault(system.model, {})
+        base_url = _broker_base(provider_id) if get_settings().inference_broker_enabled else provider["base_url"]
         config["provider"] = {
             provider_id: {
                 "npm": "@ai-sdk/openai-compatible",
                 "name": provider["label"],
-                "options": {"baseURL": provider["base_url"]},
+                "options": {"baseURL": base_url},
                 "models": models,
             }
         }
     else:
-        base_url = provider["base_url"] if provider else None
-        if not base_url and provider_id == "zhipuai":
-            base_url = get_settings().glm_base_url
+        if get_settings().inference_broker_enabled:
+            base_url = _broker_base(provider_id)
+        else:
+            base_url = provider["base_url"] if provider else None
+            if not base_url and provider_id == "zhipuai":
+                base_url = get_settings().glm_base_url
         if base_url:
             config["provider"] = {provider_id: {"options": {"baseURL": base_url}}}
     os.makedirs(config_dir, exist_ok=True)
@@ -270,7 +290,11 @@ def provision_system(system: System) -> str:
         # exec do agente (capability agent-sandbox, etapa 2). O modo já está
         # fixado desde a criação do sistema; o supervisor só confia nele.
         "AIDB_EXECUTION_MODE": system.execution_mode.value,
-        **_provider_env(system.provider),
+        **(
+            _broker_credential_env(system)
+            if settings.inference_broker_enabled
+            else _provider_env(system.provider)
+        ),
         **_connection_env(system.id),
     }
 

@@ -1,5 +1,6 @@
 """Aplicação FastAPI + NiceGUI do portal."""
 
+import hmac
 import os
 
 from fastapi import FastAPI, Request
@@ -38,6 +39,10 @@ def create_app() -> FastAPI:
 
     ensure_presets()
 
+    from .services import litellm_sync
+
+    litellm_sync.sync_all()
+
     from .agent_queue import reconcile_orphaned_runs
 
     reconcile_orphaned_runs()
@@ -45,6 +50,41 @@ def create_app() -> FastAPI:
     @application.get("/api/health")
     def health() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})
+
+    @application.get("/internal/inference/context")
+    def inference_context_endpoint(request: Request, system_id: str) -> JSONResponse:
+        """Contexto de inferência para o broker (autenticado por token de serviço)."""
+        from .config import get_settings
+        from .services.systems import inference_context
+
+        expected = get_settings().inference_broker_service_token
+        supplied = request.headers.get("x-aidb-broker-token", "")
+        if not expected or not hmac.compare_digest(supplied, expected):
+            return JSONResponse({"error": "não autorizado"}, status_code=401)
+        context = inference_context(system_id)
+        if context is None:
+            return JSONResponse({"error": "sistema não encontrado"}, status_code=404)
+        return JSONResponse(context)
+
+    @application.post("/internal/inference/usage")
+    async def inference_usage_endpoint(request: Request) -> JSONResponse:
+        """Callback de uso do LiteLLM (idempotente por id de evento)."""
+        from .config import get_settings
+        from .services.inference_usage import record_usage
+
+        expected = get_settings().inference_broker_service_token
+        supplied = request.headers.get("x-aidb-broker-token") or request.query_params.get("token", "")
+        if not expected or not hmac.compare_digest(supplied, expected):
+            return JSONResponse({"error": "não autorizado"}, status_code=401)
+        try:
+            payload = await request.json()
+        except Exception:  # noqa: BLE001 - payload inválido não deve derrubar o portal
+            return JSONResponse({"error": "payload inválido"}, status_code=400)
+        try:
+            recorded = record_usage(payload)
+        except Exception:  # noqa: BLE001 - FK/uso não atribuível
+            return JSONResponse({"error": "uso não registrado"}, status_code=422)
+        return JSONResponse({"recorded": recorded})
 
     @application.get("/entry/{slug}")
     def app_entry(slug: str, request: Request) -> "RedirectResponse":

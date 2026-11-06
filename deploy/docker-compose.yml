@@ -56,6 +56,11 @@ services:
       APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_CONFIGS_DIR:-/opt/appaiforge/configs}
       APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
       APPAIFORGE_HARNESS_MODE: ${APPAIFORGE_HARNESS_MODE:-fake}
+      APPAIFORGE_INFERENCE_BROKER_ENABLED: ${APPAIFORGE_INFERENCE_BROKER_ENABLED:-false}
+      APPAIFORGE_LITELLM_BASE_URL: http://litellm:4000
+      APPAIFORGE_LITELLM_API_KEY: ${APPAIFORGE_LITELLM_API_KEY:-sk-aidb-dev}
+      APPAIFORGE_INFERENCE_BROKER_URL: http://broker:4001
+      APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
       APPAIFORGE_FAKE_DELAY: ${APPAIFORGE_FAKE_DELAY:-1.5}
       APPAIFORGE_MAX_SYSTEMS: ${APPAIFORGE_MAX_SYSTEMS:-50}
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
@@ -73,6 +78,36 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${APPAIFORGE_LITELLM_API_KEY:-sk-aidb-dev}
+      GENERIC_LOGGER_ENDPOINT: "http://portal:8080/internal/inference/usage?token=${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}"
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+
+  broker:
+    build:
+      context: ..
+      dockerfile: deploy/portal.Dockerfile
+    command: ["uvicorn", "appaiforge.broker_app:app", "--host", "0.0.0.0", "--port", "4001"]
+    environment:
+      APPAIFORGE_LITELLM_BASE_URL: http://litellm:4000
+      APPAIFORGE_LITELLM_API_KEY: ${APPAIFORGE_LITELLM_API_KEY:-sk-aidb-dev}
+      APPAIFORGE_PORTAL_INTERNAL_URL: http://portal:8080
+      APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
+      APPAIFORGE_INFERENCE_BROKER_ALLOWED_HOSTS: litellm
+    depends_on:
+      - litellm
+      - portal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
 networks:
   default:

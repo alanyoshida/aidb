@@ -509,6 +509,9 @@ class AgentQueue:
                 session_id = cs.harness_session_id if cs else None
         if session_id:
             self.harness.interrupt({"slug": system.slug}, session_id)
+        from . import broker
+
+        broker.cancel_inference(run_id)
 
     def _persist_events(self, run_id: str, buffer: RunBuffer) -> None:
         """Salvar eventos do buffer no banco para recuperação após F5."""

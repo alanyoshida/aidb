@@ -7,7 +7,15 @@ import pytest
 
 from appaiforge import auth
 from appaiforge.models import ProviderKey, UserType
-from appaiforge.provisioning import _provider_env, write_opencode_config
+from appaiforge import inference_token
+from appaiforge.agent_profiles import get_profile, resolve_credential_env
+from appaiforge.config import get_settings
+from appaiforge.provisioning import (
+    _broker_base,
+    _broker_credential_env,
+    _provider_env,
+    write_opencode_config,
+)
 from appaiforge.security import encrypt_secret
 from appaiforge.services import catalog, connections
 from appaiforge.services.systems import create_system
@@ -287,3 +295,29 @@ def test_workspace_de_sistema_reduzido_pertence_ao_usuario_do_agente(editor, tmp
     workspace = tmp_path / "workspaces" / system.slug
     st = workspace.stat()
     assert (st.st_uid, st.st_gid) == (1000, 1000)
+
+
+def test_broker_ligado_aponta_config_para_o_broker(editor, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPAIFORGE_INFERENCE_BROKER_ENABLED", "true")
+    monkeypatch.setenv("APPAIFORGE_INFERENCE_BROKER_URL", "http://broker:4001")
+    get_settings.cache_clear()
+
+    glm = create_system(editor, "BG", "prov-broker-glm")
+    assert _config(tmp_path, glm)["provider"]["zhipuai"]["options"]["baseURL"] == "http://broker:4001/v1"
+
+    anthropic = create_system(editor, "BA", "prov-broker-anthropic", provider="anthropic", model="claude-3-5-sonnet-latest")
+    assert _config(tmp_path, anthropic)["provider"]["anthropic"]["options"]["baseURL"] == "http://broker:4001"
+
+    assert _broker_base("zhipuai") == "http://broker:4001/v1"
+    assert _broker_base("anthropic") == "http://broker:4001"
+
+
+def test_broker_credential_env_injeta_token_e_nao_chave(editor, monkeypatch):
+    monkeypatch.setenv("APPAIFORGE_INFERENCE_BROKER_ENABLED", "true")
+    get_settings.cache_clear()
+    system = create_system(editor, "BT", "prov-broker-token")
+    env_name = resolve_credential_env(get_profile(), system.provider)
+    env = _broker_credential_env(system)
+    assert set(env) == {env_name}
+    assert env[env_name] == inference_token.token_for_system(system)
+    assert env[env_name] != "chave-real-do-provedor"
