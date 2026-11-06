@@ -1,5 +1,7 @@
 """Detalhe do sistema: estado, provedor e conexões de banco (specs system-management, db-connections)."""
 
+import json
+
 from nicegui import ui
 
 from ..models import System
@@ -503,11 +505,18 @@ def _render_editor(system, user) -> None:
     def refresh_tree() -> None:
         """Reconstrói a árvore a partir do workspace atual. Preserva a seleção
         (D3: `id` é o caminho relativo, estável) quando o arquivo continuar
-        existindo; limpa o painel quando ele sumiu."""
+        existindo; limpa o painel quando ele sumiu.
+
+        Só reconstrói quando a estrutura mudar: limpar e recriar a cada 2s
+        derrubava cliques que caíam num nó prestes a ser removido."""
         nodes = workspace_files.list_tree(system)
         if state["selected"] is not None and state["selected"] not in _node_ids(nodes):
             state["selected"] = None
             render_content()
+        fingerprint = json.dumps(nodes, sort_keys=True)
+        if fingerprint == state.get("tree_fingerprint"):
+            return
+        state["tree_fingerprint"] = fingerprint
         tree_box.clear()
         with tree_box:
             if not nodes:
