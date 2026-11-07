@@ -48,27 +48,40 @@ def test_apply_sandbox_chama_seccomp_e_landlock_com_os_caminhos_do_perfil(monkey
         chamadas["readable_paths"] = readable_paths
         chamadas["writable_paths"] = writable_paths
 
+    def fake_apply_landlock_net(connect_tcp_ports, bind_tcp_ports):
+        chamadas["connect_tcp_ports"] = connect_tcp_ports
+        chamadas["bind_tcp_ports"] = bind_tcp_ports
+
     monkeypatch.setattr(sandbox, "build_seccomp_filter", fake_build_filter)
     monkeypatch.setattr(sandbox, "apply_landlock", fake_apply_landlock)
+    # nunca aplicar Landlock de rede de verdade num teste não-forkado: o
+    # restrict_self é irrevogável e derrubaria a rede do próprio processo
+    # do pytest para o resto da sessão (achado ao escrever este teste)
+    monkeypatch.setattr(sandbox, "apply_landlock_net", fake_apply_landlock_net)
 
-    sandbox.apply_sandbox(FAKE_PROFILE, deny_syscalls=["ptrace"])
+    profile = {**FAKE_PROFILE, "connect_tcp_ports": [15400], "bind_tcp_ports": [4096]}
+    sandbox.apply_sandbox(profile, deny_syscalls=["ptrace"])
 
     assert chamadas["loaded"] is True
     assert chamadas["deny_syscalls"] == ["ptrace"]
     assert chamadas["readable_paths"] == FAKE_PROFILE["readable_paths"]
     assert chamadas["writable_paths"] == FAKE_PROFILE["writable_paths"]
+    assert chamadas["connect_tcp_ports"] == [15400]
+    assert chamadas["bind_tcp_ports"] == [4096]
 
 
-def test_apply_sandbox_instala_seccomp_antes_de_landlock(monkeypatch):
+def test_apply_sandbox_instala_seccomp_e_landlock_fs_antes_do_de_rede(monkeypatch):
     ordem = []
     monkeypatch.setattr(sandbox, "build_seccomp_filter", lambda deny_syscalls=None: type(
         "F", (), {"load": lambda self: ordem.append("seccomp")}
     )())
-    monkeypatch.setattr(sandbox, "apply_landlock", lambda **kw: ordem.append("landlock"))
+    monkeypatch.setattr(sandbox, "apply_landlock", lambda **kw: ordem.append("landlock_fs"))
+    # idem: nunca de verdade fora de um fork (ver teste acima)
+    monkeypatch.setattr(sandbox, "apply_landlock_net", lambda **kw: ordem.append("landlock_net"))
 
     sandbox.apply_sandbox(FAKE_PROFILE)
 
-    assert ordem == ["seccomp", "landlock"]
+    assert ordem == ["seccomp", "landlock_fs", "landlock_net"]
 
 
 def test_landlock_abi_fora_de_x86_64_devolve_zero(monkeypatch):
@@ -91,6 +104,25 @@ def test_apply_landlock_sem_suporte_levanta_oserror(monkeypatch):
     monkeypatch.setattr(sandbox, "landlock_abi", lambda: 0)
     with pytest.raises(OSError):
         sandbox.apply_landlock(readable_paths=["/usr"], writable_paths=["/workspace"])
+
+
+def test_net_access_bits_exige_abi_4(monkeypatch):
+    """Direitos de rede do Landlock só existem a partir do ABI 4 (etapa 5,
+    change agent-network-perimeter) — abaixo disso, filesystem funciona mas
+    rede não tem bit nenhum disponível."""
+    assert sandbox._net_access_bits(3) == 0
+    assert sandbox._net_access_bits(0) == 0
+    bits_abi4 = sandbox._net_access_bits(4)
+    assert bits_abi4 & (1 << 0)  # BIND_TCP
+    assert bits_abi4 & (1 << 1)  # CONNECT_TCP
+
+
+def test_apply_landlock_net_sem_suporte_nao_faz_nada(monkeypatch):
+    """Ao contrário de `apply_landlock` (filesystem), ABI insuficiente para
+    rede não levanta — o filesystem já confinado continua valendo de
+    qualquer forma, e quem decide se avisa é `apply_sandbox`."""
+    monkeypatch.setattr(sandbox, "landlock_abi", lambda: 3)
+    sandbox.apply_landlock_net(connect_tcp_ports=[15400], bind_tcp_ports=[4096])  # não levanta
 
 
 @pytest.mark.sandbox
@@ -206,6 +238,95 @@ def test_apply_landlock_real_libera_leitura_de_arquivo_avulso_sem_liberar_irmao(
     assert resultado.get("erro") is None, resultado
     assert resultado["leu_liberado"] == "nameserver 127.0.0.11"
     assert resultado["leu_irmao"] is False
+
+
+@pytest.mark.sandbox
+def test_apply_landlock_net_real_restringe_porta_tcp_sem_enfraquecer_fs(tmp_path):
+    """Spike da etapa 5 (change agent-network-perimeter), virado teste real:
+    uma porta de loopback liberada conecta normalmente; uma não liberada nega
+    com `PermissionError` (não `ConnectionRefusedError` — prova que é o
+    Landlock barrando antes da rede, já que HÁ um listener nela também); e a
+    camada de filesystem da etapa 2, aplicada antes, continua valendo depois
+    do segundo `landlock_restrict_self`."""
+    import socket
+
+    if sandbox.landlock_abi() < 4:
+        pytest.skip("host sem suporte a Landlock de rede (ABI < 4)")
+
+    liberada, negada = 15490, 15491
+    srv_liberada = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv_liberada.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv_liberada.bind(("127.0.0.1", liberada))
+    srv_liberada.listen(1)
+    srv_negada = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv_negada.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv_negada.bind(("127.0.0.1", negada))
+    srv_negada.listen(1)
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        srv_liberada.close()
+        srv_negada.close()
+        resultado = {}
+        try:
+            sandbox.apply_landlock(readable_paths=["/usr"], writable_paths=[str(tmp_path)])
+            sandbox.apply_landlock_net(connect_tcp_ports=[liberada], bind_tcp_ports=[])
+
+            try:
+                (tmp_path / "ok.txt").write_text("ok")
+                resultado["fs_ainda_grava_workspace"] = True
+            except PermissionError:
+                resultado["fs_ainda_grava_workspace"] = False
+            try:
+                open("/etc/passwd").read()
+                resultado["fs_etc_passwd_legivel"] = True
+            except PermissionError:
+                resultado["fs_etc_passwd_legivel"] = False
+
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3)
+                s.connect(("127.0.0.1", liberada))
+                resultado["connect_porta_liberada"] = "ok"
+                s.close()
+            except Exception as exc:
+                resultado["connect_porta_liberada"] = f"{type(exc).__name__}: {exc}"
+
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(3)
+                s.connect(("127.0.0.1", negada))
+                resultado["connect_porta_negada"] = "PASSOU (inesperado)"
+                s.close()
+            except PermissionError as exc:
+                resultado["connect_porta_negada"] = f"negado: {exc}"
+            except Exception as exc:
+                resultado["connect_porta_negada"] = f"{type(exc).__name__}: {exc}"
+        except Exception as exc:
+            resultado["erro"] = str(exc)
+        os.write(write_fd, repr(resultado).encode())
+        os._exit(0)
+    else:
+        os.close(write_fd)
+        saida = b""
+        while True:
+            chunk = os.read(read_fd, 4096)
+            if not chunk:
+                break
+            saida += chunk
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        srv_liberada.close()
+        srv_negada.close()
+        resultado = eval(saida.decode())
+
+    assert resultado.get("erro") is None, resultado
+    assert resultado["fs_ainda_grava_workspace"] is True
+    assert resultado["fs_etc_passwd_legivel"] is False
+    assert resultado["connect_porta_liberada"] == "ok"
+    assert resultado["connect_porta_negada"].startswith("negado:")
 
 
 @pytest.mark.sandbox

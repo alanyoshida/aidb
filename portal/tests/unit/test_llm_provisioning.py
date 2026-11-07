@@ -195,7 +195,7 @@ def test_write_agent_profile_sem_segredo(editor, tmp_path):
     from appaiforge.provisioning import write_agent_profile
 
     system = create_system(editor, "PERF", "prov-perfil")
-    payload = write_agent_profile(system, str(tmp_path))
+    payload = write_agent_profile(system, str(tmp_path), [])
 
     with open(tmp_path / "agent-profile.json") as f:
         on_disk = json.load(f)
@@ -212,11 +212,76 @@ def test_write_agent_profile_declara_comando_cwd_e_porta(editor, tmp_path):
     from appaiforge.provisioning import write_agent_profile
 
     system = create_system(editor, "PERF2", "prov-perfil-2")
-    payload = write_agent_profile(system, str(tmp_path))
+    payload = write_agent_profile(system, str(tmp_path), [])
 
     assert payload["command"][0] == "opencode"
     assert payload["cwd"] == "/opencode-config"
     assert payload["harness_port"] == 4096
+
+
+# ---------- portas TCP do Landlock de rede (etapa 5, change agent-network-perimeter) ----------
+
+def test_connect_tcp_ports_inclui_agent_port_de_cada_conexao_do_manifesto(editor, tmp_path):
+    """O agent_port do proxy de gate (nunca app_port, que é da app gerada,
+    não confinada) entra nas portas liberadas do agente — sem isso, o
+    Landlock de rede trancaria o próprio MCP/bash fora do banco de verdade."""
+    from appaiforge.provisioning import write_agent_profile
+
+    system = create_system(editor, "NET1", "prov-net-manifesto")
+    manifest = [
+        {"name": "vendas", "agent_port": 15400, "app_port": 15401},
+        {"name": "fiscal", "agent_port": 15402, "app_port": 15403},
+    ]
+    payload = write_agent_profile(system, str(tmp_path), manifest)
+
+    assert 15400 in payload["connect_tcp_ports"]
+    assert 15402 in payload["connect_tcp_ports"]
+    assert 15401 not in payload["connect_tcp_ports"]
+    assert 15403 not in payload["connect_tcp_ports"]
+    for porta_estatica in (443, 80, 53):
+        assert porta_estatica in payload["connect_tcp_ports"]
+
+
+def test_connect_tcp_ports_sem_manifesto_mantem_so_as_estaticas(editor, tmp_path):
+    from appaiforge.provisioning import write_agent_profile
+
+    system = create_system(editor, "NET2", "prov-net-vazio")
+    payload = write_agent_profile(system, str(tmp_path), [])
+
+    assert payload["connect_tcp_ports"] == [443, 80, 53]
+
+
+def test_connect_tcp_ports_inclui_porta_do_broker_quando_habilitado(editor, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPAIFORGE_INFERENCE_BROKER_ENABLED", "true")
+    monkeypatch.setenv("APPAIFORGE_INFERENCE_BROKER_URL", "http://broker:4001")
+    get_settings.cache_clear()
+    try:
+        from appaiforge.provisioning import write_agent_profile
+
+        system = create_system(editor, "NET3", "prov-net-broker")
+        payload = write_agent_profile(system, str(tmp_path), [])
+        assert 4001 in payload["connect_tcp_ports"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_connect_tcp_ports_sem_broker_habilitado_nao_inclui_porta_dele(editor, tmp_path):
+    from appaiforge.provisioning import write_agent_profile
+
+    system = create_system(editor, "NET4", "prov-net-sem-broker")
+    payload = write_agent_profile(system, str(tmp_path), [])
+    assert 4001 not in payload["connect_tcp_ports"]
+
+
+def test_bind_tcp_ports_e_so_a_porta_do_harness(editor, tmp_path):
+    """O agente confinado nunca precisa escutar além da porta do próprio
+    opencode serve — a porta da app (8080) é aberta pelo processo da app
+    gerada, que roda fora do confinamento (inalterado nesta change)."""
+    from appaiforge.provisioning import write_agent_profile
+
+    system = create_system(editor, "NET5", "prov-net-bind")
+    payload = write_agent_profile(system, str(tmp_path), [])
+    assert payload["bind_tcp_ports"] == [4096]
 
 
 def test_provision_system_passa_aidb_agent_profile_no_env(editor, tmp_path, monkeypatch):

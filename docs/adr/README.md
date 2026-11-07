@@ -33,3 +33,4 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0019](0019-sandbox-seccomp-landlock-no-supervisor.md) | Sandbox do agente: seccomp + Landlock instalados pelo supervisor antes do exec | aceito |
 | [0020](0020-broker-de-inferencia-com-litellm.md) | Broker de inferência: token opaco no container, LiteLLM como backend de credencial | aceito |
 | [0021](0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md) | Gate de SQL no data plane via sidecar proxy de wire protocol (Postgres/MySQL) | aceito |
+| [0022](0022-confinamento-de-rede-por-porta-tcp-via-landlock.md) | Confinamento de rede por porta TCP via Landlock, fechando o bypass dos proxies de banco/broker | aceito |

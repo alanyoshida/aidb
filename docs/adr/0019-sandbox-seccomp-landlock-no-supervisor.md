@@ -4,6 +4,7 @@
 * Data: 2026-11-05
 * Decidida em: change `agent-sandbox-seccomp-landlock` (capability `agent-sandbox`, etapa 2 do roadmap)
 * Relacionada: [0018](0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md), [0013](0013-containers-sempre-ativos-com-reconciliacao.md)
+* Estendida por: [0022](0022-confinamento-de-rede-por-porta-tcp-via-landlock.md) (Landlock de rede, por cima do de filesystem aqui)
 
 ## Contexto
 

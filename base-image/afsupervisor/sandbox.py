@@ -14,6 +14,7 @@ ver design.md da change `agent-sandbox-seccomp-landlock`.
 import ctypes
 import errno
 import os
+import sys
 import typing
 
 if typing.TYPE_CHECKING:
@@ -111,12 +112,27 @@ _FS_READ_ONLY_BITS = (1 << 0) | (1 << 2) | (1 << 3)  # EXECUTE | READ_FILE | REA
 _FS_FILE_ONLY_BITS = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14)  # EXECUTE | WRITE_FILE | READ_FILE | TRUNCATE
 
 
+_LANDLOCK_RULE_NET_PORT = 2
+
+# Bits de LANDLOCK_ACCESS_NET_*, com a versão de ABI mínima (direitos de rede
+# só existem a partir do ABI 4 — etapa 5 do roadmap de confinamento, change
+# agent-network-perimeter).
+_NET_ACCESS_BITS_BY_ABI: list[tuple[int, int]] = [
+    (1 << 0, 4),  # BIND_TCP
+    (1 << 1, 4),  # CONNECT_TCP
+]
+
+
 class _RulesetAttr(ctypes.Structure):
     _fields_ = [("handled_access_fs", ctypes.c_uint64), ("handled_access_net", ctypes.c_uint64)]
 
 
 class _PathBeneathAttr(ctypes.Structure):
     _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
+
+
+class _NetPortAttr(ctypes.Structure):
+    _fields_ = [("allowed_access", ctypes.c_uint64), ("port", ctypes.c_uint64)]
 
 
 def _libc() -> ctypes.CDLL:
@@ -139,6 +155,16 @@ def _fs_access_bits(abi: int) -> int:
     """Todos os bits de acesso a arquivo que o ABI detectado suporta."""
     bits = 0
     for bit, min_abi in _FS_ACCESS_BITS_BY_ABI:
+        if abi >= min_abi:
+            bits |= bit
+    return bits
+
+
+def _net_access_bits(abi: int) -> int:
+    """Todos os bits de acesso a rede que o ABI detectado suporta — 0 abaixo
+    do ABI 4 (sem direitos de rede nenhum nesse kernel)."""
+    bits = 0
+    for bit, min_abi in _NET_ACCESS_BITS_BY_ABI:
         if abi >= min_abi:
             bits |= bit
     return bits
@@ -208,15 +234,84 @@ def _add_path_rule(libc: ctypes.CDLL, ruleset_fd: int, path: str, access: int) -
         os.close(fd)
 
 
+def apply_landlock_net(connect_tcp_ports: list[int], bind_tcp_ports: list[int]) -> None:
+    """Segunda camada de Landlock, empilhada por cima da de filesystem
+    (`apply_landlock`) — um `landlock_restrict_self` adicional intersecta
+    com o ruleset já instalado, nunca o substitui (etapa 5 do roadmap de
+    confinamento, change `agent-network-perimeter`): conexão TCP de saída
+    só nas portas de `connect_tcp_ports` (o `agent_port` de cada conexão do
+    proxy de gate de banco, mais a porta do broker quando habilitado — ver
+    `provisioning.py`) e escuta só nas portas de `bind_tcp_ports` (a do
+    próprio harness); qualquer outra porta fica negada pelo kernel antes de
+    a conexão alcançar a rede, independente do endereço — é essa
+    independência de endereço que fecha o bypass do proxy de gate: a
+    mesma regra nega tanto `127.0.0.1:porta` quanto `host-real:porta`.
+
+    Sem suporte de ABI (abaixo de 4, só filesystem) não instala nada e
+    devolve silenciosamente — chamador decide se avisa (ver `apply_sandbox`);
+    não é um erro porque o filesystem já confinado por `apply_landlock`
+    continua valendo de qualquer forma."""
+    abi = landlock_abi()
+    access_bits = _net_access_bits(abi)
+    if access_bits == 0:
+        return
+
+    libc = _libc()
+    attr = _RulesetAttr(handled_access_fs=0, handled_access_net=access_bits)
+    ruleset_fd = libc.syscall(
+        _LANDLOCK_CREATE_RULESET, ctypes.byref(attr), ctypes.sizeof(attr), 0
+    )
+    if ruleset_fd < 0:
+        raise OSError(ctypes.get_errno(), "landlock_create_ruleset(net)")
+
+    bind_bits = access_bits & (1 << 0)
+    connect_bits = access_bits & (1 << 1)
+    try:
+        for port in bind_tcp_ports:
+            _add_net_rule(libc, ruleset_fd, port, bind_bits)
+        for port in connect_tcp_ports:
+            _add_net_rule(libc, ruleset_fd, port, connect_bits)
+
+        rc = libc.syscall(_LANDLOCK_RESTRICT_SELF, ruleset_fd, 0)
+        if rc != 0:
+            raise OSError(ctypes.get_errno(), "landlock_restrict_self(net)")
+    finally:
+        os.close(ruleset_fd)
+
+
+def _add_net_rule(libc: ctypes.CDLL, ruleset_fd: int, port: int, access: int) -> None:
+    if access == 0:
+        return
+    rule = _NetPortAttr(allowed_access=access, port=port)
+    rc = libc.syscall(
+        _LANDLOCK_ADD_RULE, ruleset_fd, _LANDLOCK_RULE_NET_PORT, ctypes.byref(rule), 0
+    )
+    if rc != 0:
+        raise OSError(ctypes.get_errno(), f"landlock_add_rule(net, porta {port})")
+
+
 def apply_sandbox(profile: dict, deny_syscalls: list[str] | None = None) -> None:
-    """Instala seccomp e, em seguida, Landlock, a partir dos caminhos
-    declarados no perfil do agente (`readable_paths`/`writable_paths`).
+    """Instala seccomp e, em seguida, Landlock (filesystem e depois rede), a
+    partir do perfil do agente.
 
     Seccomp primeiro: nenhuma das syscalls do denylist é necessária para
     instalar o Landlock, então a ordem não deixa nenhuma janela em que uma
-    das duas camadas está ativa e a outra não deveria estar."""
+    das duas camadas está ativa e a outra não deveria estar. Filesystem antes
+    de rede porque é o que já está validado em produção desde a etapa 2;
+    rede empilha por cima sem alterá-lo (D1 do design da etapa 5)."""
     build_seccomp_filter(deny_syscalls).load()
     apply_landlock(
         readable_paths=profile.get("readable_paths", []),
         writable_paths=profile.get("writable_paths", []),
+    )
+    if landlock_abi() < 4:
+        print(
+            "[afsupervisor] ABI do Landlock abaixo de 4: confinamento de rede "
+            "não instalado (filesystem segue confinado normalmente)",
+            file=sys.stderr,
+        )
+        return
+    apply_landlock_net(
+        connect_tcp_ports=profile.get("connect_tcp_ports", []),
+        bind_tcp_ports=profile.get("bind_tcp_ports", []),
     )

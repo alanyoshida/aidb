@@ -116,6 +116,17 @@ def _broker_credential_env(system: System) -> dict[str, str]:
     return {env_name: inference_token.token_for_system(system)}
 
 
+def _broker_connect_port() -> int:
+    """Porta do broker de inferência, pro Landlock de rede do agente (etapa
+    5, change agent-network-perimeter) — a regra do Landlock é só por porta,
+    agnóstica de endereço (design.md), então nem precisa resolver o host do
+    broker, só a porta que `inference_broker_url` declara."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(get_settings().inference_broker_url)
+    return parsed.port or (443 if parsed.scheme == "https" else 80)
+
+
 _LOOPBACK_SCHEMES = {"postgres": "postgresql", "mysql": "mysql"}
 
 
@@ -275,13 +286,24 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
         json.dump(config, f, indent=2)
 
 
-def write_agent_profile(system: System, config_dir: str) -> dict:
+def write_agent_profile(system: System, config_dir: str, manifest: list[dict]) -> dict:
     """Serializa o perfil de runtime do agente (capability agent-runtime) como
     JSON em config_dir, ao lado do config do agente. Contém só o NOME da env
-    de credencial, nunca o valor de nenhum segredo."""
+    de credencial, nunca o valor de nenhum segredo.
+
+    `connect_tcp_ports` combina as portas estáticas do perfil (443/80/53) com
+    as calculadas para este sistema — o `agent_port` (nunca `app_port`: esse
+    é da app gerada, que não roda confinada) de cada conexão do manifesto do
+    proxy de gate de banco (etapa 4), mais a porta do broker de inferência
+    quando habilitado (etapa 3). `bind_tcp_ports` é só a porta do próprio
+    harness — o agente confinado nunca precisa escutar em outra (etapa 5,
+    change agent-network-perimeter)."""
     from .agent_profiles import get_profile, resolve_credential_env
 
     profile = get_profile()
+    connect_tcp_ports = list(profile.get("connect_tcp_ports", [])) + [m["agent_port"] for m in manifest]
+    if get_settings().inference_broker_enabled:
+        connect_tcp_ports.append(_broker_connect_port())
     payload = {
         "agent": profile["agent"],
         "command": profile["command"],
@@ -292,6 +314,8 @@ def write_agent_profile(system: System, config_dir: str) -> dict:
         "harness_port": profile["harness_port"],
         "readable_paths": profile["readable_paths"],
         "writable_paths": profile["writable_paths"],
+        "connect_tcp_ports": connect_tcp_ports,
+        "bind_tcp_ports": [profile["harness_port"]],
     }
     os.makedirs(config_dir, exist_ok=True)
     with open(os.path.join(config_dir, "agent-profile.json"), "w") as f:
@@ -347,7 +371,7 @@ def provision_system(system: System) -> str:
     portal_config_dir = os.path.join(settings.configs_dir, system.slug)
     manifest = db_connections_manifest(system.id)
     write_opencode_config(system, portal_config_dir, manifest)
-    write_agent_profile(system, portal_config_dir)
+    write_agent_profile(system, portal_config_dir, manifest)
 
     env = {
         "APP_IDENTITY_SECRET": system.identity_secret,

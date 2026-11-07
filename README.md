@@ -164,7 +164,7 @@ agente gerar (bash, python, o script que ele escrever) e **irrevogáveis** depoi
 - **seccomp** nega um denylist de syscalls perigosas (`ptrace`, `bpf`, `mount`, `setns`,
   `perf_event_open`, `process_vm_readv`/`writev`, `pivot_root`, `io_uring_setup`, `unshare` com
   `CLONE_NEWUSER`) — tudo o mais é permitido.
-- **Landlock** nega acesso a filesystem fora do declarado no perfil do agente
+- **Landlock de filesystem** nega acesso fora do declarado no perfil do agente
   (`appaiforge/agent_profiles.py`): leitura+execução só em `/workspace`, `/opencode-config`,
   `/usr`, `/lib`, `/opt`, `/proc`, `/dev` e um conjunto explícito de arquivos sob `/etc`
   (resolução de nome, fuso horário, cache do linker, cadeia de certificados — **não** o diretório
@@ -172,6 +172,14 @@ agente gerar (bash, python, o script que ele escrever) e **irrevogáveis** depoi
   fora dessas listas — `/etc/passwd`, `/etc/shadow`, `/root`, os workspaces de outros sistemas —
   fica negada pelo kernel, não por um pedido de permissão que o agente poderia simplesmente
   receber "sim" de um editor apressado.
+- **Landlock de rede** ([ADR 0022](docs/adr/0022-confinamento-de-rede-por-porta-tcp-via-landlock.md)),
+  empilhado por cima do de filesystem: conexão TCP de saída só nas portas calculadas para o
+  sistema — o `agent_port` de cada conexão cadastrada (proxy de gate de banco, etapa 4), a porta do
+  broker de inferência quando habilitado, e sempre 443/80 (TLS/HTTP — provedor de LLM direto e
+  pip/npm/uv) e 53 (DNS por TCP). Fecha o bypass que as etapas 3/4 deixavam aberto: antes, um agente
+  confinado por filesystem ainda alcançava o Postgres/MySQL real direto, por fora do proxy, bastando
+  descobrir o endereço — a regra de porta do Landlock é agnóstica de endereço, então nega isso
+  mesmo que o agente ache o host real.
 
 **O que isso substitui**: a permissão `external_directory` do próprio opencode (pedia confirmação
 no chat toda vez que o agente tocava um caminho fora do workspace, inclusive **falsos-positivos**
@@ -179,10 +187,11 @@ de caminho absoluto já dentro dele) hoje é liberada sem perguntar
 (`permission.external_directory: "allow"`) — a barreira real passou a ser o Landlock, que o
 sistema operacional aplica de verdade e não depende de ninguém clicar em "Aprovar".
 
-**Limites aceitos por ora**: Landlock cobre filesystem (e, por ABI, porta TCP — ainda não
-configurado); não cobre endereço IP nem credencial de banco na linha de comando do MCP de bancos
-não cobertos pelo proxy de gate (etapa 4). Fechar a rede por completo é a etapa 5 do roadmap.
-Sistemas em `legacy`/`reduced` não têm nenhuma (ou só parcial) dessas garantias.
+**Limites aceitos por ora**: 443/80 continuam abertos por decisão de escopo — acesso direto a
+provedor de LLM (quando o broker está desligado, hoje o padrão) e a registros de pacote não passam
+por um proxy forçado; exfiltração via LLM pelo próprio prompt é um limite irredutível (o endpoint é
+legítimo). Nenhuma das duas camadas de Landlock cobre a app gerada, que roda sem confinamento desde
+sempre. Sistemas em `legacy`/`reduced` não têm nenhuma (ou só a de filesystem) dessas garantias.
 
 ### Migrar um sistema de `legacy` para `sandboxed`
 

@@ -16,6 +16,16 @@ def test_perfil_padrao_resolvido_pelo_nome():
     assert "/opencode-config" in profile["readable_paths"]
 
 
+def test_connect_tcp_ports_estaticas_cobrem_tls_http_e_dns():
+    """Etapa 5 (change agent-network-perimeter): 443/80 ficam abertas por
+    decisão de escopo (LLM direto, pip/npm/uv); 53 é o fallback raro de DNS
+    por TCP. As portas do proxy de gate de banco e do broker são dinâmicas,
+    calculadas por sistema em provisioning.write_agent_profile — não aqui."""
+    profile = get_profile("opencode")
+    for porta in (443, 80, 53):
+        assert porta in profile["connect_tcp_ports"]
+
+
 def test_readable_paths_inclui_proc_achado_da_verificacao_real_da_etapa_2():
     """Sem /proc legível, o runtime Bun do opencode aborta sob Landlock
     (achado da task 7 — ver docs/roadmap-confinamento-do-agente.md, etapa 2)."""
