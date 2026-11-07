@@ -45,6 +45,9 @@ class OpencodeHarness(HarnessPort):
         self.resolve_base_url = resolve_base_url
         self.timeout = timeout
         self._aborting: set[str] = set()
+        # messageID -> role ("user"/"assistant"), populado por `message.updated` —
+        # `message.part.updated` não carrega role nenhum, só `messageID` (ver abaixo)
+        self._message_roles: dict[str, str] = {}
 
     def create_session(self, system: dict) -> str:
         base = self.resolve_base_url(system)
@@ -127,7 +130,13 @@ class OpencodeHarness(HarnessPort):
 
         if etype == "message.updated":
             info = props.get("info") or {}
-            if not isinstance(info, dict) or info.get("role") != "assistant":
+            if not isinstance(info, dict):
+                return None
+            message_id = info.get("id")
+            role = info.get("role")
+            if message_id and role:
+                self._message_roles[message_id] = role
+            if role != "assistant":
                 return None
             error = info.get("error")
             if isinstance(error, dict):
@@ -156,6 +165,12 @@ class OpencodeHarness(HarnessPort):
             part = props.get("part", {})
             ptype = part.get("type")
             if ptype == "text":
+                # a parte não carrega role nenhum (só `messageID`) — sem checar o
+                # role da mensagem dona, a própria pergunta do editor (parte da
+                # mensagem dele, role "user") também vira um RunEvent "message",
+                # e o chat a renderiza como se fosse resposta do agente
+                if self._message_roles.get(part.get("messageID")) != "assistant":
+                    return None
                 text = (part.get("text") or "").strip()
                 if text:
                     return RunEvent("message", text=text)

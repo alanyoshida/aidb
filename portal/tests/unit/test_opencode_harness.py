@@ -83,8 +83,8 @@ def test_cria_sessao(fake_opencode):
 
 def test_fluxo_completo_normaliza_eventos(fake_opencode):
     fake_opencode["events"] = [
-        _evt("message.updated", sessionID=SESSION, info={"role": "assistant", "model": {"providerID": "zhipuai", "modelID": "glm-4.6"}, "tokens": {"input": 100, "output": 50}}),
-        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "vou criar o arquivo"}),
+        _evt("message.updated", sessionID=SESSION, info={"id": "msg_1", "role": "assistant", "model": {"providerID": "zhipuai", "modelID": "glm-4.6"}, "tokens": {"input": 100, "output": 50}}),
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "vou criar o arquivo", "messageID": "msg_1"}),
         _evt("message.part.updated", sessionID=SESSION, part={"type": "tool", "tool": "edit", "state": {"input": {"filePath": "/workspace/app/main.py"}, "output": "ok"}}),
         _evt("message.part.updated", sessionID=SESSION, part={"type": "tool", "tool": "bash", "state": {"input": {"command": "pytest"}, "output": "1 passed"}}),
         _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
@@ -113,6 +113,40 @@ def test_usage_em_formato_de_dict_nao_emite_evento(fake_opencode):
     events = _run(harness, {"slug": "erp"})
     assert all(e.kind != "usage" for e in events)
     assert events[-1].kind == "run_finished"
+
+
+def test_texto_da_mensagem_do_usuario_nao_vira_evento_de_mensagem(fake_opencode):
+    """A pergunta do próprio editor também chega como `message.part.updated`
+    (mesma `TextPart` do opencode, só que da mensagem `role: "user"`) — sem
+    correlacionar `messageID` -> role, ela virava um RunEvent "message" igual
+    ao de uma resposta do agente, e o chat a renderizava com o nome/avatar
+    do agente (achado ao vivo: pergunta do editor aparecendo como se fosse
+    resposta do agente)."""
+    fake_opencode["events"] = [
+        _evt("message.updated", sessionID=SESSION, info={"id": "msg_user", "role": "user"}),
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "quais as tabelas no banco ?", "messageID": "msg_user"}),
+        _evt("message.updated", sessionID=SESSION, info={"id": "msg_assistant", "role": "assistant", "model": {"providerID": "zhipuai", "modelID": "glm-4.6"}}),
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "a tabela clientes", "messageID": "msg_assistant"}),
+        _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
+    ]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    events = _run(harness, {"slug": "erp"})
+    messages = [e for e in events if e.kind == "message"]
+    assert len(messages) == 1
+    assert messages[0].text == "a tabela clientes"
+
+
+def test_texto_sem_messageid_conhecido_nao_vira_evento_de_mensagem(fake_opencode):
+    """Falha segura: sem o `message.updated` correspondente (role ainda
+    desconhecido), a parte de texto não é tratada como resposta do agente —
+    melhor perder um fragmento cedo demais do que atribuí-lo errado."""
+    fake_opencode["events"] = [
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "fragmento órfão", "messageID": "msg_desconhecido"}),
+        _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
+    ]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    events = _run(harness, {"slug": "erp"})
+    assert all(e.kind != "message" for e in events)
 
 
 def test_eventos_de_outra_sessao_sao_ignorados(fake_opencode):
