@@ -278,6 +278,29 @@ class GateDecision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
+class GateRequest(Base):
+    """Pedido de aprovação de statement confirmável vindo do proxy de banco
+    (sidecar, change db-proxy-gate-data-plane) — segura a conexão até o
+    editor decidir, recusar ou o prazo expirar. Decidido, também gera um
+    `GateDecision` (auditoria), igual ao caminho do agente."""
+
+    __tablename__ = "gate_requests"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True, index=True)
+    origin: Mapped[str] = mapped_column(String(10))  # agente | app
+    sql: Mapped[str] = mapped_column(Text)
+    connection_name: Mapped[str] = mapped_column(String(120), default="")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(10), index=True)  # pendente | aprovada | recusada | expirada
+    author_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    author_email: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class RunEventRecord(Base):
     __tablename__ = "run_events"
 

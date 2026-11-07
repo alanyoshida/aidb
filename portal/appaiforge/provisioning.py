@@ -30,6 +30,13 @@ log = logging.getLogger(__name__)
 AGENT_UID = 1000
 AGENT_GID = 1000
 
+# Faixa de portas de loopback do sidecar de gate de banco (etapa 4 do
+# confinamento, change db-proxy-gate-data-plane) — cada sistema tem seu
+# próprio netns (o sidecar entra nele via `network_mode: container:<id>`),
+# então a faixa pode se repetir entre sistemas sem colidir. Fora de 5432/3306
+# (portas "reais" dos bancos) para nunca ser confundida com elas em debug.
+DB_GATE_PORT_BASE = 15400
+
 
 class CapacityReached(Exception):
     pass
@@ -109,17 +116,63 @@ def _broker_credential_env(system: System) -> dict[str, str]:
     return {env_name: inference_token.token_for_system(system)}
 
 
-def _connection_env(system_id: str) -> dict[str, str]:
+_LOOPBACK_SCHEMES = {"postgres": "postgresql", "mysql": "mysql"}
+
+
+def _loopback_dsn(kind: str, port: int, database: str) -> str:
+    """DSN de loopback sem usuário nem senha (task 5.2) — o proxy injeta a
+    credencial real do lado de dentro (sidecar), o container do sistema não
+    tem nada a vazar."""
+    scheme = _LOOPBACK_SCHEMES.get(kind, "postgresql")
+    return f"{scheme}://127.0.0.1:{port}/{database}"
+
+
+def db_connections_manifest(system_id: str) -> list[dict]:
+    """Conexões Postgres/MySQL do sistema com a credencial real e as duas
+    portas de loopback (agente/app, D4) — vai só no env do sidecar (task
+    5.1/5.2), nunca no do sistema. BigQuery fica fora: é HTTPS, não passa
+    pelo proxy de wire protocol (Non-Goals do design)."""
+    with session_scope() as s:
+        conns = s.execute(
+            select(DbConnection)
+            .where(DbConnection.system_id == system_id, DbConnection.kind.in_(["postgres", "mysql"]))
+            .order_by(DbConnection.created_at)
+        ).scalars().all()
+        conn_ids = [c.id for c in conns]
+    manifest = []
+    for i, conn_id in enumerate(conn_ids):
+        conn, secret = get_connection_secret(conn_id)
+        agent_port = DB_GATE_PORT_BASE + i * 2
+        manifest.append({
+            "name": conn.name,
+            "kind": conn.kind,
+            "dsn": connection_string(conn, secret),
+            "database": conn.database,
+            "agent_port": agent_port,
+            "app_port": agent_port + 1,
+        })
+    return manifest
+
+
+def _connection_env(system_id: str, manifest: list[dict]) -> dict[str, str]:
+    """`DATABASE_URL_<NOME>` do container do sistema — loopback (porta
+    `app`) sem credencial para Postgres/MySQL; BigQuery segue com a
+    credencial real (não tem sidecar, é HTTPS)."""
     from .services.connections import get_connection_secret
 
+    manifest_by_name = {m["name"]: m for m in manifest}
     env: dict[str, str] = {}
     with session_scope() as s:
         conns = s.execute(select(DbConnection).where(DbConnection.system_id == system_id)).scalars().all()
-        ids = [c.id for c in conns]
-    for conn_id in ids:
-        conn, secret = get_connection_secret(conn_id)
-        key = _env_name(conn.name)
-        env[f"DATABASE_URL_{key}"] = connection_string(conn, secret)
+        rows = [(c.id, c.name, c.kind, c.database) for c in conns]
+    for conn_id, name, kind, database in rows:
+        key = _env_name(name)
+        entry = manifest_by_name.get(name)
+        if entry is not None:
+            env[f"DATABASE_URL_{key}"] = _loopback_dsn(kind, entry["app_port"], database)
+        else:  # bigquery (ou kind fora do proxy): sem sidecar, credencial real como antes
+            conn, secret = get_connection_secret(conn_id)
+            env[f"DATABASE_URL_{key}"] = connection_string(conn, secret)
     return env
 
 
@@ -127,19 +180,51 @@ def _env_name(name: str) -> str:
     return re.sub(r"[^A-Z0-9]", "_", name.upper())
 
 
-def write_opencode_config(system: System, config_dir: str) -> None:
-    """Gera opencode.json do sistema: provedor/modelo + MCP por conexão."""
+def _bash_permission_globs() -> dict[str, str]:
+    """`permission.bash` do opencode.json (task 7.1, change db-proxy-gate-data-plane).
+
+    Em modo `shadow` (default), os globs de SQL continuam pedindo permissão
+    — cinto-e-suspensório enquanto o gate no data plane ainda não foi
+    validado em uso real (D5, spike S5). Só em `enforce` eles somem: o
+    proxy já é o único gate de SQL, perguntar de novo aqui seria atrito
+    duplicado. `reply_gate` (`HarnessPort`) continua existindo nos dois
+    modos — ele é o mecanismo genérico de resposta a `permission.asked` do
+    opencode, usado por pedidos não-SQL (ex.: acesso a diretório fora do
+    workspace), que esta mudança não tem nada a ver."""
+    if get_settings().db_gate_mode == "enforce":
+        return {"*": "allow"}
+    return {
+        "*": "allow",
+        "*psql*": "ask",
+        "*DELETE FROM*": "ask",
+        "*UPDATE *SET*": "ask",
+        "*DROP TABLE*": "ask",
+        "*DROP DATABASE*": "ask",
+        "*TRUNCATE*": "ask",
+        "*ALTER TABLE*": "ask",
+        "*INSERT INTO*": "ask",
+    }
+
+
+def write_opencode_config(system: System, config_dir: str, manifest: list[dict]) -> None:
+    """Gera opencode.json do sistema: provedor/modelo + MCP por conexão.
+
+    O MCP server (ferramenta do agente) usa o listener de origem `agente`
+    do sidecar — DSN de loopback sem credencial para Postgres/MySQL
+    (task 5.2); BigQuery segue com a credencial real (sem sidecar)."""
     from .services import catalog
 
     provider = catalog.get_provider(system.provider)
     provider_id = provider["provider_id"] if provider else system.provider
+    manifest_by_name = {m["name"]: m for m in manifest}
     mcp: dict = {}
     with session_scope() as s:
         conns = s.execute(select(DbConnection).where(DbConnection.system_id == system.id)).scalars().all()
         conn_data = [(c.id, c.name) for c in conns]
     for conn_id, conn_name in conn_data:
         conn, secret = get_connection_secret(conn_id)
-        url = connection_string(conn, secret)
+        entry = manifest_by_name.get(conn_name)
+        url = _loopback_dsn(conn.kind, entry["agent_port"], conn.database) if entry is not None else connection_string(conn, secret)
         tool_name = conn_name
         if conn.description:
             tool_name = f"{tool_name} [{conn.description}]"
@@ -156,22 +241,7 @@ def write_opencode_config(system: System, config_dir: str) -> None:
         "$schema": "https://opencode.ai/config.json",
         "model": f"{provider_id}/{system.model}",
         "mcp": mcp,
-        # Gate de destrutivas: comandos que executam SQL pedem permissão; o portal
-        # classifica (sqlgate) e responde — bloqueada é recusada, confirmável aguarda
-        # aprovação no chat, normal é liberada sem atrito.
-        "permission": {
-            "bash": {
-                "*": "allow",
-                "*psql*": "ask",
-                "*DELETE FROM*": "ask",
-                "*UPDATE *SET*": "ask",
-                "*DROP TABLE*": "ask",
-                "*DROP DATABASE*": "ask",
-                "*TRUNCATE*": "ask",
-                "*ALTER TABLE*": "ask",
-                "*INSERT INTO*": "ask",
-            }
-        },
+        "permission": {"bash": _bash_permission_globs()},
     }
     if provider is not None and provider["kind"] == "openai-compatible":
         models = {m: {} for m in (provider["models"] or [])}
@@ -250,17 +320,12 @@ def provision_system(system: System) -> str:
 
     client = _docker()
     container_name = system_container_name(system.slug)
-    # container antigo com mesma identidade é substituído; remoção é retry-ável
-    # (corridas entre provisionamento, refresh de conexões e reconciliação)
-    for _ in range(5):
-        try:
-            old = client.containers.get(container_name)
-            old.remove(force=True)
-            break
-        except docker.errors.NotFound:
-            break
-        except docker.errors.APIError:
-            time.sleep(1)
+    # o sidecar depende do netns do sistema (`network_mode: container:<id>`,
+    # D1) — remover primeiro evita um sidecar órfão apontando pra um
+    # container que já não existe mais (achado ao recriar via reconciliação)
+    _remove_container_if_exists(client, dbgate_sidecar_name(system.slug))
+    # container antigo com mesma identidade é substituído
+    _remove_container_if_exists(client, container_name)
 
     host_dir = os.path.join(settings.host_workspaces_dir, system.slug)
     portal_dir = os.path.join(settings.workspaces_dir, system.slug)
@@ -274,7 +339,8 @@ def provision_system(system: System) -> str:
 
     host_config_slug = os.path.join(settings.host_config_dir, system.slug)
     portal_config_dir = os.path.join(settings.configs_dir, system.slug)
-    write_opencode_config(system, portal_config_dir)
+    manifest = db_connections_manifest(system.id)
+    write_opencode_config(system, portal_config_dir, manifest)
     write_agent_profile(system, portal_config_dir)
 
     env = {
@@ -295,7 +361,7 @@ def provision_system(system: System) -> str:
             if settings.inference_broker_enabled
             else _provider_env(system.provider)
         ),
-        **_connection_env(system.id),
+        **_connection_env(system.id, manifest),
     }
 
     limits = {
@@ -335,8 +401,63 @@ def provision_system(system: System) -> str:
         else:
             raise
 
+    _provision_dbgate_sidecar(system, container.id, manifest)
     set_container(system.id, container.id)
     return container.id
+
+
+def dbgate_sidecar_name(slug: str) -> str:
+    return f"{system_container_name(slug)}-dbgate"
+
+
+def _remove_container_if_exists(client: docker.DockerClient, name: str) -> None:
+    """Remoção retry-ável (corridas entre provisionamento, refresh de
+    conexões e reconciliação — mesmo padrão do container do sistema)."""
+    for _ in range(5):
+        try:
+            client.containers.get(name).remove(force=True)
+            break
+        except docker.errors.NotFound:
+            break
+        except docker.errors.APIError:
+            time.sleep(1)
+
+
+def _provision_dbgate_sidecar(system: System, system_container_id: str, manifest: list[dict]) -> None:
+    """Sidecar de gate de banco (D1): container próprio, `network_mode:
+    container:<id>` do sistema — enxerga o mesmo loopback, mas tem ciclo de
+    vida independente e é o único a guardar as credenciais reais das
+    conexões (task 5.1/5.2). Sem conexão Postgres/MySQL, não sobe nenhum
+    (nada a segurar; BigQuery não passa por aqui)."""
+    client = _docker()
+    name = dbgate_sidecar_name(system.slug)
+    _remove_container_if_exists(client, name)
+    if not manifest:
+        return
+
+    settings = get_settings()
+    env = {
+        "SYSTEM_ID": system.id,
+        "APPAIFORGE_DB_CONNECTIONS": json.dumps(manifest),
+        "APPAIFORGE_PORTAL_INTERNAL_URL": settings.portal_internal_url,
+        "APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN": settings.db_gate_proxy_service_token,
+        "APPAIFORGE_DB_GATE_MODE": settings.db_gate_mode,
+    }
+    client.containers.run(
+        detach=True,
+        image=settings.base_image,
+        name=name,
+        command=["python", "/opt/dbproxy/sidecar.py"],
+        network_mode=f"container:{system_container_id}",
+        environment=env,
+        labels={
+            "appaiforge.system_id": system.id,
+            "appaiforge.slug": system.slug,
+            "appaiforge.managed": "true",
+            "appaiforge.role": "dbgate-sidecar",
+        },
+        restart_policy={"Name": "unless-stopped"},
+    )
 
 
 def _execution_identity(mode: ExecutionMode) -> dict:
@@ -392,6 +513,10 @@ def healthcheck_url(system: System) -> str:
 def stop_and_remove(system: System) -> None:
     client = _docker()
     try:
+        client.containers.get(dbgate_sidecar_name(system.slug)).remove(force=True)
+    except docker.errors.NotFound:
+        pass
+    try:
         client.containers.get(system_container_name(system.slug)).remove(force=True)
     except docker.errors.NotFound:
         pass
@@ -430,8 +555,9 @@ def reconcile() -> None:
         if status in (SystemStatus.archived, SystemStatus.provisioning):
             continue
         try:
-            client.containers.get(system_container_name(slug))
+            system_container = client.containers.get(system_container_name(slug))
             publish_app_by_slug(slug)
+            _reconcile_dbgate_sidecar(system_id, slug, system_container.id)
         except docker.errors.NotFound:
             log.warning("reconciliação: container ausente para %s; recriando", slug)
             from .services.systems import get_system
@@ -439,13 +565,34 @@ def reconcile() -> None:
             system = get_system(system_id)
             if system is not None:
                 try:
-                    provision_system(system)
+                    provision_system(system)  # recria sistema + sidecar juntos (task 5.4)
                     publish_app_by_slug(slug)
                 except Exception as exc:  # falha visível no estado do sistema
                     from .services.systems import set_status
 
                     set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
         _check_connections_health(system_id)
+
+
+def _reconcile_dbgate_sidecar(system_id: str, slug: str, system_container_id: str) -> None:
+    """Sistema presente, mas o sidecar sumiu sozinho (removido manualmente,
+    OOM-killed sem restart etc.) — recria só ele, sem derrubar sessões do
+    agente nem o container do sistema (task 5.4)."""
+    manifest = db_connections_manifest(system_id)
+    if not manifest:
+        return
+    client = _docker()
+    try:
+        client.containers.get(dbgate_sidecar_name(slug))
+        return
+    except docker.errors.NotFound:
+        pass
+    log.warning("reconciliação: sidecar de gate de banco ausente para %s; recriando", slug)
+    from .services.systems import get_system
+
+    system = get_system(system_id)
+    if system is not None:
+        _provision_dbgate_sidecar(system, system_container_id, manifest)
 
 
 def _check_connections_health(system_id: str) -> None:

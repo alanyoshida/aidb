@@ -139,7 +139,8 @@ def test_teto_de_sistemas_e_respeitado(docker_env, clean_db, monkeypatch):
 
 
 def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
-    """Task 5.4 (parte estrutural): conexões -> MCP server + DATABASE_URL no container."""
+    """Task 5.4 (parte estrutural): conexões -> MCP server + DATABASE_URL no container.
+    Task 5.2: o valor do env é o DSN de loopback do sidecar, sem credencial."""
     import json
     import time
 
@@ -163,13 +164,124 @@ def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
                 if config.get("mcp"):
                     env_result = container.exec_run(["sh", "-c", "env | grep DATABASE_URL_PRINCIPAL"])
                     assert env_result.exit_code == 0, "DATABASE_URL_PRINCIPAL ausente no container"
+                    env_line = env_result.output.decode()
+                    assert "127.0.0.1" in env_line, env_line
+                    assert live_pg["password"] not in env_line, "credencial vazou pro env do sistema"
+                    assert "@" not in env_line.split("=", 1)[1], "DSN não deveria carregar user:senha@"
                     assert "principal" in config["mcp"]
+                    mcp_url = config["mcp"]["principal"]["command"][2]
+                    assert "127.0.0.1" in mcp_url
+                    assert live_pg["password"] not in mcp_url, "credencial vazou pro cmdline do MCP"
                     assert config["model"].startswith("zhipuai/")  # provider glm -> zhipuai (models.dev)
                     return
         except Exception as exc:  # container sendo recriado nesse instante
             last_error = exc
         time.sleep(2)
     raise AssertionError(f"container não refletiu as conexões em 60s: {last_error}")
+
+
+def test_sidecar_sobe_junto_do_sistema_e_guarda_a_credencial_real(system, docker_env, live_pg):
+    """Task 5.1: sidecar sobe no mesmo netns do sistema (`network_mode:
+    container:<id>`), um por sistema, com as credenciais reais só no seu
+    próprio env — nunca no do sistema (verificado no teste acima)."""
+    import time
+
+    from appaiforge.edge import system_container_name
+    from appaiforge.provisioning import dbgate_sidecar_name, provision_system
+    from appaiforge.services import connections
+
+    provision_system(system)
+    sidecar_name = dbgate_sidecar_name(system.slug)
+
+    # sem conexão Postgres/MySQL ainda: nenhum sidecar sobe (nada a segurar)
+    import docker as docker_sdk
+
+    with pytest.raises(docker_sdk.errors.NotFound):
+        _client().containers.get(sidecar_name)
+
+    connections.register_connection(
+        system, "principal", live_pg["host"], live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"]
+    )
+
+    deadline = time.time() + 60
+    sidecar = None
+    while time.time() < deadline:
+        try:
+            sidecar = _client().containers.get(sidecar_name)
+            if sidecar.status == "running":
+                break
+        except docker_sdk.errors.NotFound:
+            pass
+        time.sleep(2)
+    assert sidecar is not None and sidecar.status == "running", "sidecar não subiu em 60s"
+
+    system_container = _client().containers.get(system_container_name(system.slug))
+    assert sidecar.attrs["HostConfig"]["NetworkMode"] == f"container:{system_container.id}"
+    assert sidecar.labels["appaiforge.system_id"] == system.id
+    assert sidecar.labels["appaiforge.role"] == "dbgate-sidecar"
+
+    sidecar_env = sidecar.exec_run(["sh", "-c", "env | grep APPAIFORGE_DB_CONNECTIONS"]).output.decode()
+    assert live_pg["password"] in sidecar_env, "a credencial real deveria estar SÓ no sidecar"
+
+
+def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg):
+    """Task 5.4: editar a senha da conexão recria sidecar + sistema de forma
+    idempotente, e a credencial NOVA (não a antiga) chega ao sidecar."""
+    import time
+
+    import psycopg
+
+    from appaiforge.provisioning import dbgate_sidecar_name
+    from appaiforge.services import connections
+
+    conn = connections.register_connection(
+        system, "principal", live_pg["host"], live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"]
+    )
+    sidecar_name = dbgate_sidecar_name(system.slug)
+
+    def _wait_sidecar_env() -> str:
+        deadline = time.time() + 60
+        last_error = None
+        while time.time() < deadline:
+            try:
+                sidecar = _client().containers.get(sidecar_name)
+                if sidecar.status == "running":
+                    result = sidecar.exec_run(["sh", "-c", "env | grep APPAIFORGE_DB_CONNECTIONS"])
+                    if result.exit_code == 0:
+                        return result.output.decode()
+            except Exception as exc:  # container sendo recriado nesse instante
+                last_error = exc
+            time.sleep(2)
+        raise AssertionError(f"sidecar não ficou pronto em 60s: {last_error}")
+
+    first_env = _wait_sidecar_env()
+    assert live_pg["password"] in first_env
+
+    nova_senha = f"{live_pg['password']}-rotacionada"
+    with psycopg.connect(
+        host=live_pg["host"], port=live_pg["port"], dbname=live_pg["database"],
+        user=live_pg["username"], password=live_pg["password"], autocommit=True,
+    ) as pg_conn:
+        with pg_conn.cursor() as cur:
+            # DDL não aceita bind parameter aqui; valor é gerado neste teste, não vem de fora
+            escaped = nova_senha.replace("'", "''")
+            cur.execute(f"ALTER USER \"{live_pg['username']}\" WITH PASSWORD '{escaped}'")
+
+    connections.update_connection(
+        system, conn.id, "principal", live_pg["host"], live_pg["port"], live_pg["database"],
+        live_pg["username"], password=nova_senha,
+    )
+
+    deadline = time.time() + 60
+    second_env = first_env
+    while time.time() < deadline and nova_senha not in second_env:
+        second_env = _wait_sidecar_env()
+        if nova_senha in second_env:
+            break
+        time.sleep(2)
+    assert nova_senha in second_env, "credencial nova não propagou ao sidecar"
+    old_credential_marker = f"{live_pg['username']}:{live_pg['password']}@"
+    assert old_credential_marker not in second_env, "credencial antiga deveria ter sumido do DSN"
 
 
 @pytest.fixture()

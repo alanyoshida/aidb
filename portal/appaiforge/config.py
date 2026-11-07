@@ -94,6 +94,19 @@ class Settings(BaseSettings):
     # Segredo compartilhado entre portal e broker nas chamadas internas.
     inference_broker_service_token: str = ""
 
+    # Gate de banco no data plane (etapa 4 do confinamento, change
+    # db-proxy-gate-data-plane). Segredo compartilhado entre o portal e o
+    # sidecar do proxy (mesmo padrão do broker) e prazo de espera por uma
+    # decisão antes do pedido confirmável expirar.
+    db_gate_proxy_service_token: str = ""
+    db_gate_approval_timeout_seconds: int = 120
+    # "shadow" (default, task 6.1): o proxy classifica e audita mas deixa
+    # tudo executar — os globs de permission.bash e o reply_gate do harness
+    # continuam sendo o gate de verdade, enquanto o spike S5 (task 6.2)
+    # compara os dois. "enforce": o proxy passa a aplicar a decisão
+    # (etapa 7, depois do S5 mostrar falso-positivo aceitável).
+    db_gate_mode: str = "shadow"
+
     session_ttl_days: int = 7
     identity_token_ttl_seconds: int = 60
 

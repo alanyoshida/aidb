@@ -368,47 +368,82 @@ def render_chat(system: System, user: User) -> None:
     interrupt_btn.on_click(do_interrupt)
     prompt.on("keydown.enter", do_send)
 
-    approval_state: dict = {"request_id": None}
+    approval_state: dict = {"signature": None}
 
     def _render_approval() -> None:
+        from .. import gate
+
         run_id = current_run["id"]
         info = queue.pending_gates.get(run_id)
-        if info is None:
-            if approval_state["request_id"] is not None:
-                approval_box.clear()
-                approval_state["request_id"] = None
+        dbgate_pending = gate.list_pending_for_run(run_id) if run_id else []
+
+        signature = (info["request_id"] if info else None, tuple(p["id"] for p in dbgate_pending))
+        if approval_state["signature"] == signature:
             return
-        if approval_state["request_id"] == info["request_id"]:
-            return
-        approval_state["request_id"] = info["request_id"]
+        approval_state["signature"] = signature
         approval_box.clear()
+        if info is None and not dbgate_pending:
+            return
         with approval_box:
-            with ui.card().classes("w-full border-orange-400"):
-                if info.get("sql") is not None:
-                    ui.label("O agente pede aprovação para uma operação destrutiva").classes("font-semibold text-orange-700")
-                    ui.label(f"SQL: {info['sql']}").classes("text-sm").style("white-space: pre-wrap")
-                    ui.label(f"motivo: {info['reason']}").classes("text-xs text-gray-600")
-                else:
-                    # permissão fora do domínio do gate de SQL (ex.: acesso a diretório
-                    # fora do workspace) — não finge ser uma decisão de banco
-                    ui.label("O agente pede permissão para uma ação fora do escopo usual").classes("font-semibold text-orange-700")
-                    ui.label(f"tipo: {info.get('permission') or 'desconhecido'}").classes("text-sm")
-                    if info.get("detail"):
-                        ui.label(info["detail"]).classes("text-xs text-gray-600").style("white-space: pre-wrap")
+            if info is not None:
+                with ui.card().classes("w-full border-orange-400"):
+                    if info.get("sql") is not None:
+                        ui.label("O agente pede aprovação para uma operação destrutiva").classes("font-semibold text-orange-700")
+                        ui.label(f"SQL: {info['sql']}").classes("text-sm").style("white-space: pre-wrap")
+                        ui.label(f"motivo: {info['reason']}").classes("text-xs text-gray-600")
+                    else:
+                        # permissão fora do domínio do gate de SQL (ex.: acesso a diretório
+                        # fora do workspace) — não finge ser uma decisão de banco
+                        ui.label("O agente pede permissão para uma ação fora do escopo usual").classes("font-semibold text-orange-700")
+                        ui.label(f"tipo: {info.get('permission') or 'desconhecido'}").classes("text-sm")
+                        if info.get("detail"):
+                            ui.label(info["detail"]).classes("text-xs text-gray-600").style("white-space: pre-wrap")
 
-                def decide(approve: bool) -> None:
-                    from ..models import User as UserM
-                    from ..db import session_scope
+                    def decide(approve: bool) -> None:
+                        from ..models import User as UserM
+                        from ..db import session_scope
 
-                    with session_scope() as s:
-                        author = s.get(UserM, user.id)
-                        if author is not None:
-                            s.expunge(author)
-                    queue.decide_gate(run_id, info["request_id"], approve, author)
+                        with session_scope() as s:
+                            author = s.get(UserM, user.id)
+                            if author is not None:
+                                s.expunge(author)
+                        queue.decide_gate(run_id, info["request_id"], approve, author)
 
-                with ui.row():
-                    ui.button("Aprovar", icon="check", on_click=lambda: decide(True)).props("color=negative data-testid=gate-approve")
-                    ui.button("Recusar", icon="close", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
+                    with ui.row():
+                        ui.button("Aprovar", icon="check", on_click=lambda: decide(True)).props("color=negative data-testid=gate-approve")
+                        ui.button("Recusar", icon="close", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
+
+            # pendências do proxy de banco no data plane (sidecar, change
+            # db-proxy-gate-data-plane) — a conexão fica segurada do outro lado
+            # até decidir aqui; ao contrário do pedido acima, não há `reply_gate`
+            # do harness envolvido, decide_request só muda o status no banco.
+            for pending in dbgate_pending:
+                with ui.card().classes("w-full border-orange-400"):
+                    ui.label("O agente pede aprovação para uma operação destrutiva (proxy de banco)").classes(
+                        "font-semibold text-orange-700"
+                    )
+                    ui.label(f"SQL: {pending['sql']}").classes("text-sm").style("white-space: pre-wrap")
+                    ui.label(f"motivo: {pending['reason']}").classes("text-xs text-gray-600")
+                    if pending.get("connection_name"):
+                        ui.label(f"conexão: {pending['connection_name']}").classes("text-xs text-gray-600")
+
+                    def decide_dbgate(approve: bool, request_id=pending["id"]) -> None:
+                        from ..models import User as UserM
+                        from ..db import session_scope
+
+                        with session_scope() as s:
+                            author = s.get(UserM, user.id)
+                            author_id = author.id if author else None
+                            author_email = author.email if author else ""
+                        gate.decide_request(request_id, approve, author_id=author_id, author_email=author_email)
+
+                    with ui.row():
+                        ui.button(
+                            "Aprovar", icon="check", on_click=lambda rid=pending["id"]: decide_dbgate(True, rid)
+                        ).props("color=negative data-testid=dbgate-approve")
+                        ui.button(
+                            "Recusar", icon="close", on_click=lambda rid=pending["id"]: decide_dbgate(False, rid)
+                        ).props("outline data-testid=dbgate-deny")
 
     def render_event(box, event) -> None:
         if event.kind in _QUIET_KINDS:
@@ -477,10 +512,13 @@ def render_chat(system: System, user: User) -> None:
             # queue.pending_gates reflete só o pedido ATUALMENTE pendente — ao contrário
             # de varrer o histórico do buffer, que continuaria "True" para sempre depois
             # que o editor já aprovou (o evento gate_request fica no buffer até o fim da run)
+            from .. import gate
+
+            aguardando = queue.pending_gates.get(current_run["id"]) is not None or bool(
+                gate.list_pending_for_run(current_run["id"])
+            )
             set_state(
-                "aguardando sua aprovação (gate de destrutivas)"
-                if queue.pending_gates.get(current_run["id"]) is not None
-                else "agente executando...",
+                "aguardando sua aprovação (gate de destrutivas)" if aguardando else "agente executando...",
                 busy=True,
             )
             _render_approval()

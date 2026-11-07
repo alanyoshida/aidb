@@ -61,6 +61,11 @@ services:
       APPAIFORGE_LITELLM_API_KEY: ${APPAIFORGE_LITELLM_API_KEY:-sk-aidb-dev}
       APPAIFORGE_INFERENCE_BROKER_URL: http://broker:4001
       APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
+      # Gate de banco no data plane (etapa 4 do confinamento). "shadow": classifica
+      # e audita sem bloquear (default, até o spike S5 fechar); "enforce": aplica
+      # a decisão (etapa 7). Mesmo padrão de segredo compartilhado do broker.
+      APPAIFORGE_DB_GATE_MODE: ${APPAIFORGE_DB_GATE_MODE:-shadow}
+      APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN: ${APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN:-troque-este-token}
       APPAIFORGE_FAKE_DELAY: ${APPAIFORGE_FAKE_DELAY:-1.5}
       APPAIFORGE_MAX_SYSTEMS: ${APPAIFORGE_MAX_SYSTEMS:-50}
       APPAIFORGE_SEED_DEMO_ADMIN: "1"

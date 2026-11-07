@@ -57,7 +57,7 @@ def classify(sql: str):
     """Classifica o texto (uma ou mais statements) — nunca levanta exceção."""
     try:
         statements = [s for s in sqlglot.parse(sql, dialect="postgres") if s is not None]
-    except sqlglot.errors.ParseError as exc:
+    except sqlglot.errors.SqlglotError as exc:
         return Blocked(f"statement não interpretada pelo parser: {exc}")
 
     if not statements:
@@ -117,7 +117,7 @@ def is_read_only(sql: str) -> tuple[bool, str]:
     Usado pelo MCP server de leitura — escritas via MCP são sempre recusadas."""
     try:
         statements = [s for s in sqlglot.parse(sql, dialect="postgres") if s is not None]
-    except sqlglot.errors.ParseError as exc:
+    except sqlglot.errors.SqlglotError as exc:
         return False, f"statement não interpretada: {exc}"
     if not statements:
         return False, "statement vazia"

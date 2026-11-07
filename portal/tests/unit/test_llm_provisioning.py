@@ -30,7 +30,7 @@ def editor(clean_db):
 
 
 def _config(tmp_path, system):
-    write_opencode_config(system, str(tmp_path))
+    write_opencode_config(system, str(tmp_path), [])
     with open(tmp_path / "opencode.json") as f:
         return json.load(f)
 
@@ -120,6 +120,55 @@ def test_nome_tool_sem_descricao_sem_read_only(editor, tmp_path, target):
     assert cmd[-1] == "read_write"
 
 
+def test_mcp_usa_dsn_de_loopback_sem_credencial_quando_ha_manifesto(editor, tmp_path, target):
+    """Task 5.2: com o manifesto do sidecar, o comando do MCP aponta pro
+    loopback (porta `agent_port`) sem usuário nem senha — a credencial real
+    só existe no env do sidecar, nunca aqui."""
+    from appaiforge.provisioning import db_connections_manifest
+
+    system = create_system(editor, "LOOP", "prov-loopback")
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        connections.register_connection(
+            system, "vendas", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+        )
+    manifest = db_connections_manifest(system.id)
+    write_opencode_config(system, str(tmp_path), manifest)
+    with open(tmp_path / "opencode.json") as f:
+        config = json.load(f)
+
+    url = config["mcp"]["vendas"]["command"][2]
+    assert url.startswith("postgresql://127.0.0.1:")
+    assert "@" not in url  # sem "user:senha@" — DSN de loopback não carrega credencial
+    assert url.endswith(f"/{target['database']}")
+
+
+# ---------- permission.bash: globs de SQL (task 7.1) ----------
+
+def test_permission_bash_tem_globs_de_sql_em_modo_shadow(editor, tmp_path):
+    """Default (shadow): os globs continuam — cinto-e-suspensório enquanto
+    o proxy no data plane não foi validado em uso real (D5)."""
+    system = create_system(editor, "SHDW", "prov-shadow-globs")
+    config = _config(tmp_path, system)
+    bash_perm = config["permission"]["bash"]
+    assert bash_perm["*DELETE FROM*"] == "ask"
+    assert bash_perm["*DROP TABLE*"] == "ask"
+    assert bash_perm["*"] == "allow"
+
+
+def test_permission_bash_sem_globs_de_sql_em_modo_enforce(editor, tmp_path, monkeypatch):
+    """Enforce: o proxy já é o único gate de SQL — perguntar nos globs
+    seria atrito duplicado (task 7.1)."""
+    monkeypatch.setenv("APPAIFORGE_DB_GATE_MODE", "enforce")
+    get_settings.cache_clear()
+    try:
+        system = create_system(editor, "ENF", "prov-enforce-globs")
+        config = _config(tmp_path, system)
+        assert config["permission"]["bash"] == {"*": "allow"}
+    finally:
+        get_settings.cache_clear()
+
+
 def test_write_opencode_config_grava_em_config_dir_nao_no_workspace(editor, tmp_path):
     import os
 
@@ -128,7 +177,7 @@ def test_write_opencode_config_grava_em_config_dir_nao_no_workspace(editor, tmp_
     workspace_dir.mkdir()
 
     system = create_system(editor, "ISO", "prov-iso")
-    write_opencode_config(system, str(config_dir))
+    write_opencode_config(system, str(config_dir), [])
 
     assert os.path.isfile(config_dir / "opencode.json"), "opencode.json deve estar em config_dir"
     assert not os.path.exists(workspace_dir / "opencode.json"), "opencode.json NÃO deve estar no workspace_dir"
@@ -321,3 +370,59 @@ def test_broker_credential_env_injeta_token_e_nao_chave(editor, monkeypatch):
     assert set(env) == {env_name}
     assert env[env_name] == inference_token.token_for_system(system)
     assert env[env_name] != "chave-real-do-provedor"
+
+
+# ---------- manifesto do sidecar de gate de banco (task 5.1/5.2) ----------
+
+def test_db_connections_manifest_so_pega_postgres_e_mysql(editor, target):
+    from appaiforge.db import session_scope
+    from appaiforge.models import DbConnection
+    from appaiforge.provisioning import db_connections_manifest
+    from appaiforge.security import encrypt_secret
+
+    system = create_system(editor, "MAN", "prov-manifest")
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        connections.register_connection(
+            system, "pg1", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+        )
+    with session_scope() as s:
+        s.add(DbConnection(
+            system_id=system.id, name="bq1", kind="bigquery", host="meuproj", port=0,
+            database="meudataset", username="sa@meuproj.iam.gserviceaccount.com",
+            password_encrypted=encrypt_secret("{}"),
+        ))
+
+    manifest = db_connections_manifest(system.id)
+    assert [m["name"] for m in manifest] == ["pg1"]  # bigquery fica de fora
+
+
+def test_db_connections_manifest_portas_distintas_e_pares_agente_app(editor, target):
+    from appaiforge.provisioning import DB_GATE_PORT_BASE, db_connections_manifest
+
+    system = create_system(editor, "MAN2", "prov-manifest-portas")
+    with patch("appaiforge.services.connections._refresh_provisioning"):
+        connections.register_connection(
+            system, "c1", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+        )
+        connections.register_connection(
+            system, "c2", target["host"], target["port"], target["database"],
+            target["username"], target["password"],
+        )
+
+    manifest = db_connections_manifest(system.id)
+    assert len(manifest) == 2
+    ports = [p for m in manifest for p in (m["agent_port"], m["app_port"])]
+    assert len(ports) == len(set(ports)), "portas não podem colidir entre conexões do mesmo sistema"
+    for m in manifest:
+        assert m["app_port"] == m["agent_port"] + 1
+        assert m["agent_port"] >= DB_GATE_PORT_BASE
+        assert m["dsn"].startswith("postgresql://") and target["username"] in m["dsn"]  # credencial real, só pro sidecar
+
+
+def test_dbgate_sidecar_name_deriva_do_nome_do_container_do_sistema():
+    from appaiforge.edge import system_container_name
+    from appaiforge.provisioning import dbgate_sidecar_name
+
+    assert dbgate_sidecar_name("meu-sistema") == f"{system_container_name('meu-sistema')}-dbgate"

@@ -102,3 +102,25 @@ def test_copia_do_gated_mcp_identica_ao_classificador_canonico():
         "base-image/gated-mcp/sqlgate.py divergiu de app_template/sqlgate.py; "
         "copie o original para o gated-mcp"
     )
+
+
+def test_copia_do_dbproxy_identica_ao_classificador_canonico():
+    from pathlib import Path
+
+    canonico = Path(sqlgate.__file__)
+    copia_dbproxy = Path(__file__).resolve().parents[3] / "base-image" / "dbproxy" / "sqlgate.py"
+    assert copia_dbproxy.read_bytes() == canonico.read_bytes(), (
+        "base-image/dbproxy/sqlgate.py divergiu de app_template/sqlgate.py; "
+        "copie o original para o dbproxy"
+    )
+
+
+def test_statement_que_so_falha_no_tokenizer_e_bloqueada_sem_levantar():
+    """Regressão: `select $$` (probe interno do cliente `mysql` oficial,
+    mandado antes de qualquer statement do usuário) quebra o tokenizer do
+    sqlglot com TokenError (não ParseError) sob o dialeto postgres —
+    descoberto pelo proxy MySQL (task 3.1) contra um cliente `mysql` real.
+    O classificador promete nunca levantar exceção; sem capturar
+    `SqlglotError` (base de ParseError e TokenError), essa promessa quebra."""
+    result = sqlgate.classify("select $$")
+    assert isinstance(result, Blocked)

@@ -35,6 +35,17 @@ def set_provider_key(args: argparse.Namespace) -> int:
     return 0
 
 
+def compare_gate_decisions(args: argparse.Namespace) -> int:
+    """Spike S5 (task 6.2, change db-proxy-gate-data-plane): compara o
+    caminho antigo (globs) com o modo sombra do proxy no data plane."""
+    from .gate_comparison import compare, format_report
+
+    get_engine()
+    report = compare(system_id=args.system_id, since_days=args.since_days, window_seconds=args.window_seconds)
+    print(format_report(report))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="appaiforge")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -48,6 +59,16 @@ def main(argv: list[str] | None = None) -> int:
     p_key.add_argument("--provider", required=True, help="id do provedor no portal (ex.: glm)")
     p_key.add_argument("--key", required=True, help="a chave de API (será armazenada cifrada)")
     p_key.set_defaults(func=set_provider_key)
+
+    p_cmp = sub.add_parser(
+        "compare-gate-decisions",
+        help="spike S5: compara o gate por globs (antigo) com o modo sombra do proxy de banco",
+    )
+    p_cmp.add_argument("--system-id", default=None, help="restringe a um sistema; por padrão, todos")
+    p_cmp.add_argument("--since-days", type=int, default=30, help="janela de dias pra trás (padrão 30)")
+    p_cmp.add_argument("--window-seconds", type=float, default=30.0,
+                       help="tolerância de tempo pra casar um registro antigo com um em sombra (padrão 30s)")
+    p_cmp.set_defaults(func=compare_gate_decisions)
 
     args = parser.parse_args(argv)
     return args.func(args)

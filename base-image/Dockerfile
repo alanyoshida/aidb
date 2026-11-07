@@ -34,6 +34,12 @@ RUN pip install --no-cache-dir pyseccomp
 COPY gated-mcp /opt/gated-mcp
 RUN pip install --no-cache-dir "mcp>=1.0" sqlglot asyncpg aiomysql mysqlclient google-cloud-bigquery sqlalchemy-bigquery
 
+# Proxy de gate de banco no data plane (etapa 4 do confinamento, change
+# db-proxy-gate-data-plane): sqlglot/asyncpg/aiomysql já vêm da linha acima;
+# httpx é só para o pedido de aprovação ao portal (task 2.3/4.1).
+COPY dbproxy /opt/dbproxy
+RUN pip install --no-cache-dir httpx
+
 # supervisor como PID 1
 COPY afsupervisor /opt/afsupervisor/afsupervisor
 ENV PYTHONPATH=/opt/afsupervisor
