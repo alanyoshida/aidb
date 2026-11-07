@@ -30,19 +30,29 @@ PROFILES: dict[str, dict] = {
         # Landlock. Não amplia o que o agente já enxerga: supervisor e agente
         # rodam como o mesmo uid no mesmo container, então /proc de um já era
         # visível ao outro pela permissão Unix normal, com ou sem Landlock.
-        # /etc: outro achado da task 7 — sem leitura de /etc (provavelmente
-        # /etc/resolv.conf, que o resolvedor DNS do Bun lê direto, fora da
-        # NSS da glibc), toda chamada de rede do agente falhava com
-        # "getaddrinfo EAI_AGAIN", mesmo com DNS funcionando normalmente para
-        # qualquer outro processo do container. Também não amplia o que já
-        # era acessível: /etc/shadow e /etc/gshadow são 0640 root:shadow,
-        # fora do alcance do usuário `agent` por permissão Unix comum,
-        # Landlock nunca concede além do que a permissão do arquivo permite.
-        # /dev: terceiro achado da task 7 — sem leitura de /dev (provavelmente
-        # /dev/null, usado para redirecionar a saída de um subprocesso de
-        # sondagem), `uv sync` falhava com "Could not detect either glibc
-        # version nor musl libc version" e nenhuma dependência era instalada.
-        "readable_paths": ["/opencode-config", "/usr", "/lib", "/opt", "/proc", "/etc", "/dev"],
+        # /etc: a task 7 original liberou o /etc inteiro porque a chamada de
+        # rede do agente falhava com "getaddrinfo EAI_AGAIN" sem ele, sem
+        # saber ao certo qual arquivo exigia isso — e "/etc" inteiro também
+        # libera /etc/passwd e /etc/group (mundialmente legíveis por permissão
+        # Unix, ao contrário de /etc/shadow). Revisado: `strace -f` real num
+        # `opencode serve` + sessão + prompt (fora do Landlock, só pra
+        # observar) mostrou exatamente o conjunto abaixo — resolução de nome
+        # (NSS/glibc), fuso horário, cache do linker dinâmico (também sob
+        # Landlock: ele se aplica a partir do próprio `exec` do processo) e a
+        # cadeia de certificados TLS; nenhuma leitura de /etc/passwd ou
+        # /etc/group apareceu. Os caminhos ausentes nesta imagem (`/etc/pki/*`,
+        # `/etc/openssl/certs`, `/etc/ld.so.preload`) ficam na lista mesmo
+        # assim — `readable_paths` ausente é ignorado em silêncio
+        # (`sandbox.apply_landlock`), e cobre a mesma sondagem numa imagem
+        # base diferente (ex.: RHEL/Alpine) sem precisar de outro strace.
+        "readable_paths": [
+            "/opencode-config", "/usr", "/lib", "/opt", "/proc", "/dev",
+            "/etc/resolv.conf", "/etc/hosts", "/etc/host.conf", "/etc/nsswitch.conf",
+            "/etc/gai.conf", "/etc/netsvc.conf", "/etc/svc.conf", "/etc/localtime",
+            "/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/opencode",
+            "/etc/ssl/certs", "/etc/ssl/cert.pem", "/etc/ssl/ca-bundle.pem",
+            "/etc/openssl/certs", "/etc/pki",
+        ],
         # Além de /workspace, o mapa real de escrita de uma geração completa
         # (etapa 1, docs/roadmap-confinamento-do-agente.md) mostrou o agente
         # escrevendo em caminhos sob o HOME do usuário `agent` e em /tmp —

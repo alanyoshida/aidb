@@ -23,12 +23,26 @@ def test_readable_paths_inclui_proc_achado_da_verificacao_real_da_etapa_2():
     assert "/proc" in profile["readable_paths"]
 
 
-def test_readable_paths_inclui_etc_achado_da_verificacao_real_da_etapa_2():
-    """Sem /etc legível, chamadas de rede do opencode falham com
-    getaddrinfo EAI_AGAIN sob Landlock — o resolvedor DNS do Bun lê algo em
-    /etc (provavelmente resolv.conf) direto, fora da NSS da glibc."""
+def test_readable_paths_inclui_resolucao_de_rede_sem_liberar_etc_inteiro():
+    """Revisão do achado original da etapa 2 (liberava /etc inteiro): um
+    `strace -f` real (`opencode serve` + sessão + prompt) mostrou exatamente
+    o que é lido sob /etc — resolução de nome (NSS/glibc), fuso horário,
+    cache do linker e cadeia de certificados TLS — sem nenhuma leitura de
+    /etc/passwd ou /etc/group. A lista é explícita em vez de liberar o
+    diretório inteiro (ver teste abaixo)."""
     profile = get_profile("opencode")
-    assert "/etc" in profile["readable_paths"]
+    for caminho in ("/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl/certs"):
+        assert caminho in profile["readable_paths"]
+
+
+def test_readable_paths_nao_libera_etc_inteiro_nem_passwd_ou_group():
+    """Pedido do operador: bloquear leitura de arquivos sensíveis como
+    /etc/passwd sob Landlock, sem depender do agente nunca pedir (gate de
+    permissão do opencode é por fora do Landlock e é best-effort)."""
+    profile = get_profile("opencode")
+    assert "/etc" not in profile["readable_paths"]
+    assert "/etc/passwd" not in profile["readable_paths"]
+    assert "/etc/group" not in profile["readable_paths"]
 
 
 def test_readable_paths_inclui_dev_achado_da_verificacao_real_da_etapa_2():

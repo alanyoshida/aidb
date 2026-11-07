@@ -153,6 +153,62 @@ def test_apply_landlock_real_confina_escrita_a_caminhos_declarados(tmp_path):
 
 
 @pytest.mark.sandbox
+def test_apply_landlock_real_libera_leitura_de_arquivo_avulso_sem_liberar_irmao(tmp_path):
+    """Achado real ao revisar `readable_paths` do perfil `opencode` (pedido do
+    operador para bloquear leitura de arquivos sensíveis como /etc/passwd):
+    declarar um ARQUIVO (não um diretório) em `readable_paths` levantava
+    `OSError: [Errno 22] landlock_add_rule` — o perfil original só continha
+    diretórios, então ninguém tinha batido nisso antes. O Landlock recusa
+    bits de diretório (READ_DIR etc.) num alvo que não é diretório; a correção
+    mascara o `access` pros bits compatíveis com arquivo antes de montar a
+    regra (`_add_path_rule`). Este teste prova o cenário de verdade: leitura
+    liberada só no arquivo declarado, negada no irmão não declarado na mesma
+    pasta (equivalente a liberar `/etc/resolv.conf` sem liberar `/etc/passwd`)."""
+    if sandbox.landlock_abi() <= 0:
+        pytest.skip("host sem suporte a Landlock")
+
+    pasta = tmp_path / "etc"
+    pasta.mkdir()
+    liberado = pasta / "resolv.conf"
+    irmao = pasta / "passwd"
+    liberado.write_text("nameserver 127.0.0.11")
+    irmao.write_text("root:x:0:0::/root:/bin/bash")
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        resultado = {}
+        try:
+            sandbox.apply_landlock(readable_paths=[str(liberado)], writable_paths=[])
+            resultado["leu_liberado"] = liberado.read_text()
+            try:
+                irmao.read_text()
+                resultado["leu_irmao"] = True
+            except PermissionError:
+                resultado["leu_irmao"] = False
+        except Exception as exc:
+            resultado["erro"] = str(exc)
+        os.write(write_fd, repr(resultado).encode())
+        os._exit(0)
+    else:
+        os.close(write_fd)
+        saida = b""
+        while True:
+            chunk = os.read(read_fd, 4096)
+            if not chunk:
+                break
+            saida += chunk
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        resultado = eval(saida.decode())
+
+    assert resultado.get("erro") is None, resultado
+    assert resultado["leu_liberado"] == "nameserver 127.0.0.11"
+    assert resultado["leu_irmao"] is False
+
+
+@pytest.mark.sandbox
 def test_apply_landlock_cria_writable_path_que_ainda_nao_existe(tmp_path):
     """Achado real da task 7: Landlock só autoriza um caminho que já existe
     (precisa abrir um fd pra ele). Sem criar `writable_paths` ausentes antes

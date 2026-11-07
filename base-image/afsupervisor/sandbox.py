@@ -101,6 +101,15 @@ _FS_ACCESS_BITS_BY_ABI: list[tuple[int, int]] = [
 ]
 _FS_READ_ONLY_BITS = (1 << 0) | (1 << 2) | (1 << 3)  # EXECUTE | READ_FILE | READ_DIR
 
+# Direitos que o Landlock aceita para um arquivo comum — todos os outros bits
+# de LANDLOCK_ACCESS_FS_* (READ_DIR, MAKE_*, REMOVE_*, REFER) só fazem
+# sentido para diretórios (criar/remover uma entrada *dentro* deles, listar).
+# `landlock_add_rule` devolve EINVAL se um bit de diretório for pedido para
+# um caminho cujo inode não é diretório — achado real (etapa 2, revisão do
+# /etc): o perfil original só tinha diretórios em `readable_paths`, nunca um
+# arquivo avulso, então isto nunca disparava antes.
+_FS_FILE_ONLY_BITS = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 14)  # EXECUTE | WRITE_FILE | READ_FILE | TRUNCATE
+
 
 class _RulesetAttr(ctypes.Structure):
     _fields_ = [("handled_access_fs", ctypes.c_uint64), ("handled_access_net", ctypes.c_uint64)]
@@ -185,6 +194,8 @@ def apply_landlock(readable_paths: list[str], writable_paths: list[str]) -> None
 def _add_path_rule(libc: ctypes.CDLL, ruleset_fd: int, path: str, access: int) -> None:
     if not os.path.exists(path):
         return
+    if not os.path.isdir(path):
+        access &= _FS_FILE_ONLY_BITS
     fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
     try:
         rule = _PathBeneathAttr(allowed_access=access, parent_fd=fd)
