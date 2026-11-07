@@ -72,6 +72,15 @@ APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN=um-token-entre-portal-e-broker
 
 e suba o stack (`docker compose -f deploy/docker-compose.yml up -d --build`). Os serviços `litellm` e `broker` sobem na rede interna, sem porta publicada.
 
+> **Banco do LiteLLM**: o serviço exige um database próprio (`litellm`) no Postgres — a migração Prisma cria as tabelas, mas não o database. O compose E2E cria no init do volume; no stack principal, crie uma vez (stack novo ou volume já existente):
+>
+> ```bash
+> docker compose -f deploy/docker-compose.yml exec postgres \
+>   psql -U appaiforge -c "CREATE DATABASE litellm;"
+> ```
+>
+> Sem isso o `litellm` fica reiniciando até o banco existir; depois de criado, se recupera sozinho.
+
 Como funciona:
 
 - **Chaves**: o portal continua sendo a fonte única (cifradas no Postgres, ADR 0007). Ao cadastrar/remover uma chave na UI — e no boot do portal — os deployments são empurrados para a API administrativa do LiteLLM. Nada de chave de provedor em arquivo ou env do compose.

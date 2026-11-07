@@ -93,7 +93,6 @@ services:
       AIDB_USAGE_ENDPOINT: http://portal:8080/internal/inference/usage
       AIDB_USAGE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
       STORE_MODEL_IN_DB: "True"
-      GENERIC_LOGGER_ENDPOINT: "http://portal:8080/internal/inference/usage?token=${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm/custom_callbacks.py:/app/custom_callbacks.py:ro
