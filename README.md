@@ -2,7 +2,7 @@
 
 Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você cadastra um sistema, conecta um banco (PostgreSQL, MySQL ou BigQuery), conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
 
-- Decisões de arquitetura: [`docs/adr/`](docs/adr/README.md) (17 ADRs, formato MADR)
+- Decisões de arquitetura: [`docs/adr/`](docs/adr/README.md) (21 ADRs, formato MADR)
 - Especificações: `openspec/specs/` (13 capacidades); o histórico de mudanças fica em `openspec/changes/archive/` (change fundadora: `2026-11-02-appai-forge-mvp`)
 
 ## Arquitetura em uma linha
@@ -137,6 +137,86 @@ Desde a etapa 4 do confinamento ([ADR 0021](docs/adr/0021-gate-de-sql-no-data-pl
 - **Na app gerada**: a camada `dbgate.py` (obrigatória nas guidelines) dispara um diálogo com a contagem estimada de linhas antes de executar operações confirmáveis; DDL é recusada — cinto-e-suspensório com o proxy, que já classifica a mesma statement antes dela chegar ao banco.
 - **Auditoria**: toda decisão (aprovada/recusada/bloqueada/sombra/expirada) fica na seção "Gate de destrutivas" da página do sistema, com autor, SQL, origem e data.
 - Apps geradas **antes** desta mudança migram para a camada na próxima edição pelo agente.
+
+## Segurança: confinamento do agente
+
+Cada sistema roda num container próprio sob um de três **modos de execução**, fixado na criação
+e nunca trocado automaticamente ([ADR 0018](docs/adr/0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md),
+[ADR 0019](docs/adr/0019-sandbox-seccomp-landlock-no-supervisor.md), roadmap
+[`docs/roadmap-confinamento-do-agente.md`](docs/roadmap-confinamento-do-agente.md)):
+
+| Modo | Usuário | Capabilities | Landlock + seccomp |
+|---|---|---|---|
+| `legacy` | root | todas | não |
+| `reduced` | `agent` (uid 1000) | nenhuma (`cap_drop: ALL`) | não |
+| `sandboxed` | `agent` (uid 1000) | nenhuma | **sim** |
+
+Sistema novo recebe `sandboxed` automaticamente se o host suporta Landlock; sem suporte, cai para
+`reduced` com aviso (ou recusa a criação com `APPAIFORGE_REQUIRE_SANDBOX=true`, modo fail-closed
+de produção). Sistemas criados antes do ADR 0018 ficam em `legacy` — ver "Migrar um sistema para
+`sandboxed`" abaixo.
+
+**Como o confinamento funciona** (modo `sandboxed`): o supervisor (`afsupervisor`, PID 1 do
+container) aplica dois mecanismos auto-impostos e não-privilegiados no processo **filho** que vai
+virar o agente (`opencode serve`), nunca em si mesmo — ambos são herdados por todo processo que o
+agente gerar (bash, python, o script que ele escrever) e **irrevogáveis** depois de aplicados:
+
+- **seccomp** nega um denylist de syscalls perigosas (`ptrace`, `bpf`, `mount`, `setns`,
+  `perf_event_open`, `process_vm_readv`/`writev`, `pivot_root`, `io_uring_setup`, `unshare` com
+  `CLONE_NEWUSER`) — tudo o mais é permitido.
+- **Landlock** nega acesso a filesystem fora do declarado no perfil do agente
+  (`appaiforge/agent_profiles.py`): leitura+execução só em `/workspace`, `/opencode-config`,
+  `/usr`, `/lib`, `/opt`, `/proc`, `/dev` e um conjunto explícito de arquivos sob `/etc`
+  (resolução de nome, fuso horário, cache do linker, cadeia de certificados — **não** o diretório
+  inteiro); escrita só em `/workspace`, `/tmp` e os caches do `$HOME` do agente. Qualquer coisa
+  fora dessas listas — `/etc/passwd`, `/etc/shadow`, `/root`, os workspaces de outros sistemas —
+  fica negada pelo kernel, não por um pedido de permissão que o agente poderia simplesmente
+  receber "sim" de um editor apressado.
+
+**O que isso substitui**: a permissão `external_directory` do próprio opencode (pedia confirmação
+no chat toda vez que o agente tocava um caminho fora do workspace, inclusive **falsos-positivos**
+de caminho absoluto já dentro dele) hoje é liberada sem perguntar
+(`permission.external_directory: "allow"`) — a barreira real passou a ser o Landlock, que o
+sistema operacional aplica de verdade e não depende de ninguém clicar em "Aprovar".
+
+**Limites aceitos por ora**: Landlock cobre filesystem (e, por ABI, porta TCP — ainda não
+configurado); não cobre endereço IP nem credencial de banco na linha de comando do MCP de bancos
+não cobertos pelo proxy de gate (etapa 4). Fechar a rede por completo é a etapa 5 do roadmap.
+Sistemas em `legacy`/`reduced` não têm nenhuma (ou só parcial) dessas garantias.
+
+### Migrar um sistema de `legacy` para `sandboxed`
+
+Não existe CLI/UI para isso (modo é "fixado na criação e imutável" por desenho) — foi feito uma
+vez, manualmente, para os sistemas que existiam antes do ADR 0018. Se precisar de novo: sistemas
+`legacy` rodam como root, então o workspace inteiro é **dono de root** — trocar só o modo sem
+corrigir isso prende o agente (agora uid 1000) fora dos próprios arquivos. A ordem importa:
+
+```bash
+# 1. dono do workspace para o uid do agente (ANTES de trocar o modo — enquanto
+#    o container antigo ainda roda como root, o bind do host já está acessível
+#    de fora dele via outro container efêmero com a mesma imagem)
+docker run --rm --user root -v /opt/appaiforge/workspaces/<slug>:/workspace \
+  appaiforge/base:0.1.0 chown -R 1000:1000 /workspace
+
+# 2. troca o modo no banco e recria o container (dentro do container do portal)
+docker exec appaiforge-portal-1 python -c "
+from appaiforge.db import session_scope
+from appaiforge.models import System, ExecutionMode
+from appaiforge.services.systems import get_system
+from appaiforge.provisioning import provision_system
+
+with session_scope() as s:
+    row = s.query(System).filter(System.slug == '<slug>').one()
+    row.execution_mode = ExecutionMode.sandboxed
+    system_id = row.id
+
+provision_system(get_system(system_id))
+"
+```
+
+Recriar o container invalida qualquer sessão de chat aberta nesse sistema (reabre sozinha na
+próxima mensagem). Confirme depois: `docker inspect appaiforge-sys-<slug> --format '{{.Config.User}}'`
+deve mostrar `1000:1000`, e `docker exec appaiforge-sys-<slug> id` deve mostrar o usuário `agent`.
 
 ## Configuração (env `APPAIFORGE_*`)
 
