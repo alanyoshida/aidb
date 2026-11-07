@@ -27,6 +27,8 @@ DELETE FROM management_audit WHERE system_id IN (SELECT id FROM _e2e_systems)
   OR actor_id IN (SELECT id FROM _e2e_users);
 DELETE FROM gate_decisions WHERE system_id IN (SELECT id FROM _e2e_systems)
   OR run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
+DELETE FROM gate_requests WHERE system_id IN (SELECT id FROM _e2e_systems)
+  OR run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
 DELETE FROM run_events WHERE run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
 DELETE FROM checkpoints WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM token_usage WHERE system_id IN (SELECT id FROM _e2e_systems);
@@ -50,6 +52,37 @@ def _run(cmd: list[str]) -> str:
     return result.stdout
 
 
+def _e2e_sidecar_ids() -> list[str]:
+    """Sidecars de gate de banco (change db-proxy-gate-data-plane) sobem com
+    `network_mode: container:<id do sistema>` (D1) — não têm entrada própria
+    em `Networks`, então o filtro por rede do `docker ps` nunca os vê.
+    Resolve pela cadeia (`HostConfig.NetworkMode`) até o container do
+    sistema e só devolve o sidecar se ESSE estiver mesmo na rede do stack
+    E2E — mesmo isolamento do filtro de rede acima, sem depender dele."""
+    result = []
+    try:
+        candidates = _run([
+            "docker", "ps", "-aq", "--filter", "label=appaiforge.role=dbgate-sidecar",
+        ]).split()
+    except RuntimeError:
+        return result
+    for cid in candidates:
+        try:
+            mode = _run(["docker", "inspect", "--format", "{{.HostConfig.NetworkMode}}", cid]).strip()
+            if not mode.startswith("container:"):
+                continue
+            target = mode.removeprefix("container:")
+            networks = _run([
+                "docker", "inspect", "--format",
+                "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}", target,
+            ]).split()
+        except RuntimeError:
+            continue
+        if "appaiforge-e2e-net" in networks:
+            result.append(cid)
+    return result
+
+
 @pytest.fixture(scope="session", autouse=True)
 def clean_stack():
     """Limpa somente dados de teste (@e2e.local): containers, linhas e workspaces órfãos."""
@@ -69,10 +102,11 @@ def clean_stack():
         "--filter", "label=appaiforge.managed=true",
         "--filter", "network=appaiforge-e2e-net",
     ]).split()
+    names += _e2e_sidecar_ids()
     for cid in names:
         try:
             name = _run(["docker", "inspect", "--format", "{{.Name}}", cid]).strip().lstrip("/")
-            slug = name.removeprefix("appaiforge-sys-")
+            slug = name.removeprefix("appaiforge-sys-").removesuffix("-dbgate")
             if slug and slug not in slugs_vivos:
                 _run(["docker", "rm", "-f", name])
         except RuntimeError:

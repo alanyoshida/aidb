@@ -339,6 +339,22 @@ no env como alternativa descartada, com o motivo (granularidade por sessão invi
 
 ## Etapa 4 — Proxy de banco e o gate no data plane
 
+**Status: ✅ concluída** (change `db-proxy-gate-data-plane`, [ADR 0021](adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)).
+Sidecar real por sistema (`network_mode: container:<id>`) com proxy de wire protocol Postgres e
+MySQL em Python asyncio, validado contra bancos reais (spikes S8 e MySQL) e com testes de
+integração/E2E ponta a ponta contra Docker real: statement confirmável em modo `enforce` segura a
+conexão e só executa após aprovação pelo card novo do chat (distinto do card antigo); modo `shadow`
+(default) executa tudo e só audita; origem `agente`/`app` atribuída por listener separado;
+container do sistema sem credencial usável no env/cmdline, só o sidecar guarda a credencial real.
+Ferramenta de comparação sombra-vs-globs (`gate_comparison.py`, CLI `compare-gate-decisions`)
+construída e testada, mas **ainda não rodou contra uso real** — por isso o default continua
+`shadow` e os globs de `permission.bash` continuam como cinto-e-suspensório: trocar o default para
+`enforce` (e aí sim apagar os globs de SQL) depende de medir falso-positivo em produção, não de
+mais código. Correção de rota em relação ao parágrafo original abaixo: o `reply_gate`
+([`base.py:50`](../portal/appaiforge/harness/base.py)) **não saiu** do `HarnessPort` — é o
+mecanismo genérico de resposta a qualquer `permission.asked` do opencode (inclusive não-SQL, ex.:
+acesso a diretório fora do workspace), que esta change não tinha motivo para tocar.
+
 **Objetivo**: o gate funciona independente de **como** a SQL foi emitida, e independente de qual
 agente está rodando. É a etapa que destrava o multi-agente.
 

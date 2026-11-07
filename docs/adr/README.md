@@ -28,7 +28,8 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0014](0014-rbac-com-tipos-globais-de-usuario.md) | RBAC com tipos globais de usuário; só editor cria sistemas | aceito |
 | [0015](0015-mesma-credencial-de-producao-para-app-gerada.md) | App gerada usa a mesma credencial de produção; gate de destrutivas adiado | aceito (gate: ver 0017) |
 | [0016](0016-testes-em-tres-camadas-unit-bdd-e2e.md) | Testes em três camadas: unitários, BDD e E2E pelo browser | aceito |
-| [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md) | Gate de operações destrutivas com classificador SQL único (sqlglot) | aceito |
+| [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md) | Gate de operações destrutivas com classificador SQL único (sqlglot) | aceito (gatilho do agente: ver 0021) |
 | [0018](0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md) | Perfil de runtime do agente declarativo; identidade de execução reduzida por sistema | aceito |
 | [0019](0019-sandbox-seccomp-landlock-no-supervisor.md) | Sandbox do agente: seccomp + Landlock instalados pelo supervisor antes do exec | aceito |
 | [0020](0020-broker-de-inferencia-com-litellm.md) | Broker de inferência: token opaco no container, LiteLLM como backend de credencial | aceito |
+| [0021](0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md) | Gate de SQL no data plane via sidecar proxy de wire protocol (Postgres/MySQL) | aceito |

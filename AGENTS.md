@@ -63,6 +63,24 @@ Não há config de lint/format (ruff/black) no repositório — não invente uma
 - Mudança de schema exige migração Alembic encadeada ao head atual (`alembic heads` deve listar um só).
 - O compose sobe em harness `fake` por padrão; para o agente real use `APPAIFORGE_HARNESS_MODE=opencode`
   (em `deploy/.env`, não versionado).
+- **NUNCA encadeie `docker ps --filter ... | xargs docker rm -f` (ou similar) num comando só, pra
+  limpar containers reais.** Isso já aconteceu DUAS vezes na mesma sessão, cada vez com um filtro
+  diferente: `--filter 'label=appaiforge.managed=true'` sozinho (pega todo sistema, de teste ou
+  real) e depois `--filter 'label=appaiforge.managed=true' --filter 'network=appaiforge-net'` (achando
+  que o filtro de rede protegia — `appaiforge-net` É a rede do stack real de dev, não uma rede de
+  teste). As duas vezes apagaram os 4 sistemas reais do usuário (`homolog-crm`, `pets`, `projetos`,
+  `chat-a0a915bd`) junto dos containers de teste. Nenhum filtro de label/rede/prefixo é confiável
+  sozinho — mesmo um que pareça escopado pode bater em produção sem avisar.
+  **Regra mecânica, sem exceção**: toda limpeza é SEMPRE dois passos separados —
+  1. `docker ps -a --filter ...` (ou `grep` num `docker ps -a` simples) pra LISTAR, sem `rm` no mesmo
+     comando; leia a lista inteira e confirme visualmente que nenhum nome bate em
+     `homolog-crm|pets|projetos|chat-a0a915bd` (ou o que mais for conhecido como sistema real na
+     hora);
+  2. só então `docker rm -f <nome1> <nome2> ...` com os nomes exatos, digitados/colados da lista que
+     você acabou de revisar — nunca um pipe direto de `docker ps` pra `rm`/`xargs`, mesmo com filtro.
+  Se isso já aconteceu: o workspace (bind do host) e a linha no banco sobrevivem ao `docker rm`;
+  `provisioning.reconcile()` (chamado de dentro do container do portal) recria o container a partir
+  deles sem perda — mas o objetivo é nunca precisar disso.
 
 ## Fluxo OpenSpec
 
@@ -71,3 +89,48 @@ Mudanças seguem o workflow OpenSpec (specs em `openspec/specs/`, propostas em
 specs diretamente para refletir código novo sem passar pelo fluxo de change: propor → aplicar →
 arquivar (o arquivamento sincroniza os deltas para `openspec/specs/`). Mudança de decisão arquitetural
 vira ADR sequencial em `docs/adr/` (o próximo número é 0019).
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **aidb** (4096 symbols, 8289 relationships, 288 execution flows).
+
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
+
+## Always Do
+
+- **MUST run impact before editing.** Use `impact({target: "symbolName", direction: "upstream"})` or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .`; report callers, processes, and risk. Never substitute grep for graph analysis.
+- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
+- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxes` to waive a HIGH/CRITICAL `risk` warning. Compare File/symbol: MCP File omits axes; Graph-RAG expands File.
+- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
+- **MUST use `query({search_query: "concept"})` for concepts/flows, `context({name: "symbolName"})` for a named symbol, or `impact` for blast radius, on read-only callers, dependencies, imports, or execution flow.** Graph first; text search only for empty/`UNKNOWN`/literals.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+
+## Never Do
+
+- NEVER edit a function, class, or method before MCP/CLI impact analysis.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit before MCP/CLI graph change analysis.
+
+## Resources
+
+| Resource | Use for |
+| --- | --- |
+| `gitnexus://repo/aidb/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/aidb/clusters` | All functional areas |
+| `gitnexus://repo/aidb/processes` | All execution flows |
+| `gitnexus://repo/aidb/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+| --- | --- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

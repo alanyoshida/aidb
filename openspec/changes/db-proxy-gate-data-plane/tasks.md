@@ -42,14 +42,16 @@
 
 ## 8. Testes de aceitação
 
-- [ ] 8.1 Integração: `psql -f arquivo.sql` com `DELETE FROM clientes` (o caso que hoje passa pelos globs) aguarda aprovação do editor e executa só após aprovação
-- [ ] 8.2 Integração: modo sombra executa tudo e audita, sem bloquear nada
-- [ ] 8.3 Integração: statement confirmável vinda do listener da app registra `origin` da app, distinta da do agente
-- [ ] 8.4 Integração: ambiente e cmdline do container do sistema sem credencial de banco utilizável, e app gerada funcionando pelo proxy
-- [ ] 8.5 E2E no stack dedicado (8081) com harness fake cobrindo o novo caminho, sem apontar para o ambiente real
+- [x] 8.1 Integração: `psql -f arquivo.sql` com `DELETE FROM clientes` (o caso que hoje passa pelos globs) aguarda aprovação do editor e executa só após aprovação
+  - revisão: `tests/integration/test_db_gate_proxy.py` — statement roda de dentro do container real via `asyncpg` contra o loopback do proxy (sem `psql` na imagem; o efeito é o mesmo). Um HTTP mínimo com as 3 rotas internas do gate substitui o portal completo (evita subir NiceGUI/sync do LiteLLM só para o sidecar ter quem chamar); a real credencial de teste (testcontainers) é alcançada pelo container via o gateway da rede Docker, não por "localhost" (relativo ao processo do pytest).
+- [x] 8.2 Integração: modo sombra executa tudo e audita, sem bloquear nada
+- [x] 8.3 Integração: statement confirmável vinda do listener da app registra `origin` da app, distinta da do agente
+- [x] 8.4 Integração: ambiente e cmdline do container do sistema sem credencial de banco utilizável, e app gerada funcionando pelo proxy
+- [x] 8.5 E2E no stack dedicado (8081) com harness fake cobrindo o novo caminho, sem apontar para o ambiente real
+  - revisão: `tests/e2e/test_db_gate_e2e.py` — o harness fake não executa bash de verdade, então o "caminho novo" (SQL real pelo proxy) não dá pra disparar por mensagem de chat; o teste usa uma mensagem "DELETE SEM WHERE" só pra deixar a run em `awaiting_approval` (o que o proxy usa pra achar o run_id), e dispara a statement de verdade via `asyncpg` de dentro do container, direto na porta do sidecar. `db_gate_mode` é env var do processo do portal — a fixture `enforce_portal` recria só o serviço `portal` do compose E2E em enforce e devolve a sombra (default) no teardown. Achados corrigidos no caminho: `tests/e2e/conftest.py` não limpava `gate_requests` antes de `agent_runs` (FK travava o reset entre sessões) nem via os sidecars (`network_mode: container:<id>`, sem entrada própria em `Networks` — o filtro por rede do `docker ps` nunca os alcançava, acumulando órfãos a cada sessão).
 
 ## 9. Documentação e decisão
 
-- [ ] 9.1 Registrar o ADR 0021 (gate no data plane), com a interceptação no control plane como decisão substituída e referência ao ADR 0017
-- [ ] 9.2 Atualizar a linha da etapa 4 no `docs/roadmap-confinamento-do-agente.md` com o status e os artefatos entregues
-- [ ] 9.3 Documentar no `README.md` o sidecar, os modos sombra/enforcing e o rollout por flag
+- [x] 9.1 Registrar o ADR 0021 (gate no data plane), com a interceptação no control plane como decisão substituída e referência ao ADR 0017
+- [x] 9.2 Atualizar a linha da etapa 4 no `docs/roadmap-confinamento-do-agente.md` com o status e os artefatos entregues
+- [x] 9.3 Documentar no `README.md` o sidecar, os modos sombra/enforcing e o rollout por flag

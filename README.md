@@ -130,9 +130,12 @@ Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador can
 | **confirmável** | `DELETE FROM clientes` ou `WHERE cidade = 'X'` | **aguarda confirmação** |
 | **bloqueada** | DDL (`DROP`/`TRUNCATE`/`ALTER`/...) | **sempre recusada** |
 
-- **Pelo agente**: comandos de banco via bash disparam pedido de permissão; o chat mostra o SQL com botões **Aprovar/Recusar** (auto-aprovação pelo editor que conduz a sessão). DDL nem chega a perguntar. Escritas via MCP são sempre recusadas (o MCP das conexões é somente leitura).
-- **Na app gerada**: a camada `dbgate.py` (obrigatória nas guidelines) dispara um diálogo com a contagem estimada de linhas antes de executar operações confirmáveis; DDL é recusada.
-- **Auditoria**: toda decisão (aprovada/recusada/bloqueada) fica na seção "Gate de destrutivas" da página do sistema, com autor, SQL e data.
+Desde a etapa 4 do confinamento ([ADR 0021](docs/adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)), o gate roda no **data plane**: cada sistema com conexão Postgres/MySQL ganha um **sidecar** (`<slug>-dbgate`, mesmo network namespace do container do sistema) que fala o protocolo de fio do banco e classifica cada statement antes de repassá-la — não depende de reconhecer SQL dentro de texto de bash, e cobre tanto o agente quanto a app gerada. O container do sistema nunca vê a credencial real: `DATABASE_URL_<NOME>` e o comando do MCP recebem um DSN de loopback sem usuário/senha; só o sidecar guarda o segredo e abre a conexão de verdade.
+
+- **Pelo agente/app**: dois listeners por conexão (um para o agente/MCP, outro para a app gerada via `DATABASE_URL_<NOME>`) atribuem a origem sem ambiguidade. `bloqueada` nunca chega ao banco; `confirmável` segura a conexão e cria um pedido associado ao run ativo do sistema — o chat mostra um card próprio ("proxy de banco") com botões **Aprovar/Recusar**, distinto do card de permissões do agente; sem decisão a tempo (`DB_GATE_APPROVAL_TIMEOUT_SECONDS`), o cliente recebe erro em vez de travar.
+- **Dois modos, por flag** (`DB_GATE_MODE`): `shadow` (default) classifica e **audita sem bloquear nada** — os globs de `permission.bash` do agente continuam como gate de verdade enquanto esse período mede falso-positivo contra o proxy (`appaiforge compare-gate-decisions`, spike S5 do [roadmap](docs/roadmap-confinamento-do-agente.md)); `enforce` torna o proxy o gate de verdade e os globs de SQL somem do `permission.bash` (ficam só os não-SQL). Trocar para `enforce` é mudança de configuração, não de código, mas só depois de validar `shadow` em uso real.
+- **Na app gerada**: a camada `dbgate.py` (obrigatória nas guidelines) dispara um diálogo com a contagem estimada de linhas antes de executar operações confirmáveis; DDL é recusada — cinto-e-suspensório com o proxy, que já classifica a mesma statement antes dela chegar ao banco.
+- **Auditoria**: toda decisão (aprovada/recusada/bloqueada/sombra/expirada) fica na seção "Gate de destrutivas" da página do sistema, com autor, SQL, origem e data.
 - Apps geradas **antes** desta mudança migram para a camada na próxima edição pelo agente.
 
 ## Configuração (env `APPAIFORGE_*`)
@@ -154,6 +157,9 @@ Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador can
 | `DISPLAY_TIMEZONE` | America/Sao_Paulo | fuso das datas exibidas (gravadas em UTC) |
 | `INFERENCE_BROKER_ENABLED` | `false` | broker de inferência: token opaco no container + LiteLLM (ADR 0020) |
 | `LITELLM_API_KEY` / `INFERENCE_BROKER_SERVICE_TOKEN` | — | master key do LiteLLM e segredo portal↔broker (obrigatórias com o broker ligado) |
+| `DB_GATE_MODE` | `shadow` | `shadow` audita sem bloquear; `enforce` o sidecar vira o gate de verdade (ADR 0021) |
+| `DB_GATE_PROXY_SERVICE_TOKEN` | — | segredo compartilhado entre o sidecar e o portal (mesmo padrão do broker) |
+| `DB_GATE_APPROVAL_TIMEOUT_SECONDS` | 120 | prazo de uma statement confirmável pendente antes de expirar e recusar |
 | `SEED_DEMO_ADMIN` | — | `1` semeia o admin de dev quando não há usuários (nunca em produção) |
 
 Limites: CPU/memória aplicados via Docker; **quota de disco** requer storage driver com suporte a `storage-opt` (overlay2/ext4 não suporta — o container sobe sem quota e o portal registra a ressalva).

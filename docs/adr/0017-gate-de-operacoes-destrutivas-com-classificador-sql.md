@@ -1,6 +1,6 @@
 # 0017 — Gate de operações destrutivas com classificador SQL único
 
-* Status: aceito
+* Status: aceito (gatilho do agente substituído por [0021](0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md); classificador, classes e auditoria continuam)
 * Data: 2026-11-02
 * Decidida em: change `destructive-op-gate` (design D1–D5)
 * Substitui parcialmente: [0015](0015-mesma-credencial-de-producao-para-app-gerada.md) (a parte "sem gate")

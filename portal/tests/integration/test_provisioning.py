@@ -267,21 +267,33 @@ def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg):
             escaped = nova_senha.replace("'", "''")
             cur.execute(f"ALTER USER \"{live_pg['username']}\" WITH PASSWORD '{escaped}'")
 
-    connections.update_connection(
-        system, conn.id, "principal", live_pg["host"], live_pg["port"], live_pg["database"],
-        live_pg["username"], password=nova_senha,
-    )
+    try:
+        connections.update_connection(
+            system, conn.id, "principal", live_pg["host"], live_pg["port"], live_pg["database"],
+            live_pg["username"], password=nova_senha,
+        )
 
-    deadline = time.time() + 60
-    second_env = first_env
-    while time.time() < deadline and nova_senha not in second_env:
-        second_env = _wait_sidecar_env()
-        if nova_senha in second_env:
-            break
-        time.sleep(2)
-    assert nova_senha in second_env, "credencial nova não propagou ao sidecar"
-    old_credential_marker = f"{live_pg['username']}:{live_pg['password']}@"
-    assert old_credential_marker not in second_env, "credencial antiga deveria ter sumido do DSN"
+        deadline = time.time() + 60
+        second_env = first_env
+        while time.time() < deadline and nova_senha not in second_env:
+            second_env = _wait_sidecar_env()
+            if nova_senha in second_env:
+                break
+            time.sleep(2)
+        assert nova_senha in second_env, "credencial nova não propagou ao sidecar"
+        old_credential_marker = f"{live_pg['username']}:{live_pg['password']}@"
+        assert old_credential_marker not in second_env, "credencial antiga deveria ter sumido do DSN"
+    finally:
+        # `database_url` é escopo de sessão (um Postgres pra toda a suíte) —
+        # sem reverter aqui, a rotação acima deixaria a senha trocada pra
+        # qualquer outro teste que ainda use `live_pg["password"]` original.
+        with psycopg.connect(
+            host=live_pg["host"], port=live_pg["port"], dbname=live_pg["database"],
+            user=live_pg["username"], password=nova_senha, autocommit=True,
+        ) as pg_conn:
+            with pg_conn.cursor() as cur:
+                escaped = live_pg["password"].replace("'", "''")
+                cur.execute(f"ALTER USER \"{live_pg['username']}\" WITH PASSWORD '{escaped}'")
 
 
 @pytest.fixture()
