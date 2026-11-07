@@ -342,8 +342,11 @@ no env como alternativa descartada, com o motivo (granularidade por sessão invi
 **Objetivo**: o gate funciona independente de **como** a SQL foi emitida, e independente de qual
 agente está rodando. É a etapa que destrava o multi-agente.
 
-**Escopo**: proxy de wire protocol Postgres/MySQL no mesmo sidecar da etapa 3, guardando as
-credenciais reais e injetando-as. O agente recebe DSN de loopback sem senha. O `sqlgate`, o
+**Escopo**: proxy de wire protocol Postgres/MySQL num **sidecar próprio por sistema**,
+compartilhando o network namespace do container do agente (ao contrário do broker de inferência
+da etapa 3, que é compartilhado) — o DSN de loopback e o truque de porta da etapa 5 exigem o
+gate dentro do netns. O sidecar guarda as
+credenciais reais e as injeta. O agente recebe DSN de loopback sem senha. O `sqlgate`, o
 `gate.evaluate()` ([`gate.py:36`](../portal/appaiforge/gate.py)) e a UI de aprovação do chat
 ficam **intactos** — muda só o gatilho. O `reply_gate`
 ([`base.py:50`](../portal/appaiforge/harness/base.py)) **sai** do `HarnessPort`.
@@ -594,8 +597,9 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 lsm=landlock,
 
 - **Caminho crítico**: `1 → 2 → 5` (confinamento) e `1 → 3 → 4` (credenciais/gate). A 5 depende
   das duas trilhas.
-- **Paralelizável**: 3 e 4 compartilham o sidecar, mas 3 vai sozinha enquanto 4 está em sombra.
-  A 6 pode começar junto da 3 (o LiteLLM já emite spans de graça).
+- **Paralelizável**: 3 e 4 foram planejadas compartilhando um sidecar, mas a 3 terminou
+  compartilhada (sem sidecar) e a 4 ganha sidecar próprio — independentes entre si; a 4 fica em
+  sombra primeiro. A 6 pode começar junto da 3 (o LiteLLM já emite spans de graça).
 - **Primeiro marco demonstrável**: fim da etapa 3 — container sem root, confinado, e sem chave de
   LLM dentro. Três coisas que hoje são o contrário, sem ter mexido no gate.
 - **Mapa OpenSpec**: cinco changes (1, 2, 3, 4, 5+6), quatro ADRs novos a partir do 0018, duas
