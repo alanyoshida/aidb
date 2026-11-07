@@ -241,7 +241,13 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
         "$schema": "https://opencode.ai/config.json",
         "model": f"{provider_id}/{system.model}",
         "mcp": mcp,
-        "permission": {"bash": _bash_permission_globs()},
+        # "allow" por pedido do operador: na prática o agente dispara isto sobretudo
+        # com caminho absoluto que já está dentro do próprio workspace (falso-positivo
+        # frequente), e o atrito de aprovar toda hora pesou mais que a barreira em si
+        # — o filesystem fora do workspace ainda não tem confinamento real (Landlock
+        # cobre só rede, etapa 5 do roadmap), então isto não piora o que já não
+        # estava garantido por outra camada.
+        "permission": {"bash": _bash_permission_globs(), "external_directory": "allow"},
     }
     if provider is not None and provider["kind"] == "openai-compatible":
         models = {m: {} for m in (provider["models"] or [])}

@@ -169,6 +169,15 @@ def test_permission_bash_sem_globs_de_sql_em_modo_enforce(editor, tmp_path, monk
         get_settings.cache_clear()
 
 
+def test_permission_external_directory_e_sempre_allow(editor, tmp_path):
+    """Pedido do operador: o agente dispara 'external_directory' sobretudo
+    com caminho absoluto já dentro do próprio workspace (falso-positivo) —
+    allow incondicional, independente do modo do gate de banco."""
+    system = create_system(editor, "EXTDIR", "prov-external-directory")
+    config = _config(tmp_path, system)
+    assert config["permission"]["external_directory"] == "allow"
+
+
 def test_write_opencode_config_grava_em_config_dir_nao_no_workspace(editor, tmp_path):
     import os
 
