@@ -89,9 +89,14 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:
       LITELLM_MASTER_KEY: ${APPAIFORGE_LITELLM_API_KEY:-sk-aidb-dev}
+      DATABASE_URL: postgresql://appaiforge:appaiforge@postgres:5432/litellm
+      AIDB_USAGE_ENDPOINT: http://portal:8080/internal/inference/usage
+      AIDB_USAGE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
+      STORE_MODEL_IN_DB: "True"
       GENERIC_LOGGER_ENDPOINT: "http://portal:8080/internal/inference/usage?token=${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}"
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      - ./litellm/custom_callbacks.py:/app/custom_callbacks.py:ro
 
   broker:
     build:
@@ -104,6 +109,7 @@ services:
       APPAIFORGE_PORTAL_INTERNAL_URL: http://portal:8080
       APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
       APPAIFORGE_INFERENCE_BROKER_ALLOWED_HOSTS: litellm
+      APPAIFORGE_SECRET_KEY: e2e-secret
     depends_on:
       - litellm
       - portal

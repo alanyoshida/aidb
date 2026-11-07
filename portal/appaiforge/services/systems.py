@@ -104,6 +104,8 @@ def get_system_by_slug(slug: str) -> System | None:
 
 def inference_context(system_id: str) -> dict | None:
     """Contexto consultado pelo broker: versão do token, provedor/modelo e run/sessão ativos."""
+    from . import catalog
+
     with session_scope() as s:
         system = s.get(System, system_id)
         if system is None:
@@ -117,11 +119,19 @@ def inference_context(system_id: str) -> dict | None:
             .order_by(AgentRun.created_at.desc())
         ).scalars().first()
         session = s.get(ChatSession, run.chat_session_id) if run and run.chat_session_id else None
+        provider_def = catalog.get_provider(system.provider)
+        # Nome canônico do deployment no LiteLLM (mesma regra de litellm_sync).
+        litellm_model = (
+            f"{provider_def['provider_id'] or provider_def['id']}/{system.model}"
+            if provider_def
+            else system.model
+        )
         return {
             "system_id": system.id,
             "version": system.inference_token_version,
             "provider": system.provider,
             "model": system.model,
+            "litellm_model": litellm_model,
             "run_id": run.id if run else None,
             "chat_session_id": run.chat_session_id if run else None,
             "session_revoked": bool(session.inference_revoked) if session else False,

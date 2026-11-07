@@ -48,6 +48,22 @@ def outbound_headers(headers: dict[str, str], api_key: str) -> dict[str, str]:
     return out
 
 
+def apply_context(body: dict, context: dict) -> dict:
+    """Injeta metadata e reescreve o model para o nome canônico do LiteLLM.
+
+    O agente envia só o modelID; o nome que existe no LiteLLM é
+    `<provider_id>/<model>` (mesma regra de litellm_sync) — reescrever aqui
+    também impede que o agente peça um modelo fora do catálogo do sistema."""
+    meta = body.setdefault("metadata", {})
+    if isinstance(meta, dict):
+        for key in ("system_id", "run_id", "chat_session_id"):
+            if context.get(key) is not None:
+                meta.setdefault(key, context[key])
+    if context.get("litellm_model"):
+        body["model"] = context["litellm_model"]
+    return body
+
+
 def destination_allowed(url: str, allowed_hosts: str) -> bool:
     """Confere se o host de destino está na allowlist configurada."""
     host = (urlparse(url).hostname or "").lower()

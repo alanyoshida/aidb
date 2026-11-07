@@ -289,3 +289,59 @@ def test_record_usage_agregacao_apos_duas_requisicoes(owner_system):
         assert sum(r.input_tokens for r in rows) == 300
         assert sum(r.output_tokens for r in rows) == 130
         assert sum(r.cost for r in rows) == pytest.approx(0.03)
+
+
+def test_apply_context_injeta_metadata_e_reescreve_model():
+    from appaiforge.broker import apply_context
+
+    body = {"model": "deepseek/deepseek-chat", "messages": []}
+    context = {
+        "system_id": "sys1", "run_id": "run1", "chat_session_id": "chat1",
+        "litellm_model": "openrouter/deepseek/deepseek-chat",
+    }
+    out = apply_context(body, context)
+    assert out["model"] == "openrouter/deepseek/deepseek-chat"
+    assert out["metadata"] == {"system_id": "sys1", "run_id": "run1", "chat_session_id": "chat1"}
+
+
+def test_apply_context_sem_litellm_model_mantem_original():
+    from appaiforge.broker import apply_context
+
+    body = {"model": "deepseek/deepseek-chat"}
+    out = apply_context(body, {"system_id": "sys1"})
+    assert out["model"] == "deepseek/deepseek-chat"
+    assert out["metadata"]["system_id"] == "sys1"
+
+
+def test_record_usage_payload_padrao_do_litellm(owner_system):
+    """Payload no formato standard_logging_object: tokens no topo e metadata
+    da requisição em metadata.spend_logs_metadata."""
+    editor, system = owner_system
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.running, prompt="padrão litellm",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+    payload = {
+        "standard_logging_object": {
+            "id": "evt-std-1",
+            "model": "deepseek/deepseek-chat",
+            "prompt_tokens": 42,
+            "completion_tokens": 7,
+            "response_cost": 0.001,
+            "metadata": {
+                "requester_metadata": {"system_id": system.id, "run_id": run_id},
+            },
+        }
+    }
+    assert record_usage(payload) is True
+    with session_scope() as s:
+        row = s.execute(
+            select(TokenUsage).where(TokenUsage.external_id == "evt-std-1")
+        ).scalar_one()
+        assert row.input_tokens == 42 and row.output_tokens == 7
+        assert row.cost == pytest.approx(0.001)
+        assert row.run_id == run_id

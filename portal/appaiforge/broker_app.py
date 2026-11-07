@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .broker import (
+    apply_context,
     bearer_token,
     destination_allowed,
     outbound_headers,
@@ -85,12 +86,7 @@ async def _forward(request: Request, path: str, context: dict | None = None) -> 
         try:
             body = json.loads(content)
             if isinstance(body, dict):
-                meta = body.setdefault("metadata", {})
-                if isinstance(meta, dict):
-                    for key in ("system_id", "run_id", "chat_session_id"):
-                        if context.get(key) is not None:
-                            meta.setdefault(key, context[key])
-                    content = json.dumps(body).encode()
+                content = json.dumps(apply_context(body, context)).encode()
         except (ValueError, TypeError):
             pass
     client = httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0))

@@ -1,11 +1,15 @@
 # LiteLLM como backend de credencial/dialeto do broker (etapa 3, ADR 0020).
 # Os deployments são empurrados pelo portal via API administrativa; este
 # arquivo só define o master key e o callback de uso.
+#
+# O callback de uso é um plugin Python montado no container (o logger HTTP
+# genérico do LiteLLM é Enterprise): ele posta o payload padrão para o
+# endpoint interno do portal, que grava tokens/custo de forma idempotente.
 model_list: []
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
 
 litellm_settings:
-  success_callback: ["generic"]
-  failure_callback: ["generic"]
+  custom_callback_path: /app/custom_callbacks.py
+  callbacks: ["custom_callbacks.proxy_handler"]

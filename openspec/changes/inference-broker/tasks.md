@@ -29,13 +29,13 @@
 - [x] 4.1 Adicionar a flag `APPAIFORGE_INFERENCE_BROKER_ENABLED` (default false) em `config.py` e nos compose, mantendo o comportamento atual quando desligada
 - [x] 4.2 Com a flag ligada, `write_opencode_config()` passa a gravar `baseURL` do provedor apontando para o broker (por dialeto); testar que o `opencode.json` gerado contém o broker e não o provedor direto
 - [x] 4.3 Com a flag ligada, `provisioning` injeta o token opaco na env de credencial do perfil em vez da chave real, e não injeta a virtual key do LiteLLM; testar inspeção de env do container sem credencial utilizável
-- [ ] 4.4 Garantir que a reconciliação reentrega o mesmo token (versionado) e que a recriação de um sistema existente aplica o novo caminho; testar em sistema `sandboxed`
+- [x] 4.4 Garantir que a reconciliação reentrega o mesmo token (versionado) e que a recriação de um sistema existente aplica o novo caminho; testar em sistema `sandboxed`
 
 ## 5. LiteLLM e deploy
 
 - [x] 5.1 Adicionar o serviço `litellm` ao `deploy/docker-compose.yml` e ao `docker-compose.e2e.yml`, com config de provedores do catálogo e virtual key por sistema, sem porta publicada
 - [x] 5.2 Adicionar o serviço `broker` aos dois compose, na rede interna, com as envs de serviço (segredo HMAC compartilhado, master key do LiteLLM, URL do portal)
-- [ ] 5.3 Configurar o callback de uso do LiteLLM apontando para o portal e validar a chamada fim a fim em ambiente local
+- [x] 5.3 Configurar o callback de uso do LiteLLM apontando para o portal e validar a chamada fim a fim em ambiente local
 
 ## 6. Uso de tokens normalizado
 
@@ -44,10 +44,10 @@
 
 ## 7. Testes de aceitação
 
-- [ ] 7.1 Teste de integração: container de sistema não expõe chave utilizável em `docker exec <sys> env` (apenas o token) e o agente ainda completa uma execução
-- [ ] 7.2 Teste de integração: revogar um sistema derruba só aquele sistema; revogar uma sessão derruba só aquela sessão
-- [ ] 7.3 Teste de integração: streaming e cancelamento atravessam o broker sem buffering, com abort efetivo no upstream
-- [ ] 7.4 Ajustar/estender os testes E2E do stack dedicado (8081) para o novo caminho com harness fake, sem apontar para o ambiente real
+- [x] 7.1 Teste de integração: container de sistema não expõe chave utilizável em `docker exec <sys> env` (apenas o token) e o agente ainda completa uma execução
+- [x] 7.2 Teste de integração: revogar um sistema derruba só aquele sistema; revogar uma sessão derruba só aquela sessão
+- [x] 7.3 Teste de integração: streaming e cancelamento atravessam o broker sem buffering, com abort efetivo no upstream
+- [x] 7.4 Ajustar/estender os testes E2E do stack dedicado (8081) para o novo caminho com harness fake, sem apontar para o ambiente real
 
 ## 8. Documentação e decisão
 

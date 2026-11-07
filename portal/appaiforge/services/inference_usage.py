@@ -20,21 +20,35 @@ def _as_int(value) -> int:
 
 
 def _extract(payload: dict) -> dict | None:
+    """Extrai o uso do payload do LiteLLM (standard_logging_object ou cru).
+
+    O objeto padrão traz tokens no topo (`prompt_tokens`/`completion_tokens`)
+    e o metadata da requisição em `metadata.requester_metadata` (ou
+    `spend_logs_metadata`); formatos crus continuam aceitos.
+    """
     std = payload.get("standard_logging_object") or payload
-    metadata = std.get("metadata") or payload.get("metadata") or {}
+    metadata = std.get("metadata") or {}
+    # O metadata da requisição chega em requester_metadata (via corpo) ou em
+    # spend_logs_metadata, dependendo da rota/integração do LiteLLM.
+    custom = metadata.get("requester_metadata") or metadata.get("spend_logs_metadata") or {}
     external_id = (
         std.get("id") or payload.get("id")
         or std.get("litellm_call_id") or payload.get("litellm_call_id")
     )
-    run_id = metadata.get("run_id")
-    system_id = metadata.get("system_id")
+    run_id = custom.get("run_id") or metadata.get("run_id")
+    system_id = custom.get("system_id") or metadata.get("system_id")
     if not external_id or not run_id or not system_id:
         return None
-    usage = std.get("usage") or payload.get("usage") or {}
-    input_tokens = _as_int(usage.get("prompt_tokens", usage.get("input_tokens")))
-    output_tokens = _as_int(usage.get("completion_tokens", usage.get("output_tokens")))
+    usage = std.get("usage") or {}
+    input_tokens = _as_int(std.get("prompt_tokens", usage.get("prompt_tokens")))
+    output_tokens = _as_int(std.get("completion_tokens", usage.get("completion_tokens")))
     model = std.get("model") or payload.get("model") or ""
-    provider = std.get("custom_llm_provider") or metadata.get("provider") or ""
+    provider = (
+        std.get("custom_llm_provider")
+        or custom.get("provider")
+        or metadata.get("custom_llm_provider")
+        or ""
+    )
     try:
         cost = float(std.get("response_cost") or payload.get("response_cost") or 0.0)
     except (TypeError, ValueError):

@@ -128,6 +128,19 @@ Medido com um proxy de streaming (leitura incremental do chunked do upstream, re
 - Ao fechar o cliente no meio do stream, a desconexão propagou ao upstream imediatamente (abort efetivo).
 - Implicação para o broker: usar leitura em streaming e repassar chunk a chunk; ao cancelar, fechar a conexão upstream e não tentar ler o resto.
 
+## Verificação real (etapa 3, 2026-11-07 — stack isolada 8081, OpenRouter/deepseek)
+
+Geração real completa através de opencode → broker → LiteLLM → OpenRouter, com app gerada e executada. Achados que a implementação exigiu corrigir no caminho:
+
+1. **LiteLLM exige banco próprio para a API administrativa** (`/model/new` sem DB falha) e `STORE_MODEL_IN_DB=True`: adicionado `DATABASE_URL` (database `litellm` no mesmo Postgres) e a env aos compose.
+2. **O broker precisa do mesmo `SECRET_KEY` do portal** — é a chave mestra do HMAC do token. Sem compartilhar, todo token dá 401 (compose corrigido nos dois stacks).
+3. **O agente envia só o modelID** (`deepseek/deepseek-chat`); o nome registrado no LiteLLM é `<provider_id>/<model>`. O broker passou a **reescrever o `model`** para o nome canônico vindo do contexto do portal (`apply_context`) — de quebra, impede que o agente peça modelo fora do catálogo.
+4. **O logger HTTP genérico do LiteLLM é Enterprise** (e o nome correto seria `generic_api`): substituído por um **callback customizado em Python** montado no container (`deploy/litellm/custom_callbacks.py` via `custom_callback_path`), que posta o `standard_logging_object` para o portal. O metadata da requisição chega em `metadata.requester_metadata` (não em `spend_logs_metadata`).
+5. **Tokens de serviço precisam viver em `deploy/.env`**: a interpolação do compose não enxerga overrides de serviço, e o token na URL do callback/interpolação voltava ao fallback (causa silenciosa de 401).
+6. Observação operacional: revogação disparada de um processo transitório (CLI) perde o reprovision assíncrono — o thread daemon morre com o processo. Pela UI (processo do portal) funciona; reconciliação cobre o resto.
+
+Resultados: `docker exec <sys> env` só com token opaco (zero `sk-or-`); execução real concluída; revogação por sistema (token antigo 401, novo 409 sem run, container recriado com o token da nova versão); revogação de sessão (403 com a run ativa, demais sessões do mesmo sistema intactas); interrupção propagada ao broker (`/internal/cancel` 200, run interrompida); reprovision reentrega o token idêntico; uso/custo registrado fim a fim (8.620 in / 491 out, US$ 0,0032, id idempotente); suíte E2E (8081) com flag ligada: 19/23 verdes, 2 falhas de contenção do suite (passam isolados) e 1 falha pré-existente do diálogo BigQuery (bisect prova que já falhava em `47af312`, fora do escopo).
+
 ## Open Questions
 
 - Definir a retenção/limpeza do mapeamento de sessão revogada (sem impacto nas specs) — pode ficar para a implementação.
