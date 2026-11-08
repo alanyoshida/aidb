@@ -100,12 +100,13 @@ class Settings(BaseSettings):
     # decisão antes do pedido confirmável expirar.
     db_gate_proxy_service_token: str = ""
     db_gate_approval_timeout_seconds: int = 120
-    # "shadow" (default, task 6.1): o proxy classifica e audita mas deixa
-    # tudo executar — os globs de permission.bash e o reply_gate do harness
-    # continuam sendo o gate de verdade, enquanto o spike S5 (task 6.2)
-    # compara os dois. "enforce": o proxy passa a aplicar a decisão
-    # (etapa 7, depois do S5 mostrar falso-positivo aceitável).
-    db_gate_mode: str = "shadow"
+    # "enforce" (default desde a task 7.3, por pedido do operador): o proxy
+    # aplica a decisão de verdade — bloqueada nunca chega ao banco,
+    # confirmável segura e espera aprovação no chat. "shadow" (task 6.1):
+    # classifica e audita sem segurar nada, pra comparar com os globs de
+    # permission.bash antes de confiar no proxy (spike S5, task 6.2) —
+    # ainda disponível por flag pra quem quiser esse período de observação.
+    db_gate_mode: str = "enforce"
 
     session_ttl_days: int = 7
     identity_token_ttl_seconds: int = 60

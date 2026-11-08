@@ -187,7 +187,28 @@ def record_shadow_decision(
         system_id, sql, origin=origin, connection_name=connection_name,
         classification=gate_class, decision=decision, run_id=run_id,
     )
+    if enforced and run_id:
+        _notify_chat_blocked(run_id, sql)
     return gate_class
+
+
+def _notify_chat_blocked(run_id: str, sql: str) -> None:
+    """Pedido do operador (task 7.3, enforce): um bloqueio de DDL no proxy
+    (data plane) não tinha nenhuma visibilidade no chat, só na auditoria
+    silenciosa — diferente do confirmável em enforce, que já segura e mostra
+    o card próprio de aprovação (task 4.2). Reaproveita o mesmo RunEvent
+    `gate_denied` do caminho antigo (control plane) para o mesmo tratamento
+    visual (card vermelho, ícone de bloqueio) e a query bloqueada à mostra.
+
+    Melhor esforço: se a run já tiver terminado e o buffer já foi
+    descartado, a auditoria em `GateDecision` continua sendo o registro
+    (visível na aba Auditoria) — só a notificação ao vivo no chat se perde."""
+    from .agent_queue import get_queue
+    from .harness.base import RunEvent
+
+    buffer = get_queue().buffers.get(run_id)
+    if buffer is not None:
+        buffer.push(RunEvent("gate_denied", text=f"bloqueada pelo proxy de banco: {sql}"))
 
 
 def _serialize_request(row: GateRequest) -> dict:

@@ -287,6 +287,69 @@ def test_record_shadow_decision_reclassifica_no_servidor_nao_confia_no_chamador(
     assert history[0]["decision"] == "sombra"
 
 
+def test_record_shadow_decision_enforced_notifica_o_chat_da_run_ativa(gate_system):
+    """Pedido do operador (task 7.3): bloqueio de DDL em enforce precisa
+    aparecer no chat, não só na auditoria silenciosa — reaproveita o
+    RunEvent `gate_denied` do caminho antigo, com a query bloqueada no
+    texto."""
+    from appaiforge.agent_queue import RunBuffer, get_queue
+
+    editor = auth.create_user("notif-run@t.local", "pw", UserType.editor.value)
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=gate_system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.running, prompt="p",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+
+    buffer = RunBuffer()
+    get_queue().buffers[run_id] = buffer
+    try:
+        gate.record_shadow_decision(gate_system.id, "DROP TABLE clientes", origin="agente", enforced=True)
+        eventos = buffer.snapshot()
+        assert len(eventos) == 1
+        assert eventos[0].kind == "gate_denied"
+        assert "DROP TABLE clientes" in eventos[0].text
+    finally:
+        get_queue().buffers.pop(run_id, None)
+
+
+def test_record_shadow_decision_sombra_nao_notifica_o_chat(gate_system):
+    """Sombra nunca segura nem bloqueia de verdade — nada a avisar no chat,
+    só a auditoria silenciosa de sempre."""
+    from appaiforge.agent_queue import RunBuffer, get_queue
+
+    editor = auth.create_user("notif-sombra@t.local", "pw", UserType.editor.value)
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=gate_system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.running, prompt="p",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+
+    buffer = RunBuffer()
+    get_queue().buffers[run_id] = buffer
+    try:
+        gate.record_shadow_decision(gate_system.id, "DROP TABLE clientes", origin="agente", enforced=False)
+        assert buffer.snapshot() == []
+    finally:
+        get_queue().buffers.pop(run_id, None)
+
+
+def test_record_shadow_decision_enforced_sem_buffer_nao_quebra(gate_system):
+    """Melhor esforço: se a run já terminou e o buffer já foi descartado
+    (ou nunca existiu, origem "app"), não há o que notificar ao vivo — só
+    não pode derrubar a chamada; a auditoria em GateDecision já aconteceu
+    de qualquer forma."""
+    gate.record_shadow_decision(gate_system.id, "DROP TABLE clientes", origin="app", enforced=True)
+    history = gate.list_decisions(gate_system.id)
+    assert history[0]["decision"] == "bloqueada"
+
+
 def test_record_shadow_decision_associa_ao_run_ativo_so_para_origem_agente(gate_system):
     editor = auth.create_user("sombra-run@t.local", "pw", UserType.editor.value)
     with session_scope() as s:

@@ -276,12 +276,17 @@ def test_confirmavel_em_enforce_aguarda_aprovacao_e_executa_so_depois(system, db
     assert any(d["sql"] == "DELETE FROM clientes" and d["decision"] == "aprovada" for d in decisions)
 
 
-def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg):
-    """Task 8.2: modo sombra (default) não segura nem bloqueia nada — só
-    audita o que teria acontecido em cada classificação."""
+def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, monkeypatch):
+    """Task 8.2: modo sombra não segura nem bloqueia nada — só audita o que
+    teria acontecido em cada classificação. Shadow não é mais o default da
+    plataforma (task 7.3) — monkeypatch explícito aqui."""
+    from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
     from appaiforge.provisioning import provision_system
     from appaiforge.services import connections
+
+    monkeypatch.setenv("APPAIFORGE_DB_GATE_MODE", "shadow")
+    get_settings.cache_clear()
 
     _setup_clientes_table(live_pg)
     provision_system(system)

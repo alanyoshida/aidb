@@ -145,15 +145,21 @@ def test_mcp_usa_dsn_de_loopback_sem_credencial_quando_ha_manifesto(editor, tmp_
 
 # ---------- permission.bash: globs de SQL (task 7.1) ----------
 
-def test_permission_bash_tem_globs_de_sql_em_modo_shadow(editor, tmp_path):
-    """Default (shadow): os globs continuam — cinto-e-suspensório enquanto
-    o proxy no data plane não foi validado em uso real (D5)."""
-    system = create_system(editor, "SHDW", "prov-shadow-globs")
-    config = _config(tmp_path, system)
-    bash_perm = config["permission"]["bash"]
-    assert bash_perm["*DELETE FROM*"] == "ask"
-    assert bash_perm["*DROP TABLE*"] == "ask"
-    assert bash_perm["*"] == "allow"
+def test_permission_bash_tem_globs_de_sql_em_modo_shadow(editor, tmp_path, monkeypatch):
+    """Em sombra, os globs continuam — cinto-e-suspensório enquanto o proxy
+    no data plane não foi validado em uso real (D5). Shadow não é mais o
+    default da plataforma (task 7.3) — monkeypatch explícito aqui."""
+    monkeypatch.setenv("APPAIFORGE_DB_GATE_MODE", "shadow")
+    get_settings.cache_clear()
+    try:
+        system = create_system(editor, "SHDW", "prov-shadow-globs")
+        config = _config(tmp_path, system)
+        bash_perm = config["permission"]["bash"]
+        assert bash_perm["*DELETE FROM*"] == "ask"
+        assert bash_perm["*DROP TABLE*"] == "ask"
+        assert bash_perm["*"] == "allow"
+    finally:
+        get_settings.cache_clear()
 
 
 def test_permission_bash_sem_globs_de_sql_em_modo_enforce(editor, tmp_path, monkeypatch):
@@ -167,6 +173,16 @@ def test_permission_bash_sem_globs_de_sql_em_modo_enforce(editor, tmp_path, monk
         assert config["permission"]["bash"] == {"*": "allow"}
     finally:
         get_settings.cache_clear()
+
+
+def test_permission_bash_e_enforce_por_padrao_sem_env(editor, tmp_path):
+    """Task 7.3: enforce virou o default da plataforma — sem nenhuma env
+    var setada, um sistema novo já nasce sem os globs de SQL no
+    permission.bash (o proxy no data plane é o único gate de verdade)."""
+    assert get_settings().db_gate_mode == "enforce"
+    system = create_system(editor, "DFLT", "prov-enforce-padrao")
+    config = _config(tmp_path, system)
+    assert config["permission"]["bash"] == {"*": "allow"}
 
 
 def test_permission_external_directory_e_sempre_allow(editor, tmp_path):
