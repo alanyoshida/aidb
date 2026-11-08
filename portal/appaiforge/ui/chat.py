@@ -176,8 +176,7 @@ def render_chat(system: System, user: User) -> None:
     active_session: dict = {"id": None, "blocked": False}  # ChatSession.id e se o contexto foi reiniciado
     rename_state: dict = {"editing": False}
 
-    with ui.expansion("Sessões", icon="chat").classes("w-full"):
-        sessions_col = ui.column().classes("w-full gap-1")
+    with ui.row().classes("w-full items-center justify-start"):
         ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
             "flat dense data-testid=chat-new-session"
         ).classes("text-xs")
@@ -185,7 +184,9 @@ def render_chat(system: System, user: User) -> None:
     session_title_row = ui.row().classes("w-full items-center gap-1")
     with session_title_row:
         session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
-        rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props("flat dense round")
+        rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props("flat dense round").tooltip(
+            "Renomear esta sessão"
+        )
     rename_row = ui.row().classes("w-full items-center gap-1")
     rename_row.set_visibility(False)
     with rename_row:
@@ -224,6 +225,9 @@ def render_chat(system: System, user: User) -> None:
             'color=negative flat round data-testid=chat-interrupt aria-label="Interromper"'
         ).tooltip("Interromper")
         interrupt_btn.set_visibility(False)
+
+    with ui.expansion("Sessões", icon="chat").classes("w-full"):
+        sessions_col = ui.column().classes("w-full gap-1")
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
