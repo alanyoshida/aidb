@@ -199,3 +199,69 @@ def test_chat_debug_mostra_comandos(page, suffix):
     page.locator('[data-testid=chat-send]').click()
     page.get_by_text("agente livre").wait_for(timeout=30_000)
     page.get_by_text("comando:").first.wait_for(state="visible", timeout=30_000)
+
+
+def test_sessao_com_contexto_reiniciado_fica_bloqueada(page, suffix):
+    """Trocar pra uma sessão cujo contexto foi reiniciado (container
+    recriado — ex.: cadastro de conexão, troca de provedor) bloqueia o
+    envio de mensagem em vez de deixar o campo aberto com um contexto que
+    na verdade já foi descartado (achado real do operador: a sessão
+    parecia "continuar" mas o agente começava do zero). O botão "Nova
+    sessão" continua disponível e reabre o chat normalmente."""
+    import time
+
+    editor_email = f"ctxreset-editor-{suffix}@e2e.local"
+    slug = f"ctxreset-{suffix}"
+    _create_editor(page, editor_email)
+    _login(page, editor_email, "pw-editor")
+    page.get_by_role("button", name="Novo sistema").click()
+    page.locator('[data-testid=system-name]').fill("Sistema Reset de Contexto")
+    page.locator('[data-testid=system-slug]').fill(slug)
+    page.locator('[data-testid=create-system]').click()
+    _wait_system_active(page)
+
+    # primeira mensagem cria a sessão implicitamente; o campo de envio
+    # começa habilitado (sem sessão ativa ainda não há nada pra bloquear)
+    assert not page.locator('[data-testid=chat-input]').is_disabled()
+    session_title = "sessão antes do reset de contexto"
+    page.locator('[data-testid=chat-input]').fill(session_title)
+    page.locator('[data-testid=chat-send]').click()
+    page.get_by_text("agente livre").wait_for(timeout=30_000)
+
+    # cadastrar uma conexão recria o container do sistema por baixo, o que
+    # invalida (context_reset) todas as sessões abertas dele
+    page.get_by_role("tab", name="Conexões").click()
+    page.get_by_role("button", name="Nova conexão").click()
+    page.locator('[data-testid=conn-name]').wait_for(state="visible", timeout=30_000)
+    page.locator('[data-testid=conn-name]').fill("vendas")
+    page.locator('[data-testid=conn-host]').fill("postgres")
+    page.locator('[data-testid=conn-port]').fill("5432")
+    page.locator('[data-testid=conn-database]').fill("appaiforge2")
+    page.locator('[data-testid=conn-user]').fill("appaiforge")
+    page.locator('[data-testid=conn-password]').fill("appaiforge")
+    page.locator('[data-testid=save-connection]').click()
+    page.get_by_text("conexão cadastrada").wait_for(timeout=20_000)
+
+    # recarrega a página e reabre a sessão: a recriação do container roda
+    # numa thread em segundo plano (recria o container principal e os dois
+    # sidecars), então tenta de novo por até 120s
+    deadline = time.time() + 120
+    blocked_visible = False
+    while time.time() < deadline:
+        page.reload()
+        page.get_by_role("tab", name="Chat").click()
+        page.get_by_text("Sessões").click()
+        page.get_by_text(session_title, exact=True).click()
+        if page.get_by_text("Contexto do agente foi reiniciado").is_visible():
+            blocked_visible = True
+            break
+        page.wait_for_timeout(1000)
+    assert blocked_visible, "sessão não ficou bloqueada após recriação do container em 120s"
+    assert page.locator('[data-testid=chat-input]').is_disabled()
+    assert page.locator('[data-testid=chat-send]').is_disabled()
+
+    # "Nova sessão" sempre disponível, independente do bloqueio — reabre o chat
+    page.locator('[data-testid=chat-new-session]').click()
+    page.get_by_text("Contexto do agente foi reiniciado").wait_for(state="hidden", timeout=10_000)
+    assert not page.locator('[data-testid=chat-input]').is_disabled()
+    assert not page.locator('[data-testid=chat-send]').is_disabled()

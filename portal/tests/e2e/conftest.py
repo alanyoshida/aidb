@@ -35,6 +35,7 @@ DELETE FROM token_usage WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM chat_sessions WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM db_connections WHERE system_id IN (SELECT id FROM _e2e_systems);
+DELETE FROM allowed_domains WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM system_groups WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM group_members WHERE user_id IN (SELECT id FROM _e2e_users);
 DELETE FROM sessions WHERE user_id IN (SELECT id FROM _e2e_users);

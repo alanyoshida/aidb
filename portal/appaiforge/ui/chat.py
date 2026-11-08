@@ -173,7 +173,7 @@ def render_chat(system: System, user: User) -> None:
         return
 
     # --- painel de sessões ---------------------------------------------------
-    active_session: dict = {"id": None}  # ChatSession.id da sessão ativa
+    active_session: dict = {"id": None, "blocked": False}  # ChatSession.id e se o contexto foi reiniciado
     rename_state: dict = {"editing": False}
 
     with ui.expansion("Sessões", icon="chat").classes("w-full"):
@@ -209,6 +209,13 @@ def render_chat(system: System, user: User) -> None:
             state_dot.classes(remove="ap-dot--busy")
     debug = {"on": False}
     debug_switch = ui.switch("Debug (mostrar comandos e arquivos alterados)").props("data-testid=chat-debug")
+    blocked_row = ui.row().classes("w-full items-center justify-center gap-1")
+    blocked_row.set_visibility(False)
+    with blocked_row:
+        ui.icon("refresh").classes("text-sm text-amber-600")
+        ui.label("Contexto do agente foi reiniciado nesta sessão — crie uma nova sessão para continuar.").classes(
+            "text-xs text-amber-600"
+        )
     input_row = ui.row().classes("w-full items-center")
     with input_row:
         prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props("data-testid=chat-input borderless")
@@ -220,6 +227,16 @@ def render_chat(system: System, user: User) -> None:
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
+
+    def _update_input_blocked() -> None:
+        blocked = active_session["blocked"]
+        blocked_row.set_visibility(blocked)
+        if blocked:
+            prompt.disable()
+            send_btn.disable()
+        else:
+            prompt.enable()
+            send_btn.enable()
 
     # -------------------------------------------------------------------------
     # Helpers de sessão
@@ -292,6 +309,11 @@ def render_chat(system: System, user: User) -> None:
             cs = s.get(ChatSession, sess_id)
             title = cs.title if cs else ""
             session_title_label.set_text(title or "sessão sem título")
+            # context_reset: container foi recriado (edição de conexão, provedor,
+            # etc.) desde a última mensagem desta sessão — harness_session_id
+            # já foi descartado, então reaproveitar daria um contexto vazio sem
+            # avisar. Bloqueia o envio até o usuário criar uma sessão nova.
+            active_session["blocked"] = bool(cs.context_reset) if cs else False
 
             # Carrega histórico de runs da sessão
             runs = s.execute(
@@ -307,6 +329,7 @@ def render_chat(system: System, user: User) -> None:
                                 sent=True, avatar=_AVATAR_USER)
                 _load_run_events(run_id)
 
+        _update_input_blocked()
         _load_sessions()
 
     def _new_session() -> None:
@@ -352,6 +375,8 @@ def render_chat(system: System, user: User) -> None:
     # -------------------------------------------------------------------------
 
     def do_send() -> None:
+        if active_session["blocked"]:
+            return
         text = (prompt.value or "").strip()
         if not text:
             return
