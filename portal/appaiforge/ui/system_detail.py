@@ -106,7 +106,11 @@ def register() -> None:
             with ui.tab_panel(chat_tab):
                 from .chat import render_chat
 
-                render_chat(system, user)
+                # sessão gravada na URL por _switch_session (ver chat.py) — sobrevive
+                # ao reload que trocar de tema força, que senão sempre derrubava a
+                # sessão ativa no meio de uma conversa (achado do critique)
+                initial_session_id = ui.context.client.request.query_params.get("session")
+                render_chat(system, user, initial_session_id)
             with ui.tab_panel(editor_tab):
                 _render_editor(system, user)
             with ui.tab_panel(conn_tab):

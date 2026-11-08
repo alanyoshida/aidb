@@ -334,6 +334,24 @@ CHAT_CSS: Final[str] = """
   background: var(--ch-chat-bg) !important; }
 .af-chat-scroll { border: 1px solid var(--ap-border) !important; border-radius: 14px !important; }
 
+/* Mesma causa do bug de truncamento da sidebar (ver .af-chat-sidebar abaixo):
+   o `.q-scrollarea__content` do log cresce pra caber o conteúdo (é assim que
+   a QScrollArea sabe que precisa rolar) — sem travar a largura em 100%, uma
+   bolha de mensagem um pouco mais longa empurrava o conteúdo da área de
+   scroll pra mais largo que a viewport, cortando a mensagem fora da tela em
+   vez de quebrar linha (achado ao vivo, mais grave no mobile: bolha e
+   resultado de comando ficavam ilegíveis sem rolar na horizontal). O Quasar
+   já tem `word-break: break-word` em `.q-message-text`, então só faltava a
+   largura disponível ser real. */
+.af-chat-scroll .q-scrollarea__content { max-width: 100%; }
+
+/* Bloco ```código``` dentro de uma resposta markdown (ex.: saída de um
+   comando): `<pre>` tem `white-space: pre` por padrão — não quebra linha,
+   então ainda estourava a bolha mesmo com o fix acima. Rolagem própria,
+   contida no bloco (comportamento esperado pra código), em vez de crescer e
+   levar a bolha/página inteira junto. */
+.q-message-text pre { max-width: 100%; overflow-x: auto; }
+
 /* Sem as "setas" padrão do Quasar: o visual é de cartão. */
 .q-message-text::before, .q-message-text::after { display: none !important; }
 

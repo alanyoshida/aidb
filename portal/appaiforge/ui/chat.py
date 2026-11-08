@@ -168,7 +168,7 @@ _DEBUG_KINDS = {"command_run", "file_edited"}
 _DEBUG_CSS = ".af-hide-debug .af-debug { display: none !important; }"
 
 
-def render_chat(system: System, user: User) -> None:
+def render_chat(system: System, user: User, initial_session_id: str | None = None) -> None:
     queue = get_queue()
     ui.add_css(_DEBUG_CSS)
     _AVATAR_USER, _AVATAR_AGENT = _avatars(user)
@@ -308,6 +308,34 @@ def render_chat(system: System, user: User) -> None:
             prompt.enable()
             send_btn.enable()
 
+    # Confirmação antes de revogar: o ícone fica na lista de sessões, a
+    # poucos pixels do botão que o operador clica o tempo todo pra trocar de
+    # sessão, e a ação era irreversível sem nenhuma pausa (achado do
+    # critique). Um diálogo só, reaproveitado por todas as linhas — mesmo
+    # padrão já usado pro revogar em nível de sistema (system_detail.py).
+    revoke_target: dict = {"id": None}
+    with ui.dialog() as revoke_dialog, ui.card().classes("w-96"):
+        ui.label("Revogar inferência desta sessão").classes("font-semibold text-lg")
+        ui.label(
+            "O agente deixa de poder chamar o provedor de LLM nesta sessão. "
+            "Não tem como desfazer — pra voltar a conversar, crie uma sessão nova."
+        ).classes("text-sm text-gray-600")
+
+        def _confirm_revoke() -> None:
+            if revoke_target["id"] is not None:
+                _revoke_session_inference(revoke_target["id"])
+            revoke_dialog.close()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=revoke_dialog.close).props("flat")
+            ui.button("Revogar", on_click=_confirm_revoke).props(
+                "color=negative data-testid=confirm-revoke-inference"
+            )
+
+    def _open_revoke_dialog(sess_id: str) -> None:
+        revoke_target["id"] = sess_id
+        revoke_dialog.open()
+
     # -------------------------------------------------------------------------
     # Helpers de sessão
     # -------------------------------------------------------------------------
@@ -377,7 +405,7 @@ def render_chat(system: System, user: User) -> None:
                     else:
                         ui.button(
                             icon="do_not_disturb_on",
-                            on_click=lambda sid=sess_id: _revoke_session_inference(sid),
+                            on_click=lambda sid=sess_id: _open_revoke_dialog(sid),
                         ).props(
                             'flat dense round size=sm aria-label="Revogar inferência desta sessão"'
                         ).tooltip("Revogar inferência desta sessão")
@@ -406,6 +434,12 @@ def render_chat(system: System, user: User) -> None:
         if active_session["id"] == sess_id:
             return
         active_session["id"] = sess_id
+        # grava na URL (sem navegar) pra sobreviver ao reload que a troca de
+        # tema força (precisa ser reload de verdade pros tokens do tema
+        # saírem certos já no head — ver common.py). Sem isto, trocar de tema
+        # no meio de uma conversa sempre derrubava a sessão ativa (achado do
+        # critique). json.dumps escapa o id pra uso seguro dentro da JS string.
+        ui.run_javascript(f"history.replaceState(null, '', '?session=' + {json.dumps(sess_id)})")
         current_run["id"] = None
         current_run["shown"] = 0
         log_box.clear()
@@ -632,9 +666,22 @@ def render_chat(system: System, user: User) -> None:
         else:
             text = event.text or event.kind
 
+        if event.kind in _DEBUG_KINDS:
+            # Linha de log compacta, sem avatar/nome/bolha: a versão anterior
+            # usava o mesmo ui.chat_message de uma resposta real do agente —
+            # mesmo avatar "AI", mesmo peso visual — e um "ls -la" acabava
+            # competindo com as respostas de verdade pela mesma leitura
+            # (achado do critique). Ícone + texto monoespaçado, mesmo
+            # tratamento discreto já usado pros eventos de status acima.
+            with box, ui.row().classes("w-full items-center gap-1 af-debug"):
+                icon = _EVENT_ICON.get(event.kind)
+                if icon:
+                    ui.icon(icon).classes("text-xs text-gray-400")
+                ui.label(text).classes("text-xs text-gray-400 font-mono")
+            return
+
         with box:
-            row_classes = "w-full items-center gap-1" + (" af-debug" if event.kind in _DEBUG_KINDS else "")
-            with ui.row().classes(row_classes):
+            with ui.row().classes("w-full items-center gap-1"):
                 icon = _EVENT_ICON.get(event.kind)
                 if icon:
                     ui.icon(icon).classes("text-gray-500")
@@ -762,5 +809,17 @@ def render_chat(system: System, user: User) -> None:
     debug_switch.on_value_change(on_debug_change)
 
     _load_sessions()
+    if initial_session_id:
+        # restaura a sessão gravada na URL por _switch_session (ver ali) —
+        # confirma que é mesmo uma sessão deste sistema e deste usuário antes
+        # de restaurar, já que vem de um parâmetro de URL, não de um clique
+        # numa lista já filtrada.
+        from ..db import session_scope as _session_scope
+
+        with _session_scope() as s:
+            cs = s.get(ChatSession, initial_session_id)
+            owned = cs is not None and cs.system_id == system.id and cs.user_id == user.id
+        if owned:
+            _switch_session(initial_session_id)
     ui.timer(2.0, _load_sessions)
     ui.timer(0.5, refresh_state)
