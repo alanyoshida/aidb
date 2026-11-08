@@ -22,15 +22,19 @@ O portal SHALL classificar statements SQL com parser estrutural (sqlglot) em tr�
 - **THEN** a classificação é `bloqueada`, independentemente de comentários, CTEs ou caixa alta/baixa
 
 ### Requirement: Gate do agente sobre SQL destrutivo
-O portal SHALL interceptar os pedidos de permissão do harness do agente relacionados a execução de SQL (comandos de banco via bash e ferramentas MCP de escrita), classificar com o classificador canônico e responder automaticamente: `bloqueada` SHALL ser recusada sem intervenção; `confirmável` SHALL aguardar decisão do editor; `normal` SHALL ser liberada sem atrito.
+O portal SHALL interceptar toda conexão a um banco cadastrado no data plane (proxy de wire protocol no caminho da conexão), classificar cada statement com o classificador canônico e responder automaticamente: `bloqueada` e `confirmável` SHALL ser recusadas sem intervenção humana, na hora, sem segurar a conexão; `normal` SHALL ser liberada sem atrito — independente de como a SQL foi emitida e do protocolo de permissão do agente. Quando houver uma run ativa do agente, a recusa de `bloqueada` ou `confirmável` SHALL aparecer no chat com a statement e o motivo.
 
 #### Scenario: Agente pede TRUNCATE e é recusado automaticamente
-- **WHEN** o agente tenta executar `TRUNCATE TABLE clientes` via bash ou MCP
-- **THEN** o portal recusa o pedido do harness, o agente é informado da recusa e a operação não executa
+- **WHEN** uma conexão do container do sistema emite `TRUNCATE TABLE clientes`, por qualquer cliente (bash, MCP, script ou app)
+- **THEN** o proxy recusa a statement, o cliente recebe um erro de protocolo e a operação não executa
 
 #### Scenario: Agente pede DELETE em massa e o editor decide
-- **WHEN** o agente tenta executar `DELETE FROM clientes WHERE cidade = 'São Paulo'` (sem escopo de linha)
-- **THEN** o chat exibe o SQL e botões aprovar/recusar, a execução aguarda a decisão, e apenas após aprovação o harness prossegue
+- **WHEN** o agente executa `DELETE FROM clientes WHERE cidade = 'São Paulo'` (sem escopo de linha) por qualquer caminho de conexão
+- **THEN** o proxy recusa a statement na hora (mesmo tratamento de uma DDL), o cliente recebe um erro de protocolo, a operação não executa, e o chat mostra a recusa com a statement e o motivo — ninguém decide por ela (revisão ADR 0023: nenhum editor aprova ou recusa mais este caso)
+
+#### Scenario: SQL escondido em arquivo não contorna o gate
+- **WHEN** o agente grava um arquivo `.sql` com uma statement destrutiva e a executa com `psql -f arquivo.sql`
+- **THEN** o proxy classifica e aplica a decisão do gate da mesma forma que classificaria a statement digitada diretamente
 
 ### Requirement: Aprovação no chat com registro
 O portal SHALL exibir no chat os pedidos de operação `confirmável` vindos do agente — com o SQL e a conexão de destino — e SHALL permitir que o próprio editor que conduz a sessão aprove ou recuse; cada decisão SHALL ser registrada com autor, SQL, conexão, decisão e timestamp.
