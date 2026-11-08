@@ -213,12 +213,21 @@ def render_chat(system: System, user: User) -> None:
                 rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props(
                     'flat dense round aria-label="Renomear esta sessão"'
                 ).tooltip("Renomear esta sessão")
+            # Botões de ícone (check/×) em vez de texto "OK"/"×": o "×" cru não
+            # tinha aria-label nenhum (achado do critique — único ícone sem
+            # nome acessível nesta tela) e os botões de texto, largos, ficavam
+            # visualmente soltos na ponta do campo. Mesmo padrão já usado no
+            # par Aprovar/Recusar do gate.
             rename_row = ui.row().classes("w-full items-center gap-1")
             rename_row.set_visibility(False)
             with rename_row:
                 rename_input = ui.input("Novo título").classes("grow")
-                ui.button("OK", on_click=lambda: _confirm_rename()).props("flat dense")
-                ui.button("×", on_click=lambda: _cancel_rename()).props("flat dense")
+                ui.button(icon="check", on_click=lambda: _confirm_rename()).props(
+                    'flat dense round aria-label="Confirmar novo título"'
+                ).tooltip("Confirmar novo título")
+                ui.button(icon="close", on_click=lambda: _cancel_rename()).props(
+                    'flat dense round aria-label="Cancelar renomear"'
+                ).tooltip("Cancelar renomear")
 
             # --- log do chat ---------------------------------------------------
             with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
@@ -270,6 +279,14 @@ def render_chat(system: System, user: User) -> None:
         if empty_hint["el"] is not None:
             empty_hint["el"].delete()
             empty_hint["el"] = None
+
+    def _show_empty_hint(text: str) -> None:
+        with ui.column().classes("w-full items-center justify-center gap-1").style(
+            "padding: 32px 16px"
+        ) as hint:
+            ui.icon("chat_bubble_outline").classes("text-2xl text-gray-400")
+            ui.label(text).classes("text-xs text-gray-400")
+        empty_hint["el"] = hint
 
     def _toggle_sidebar() -> None:
         # só tem efeito visual abaixo de 700px (CSS em theme.py) — no desktop
@@ -331,10 +348,22 @@ def render_chat(system: System, user: User) -> None:
                 is_active = r.id == active_session["id"]
                 btn_classes = "text-xs text-left w-full " + ("font-bold text-primary" if is_active else "text-gray-600")
                 with ui.row().classes("w-full items-center no-wrap gap-1"):
-                    ui.button(
-                        label,
-                        on_click=lambda sid=sess_id: _switch_session(sid),
-                    ).props("flat dense no-caps align=left").classes(btn_classes + " grow")
+                    with ui.column().classes("gap-0 grow").style("min-width: 0"):
+                        # color=None: sem isto o ui.button do NiceGUI aplica
+                        # color='primary' por padrão (vira a classe .text-primary
+                        # do Quasar) em cima do texto de QUALQUER sessão, mesmo
+                        # inativa — a classe .text-gray-600 que marcamos pra
+                        # inativa nunca vencia (achado ao vivo do critique: as
+                        # duas sessões, ativa e inativa, renderizavam na mesma
+                        # cor indigo; só o negrito diferenciava).
+                        ui.button(
+                            label, color=None,
+                            on_click=lambda sid=sess_id: _switch_session(sid),
+                        ).props("flat dense no-caps align=left").classes(btn_classes)
+                        # timestamp de criação como desambiguador (achado do
+                        # critique: duas sessões "Nova sessão" sem nada que as
+                        # diferencie na lista, pior ainda com o bug de cor acima)
+                        ui.label(_stamp(r.created_at)).classes("text-xs text-gray-400")
                     if r.inference_revoked:
                         # "block" (sólido) só aqui, como estado permanente — o botão de
                         # ação usa um ícone diferente (achado do critique: o mesmo "block"
@@ -400,16 +429,7 @@ def render_chat(system: System, user: User) -> None:
             if not run_data:
                 # sessão nova: o log em branco só com o placeholder do input não
                 # orientava quem chega aqui pela primeira vez (achado do critique).
-                # Guarda a referência pra remover só este elemento (não o log_box
-                # inteiro) assim que a primeira mensagem for enviada.
-                empty_hint["el"] = ui.column().classes(
-                    "w-full items-center justify-center gap-1"
-                ).style("padding: 32px 16px")
-                with empty_hint["el"]:
-                    ui.icon("chat_bubble_outline").classes("text-2xl text-gray-400")
-                    ui.label("Comece digitando uma mensagem para o agente.").classes(
-                        "text-xs text-gray-400"
-                    )
+                _show_empty_hint("Comece digitando uma mensagem para o agente.")
             for run_id, run_prompt, run_at, run_status in run_data:
                 ui.chat_message(text=run_prompt, name=_sender_label("Você", run_at),
                                 sent=True, avatar=_AVATAR_USER)
@@ -537,8 +557,14 @@ def render_chat(system: System, user: User) -> None:
                                 s.expunge(author)
                         queue.decide_gate(run_id, info["request_id"], approve, author)
 
+                    # "Aprovar" deixa a operação destrutiva seguir — não é o botão
+                    # seguro. `color=negative` (vermelho) nele lia como "pare/não"
+                    # bem no botão que na verdade diz "sim, prossiga" (achado do
+                    # critique: ambíguo no momento de maior risco da tela). Nenhum
+                    # dos dois leva cor semântica agora — a borda laranja do card já
+                    # avisa "atenção"; a decisão em si vem só do texto/ícone.
                     with ui.row():
-                        ui.button("Aprovar", icon="check", on_click=lambda: decide(True)).props("color=negative data-testid=gate-approve")
+                        ui.button("Aprovar", icon="check", on_click=lambda: decide(True)).props("outline data-testid=gate-approve")
                         ui.button("Recusar", icon="close", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
 
             # pergunta que o próprio agente fez (ferramenta nativa `question`
@@ -641,6 +667,15 @@ def render_chat(system: System, user: User) -> None:
             _update_input_blocked()
             _load_sessions()
             running_here = True
+        elif active_session["id"] is None and empty_hint["el"] is None:
+            # pouso na página sem sessão ativa e sem nada rodando em lugar
+            # nenhum: o placeholder de "sessão vazia" só existia um degrau
+            # abaixo disso, depois de escolher uma sessão — a primeira
+            # pintura da aba ficava sem nenhuma orientação (achado do
+            # critique). `empty_hint["el"] is None` evita recriar o
+            # placeholder a cada tick do timer de 0.5s.
+            with log_box:
+                _show_empty_hint("Selecione uma sessão ou crie uma nova para começar.")
         if running_here:
             if current_run["id"] != state["running"]:
                 current_run["id"] = state["running"]
