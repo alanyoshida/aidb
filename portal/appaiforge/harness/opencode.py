@@ -230,7 +230,13 @@ class OpencodeHarness(HarnessPort):
                 # "executando" e "concluído" com texto idêntico (achado ao vivo: duas linhas
                 # iguais no log de debug — o comando ainda rodando e o comando pronto são
                 # eventos legitimamente diferentes, mas pareciam duplicados)
-                meta = {"tool": tool, "status": state.get("status", "")}
+                # call_id: estável entre os updates pendente/rodando/concluído da
+                # MESMA chamada de ferramenta — deixa o chat atualizar a linha do
+                # log de debug no lugar em vez de empilhar uma linha nova a cada
+                # transição de estado (achado do critique: "executando" e
+                # "comando" do mesmo comando ficavam como duas linhas permanentes,
+                # lidas como se fossem dois comandos diferentes).
+                meta = {"tool": tool, "status": state.get("status", ""), "call_id": part.get("callID", "")}
                 if tool in ("edit", "write"):
                     meta["file"] = (state.get("input") or {}).get("filePath", "")
                 if tool == "bash":

@@ -352,6 +352,18 @@ CHAT_CSS: Final[str] = """
    levar a bolha/página inteira junto. */
 .q-message-text pre { max-width: 100%; overflow-x: auto; }
 
+/* ui.markdown (resposta do agente) gera <h1>-<h6> pra qualquer "#"/"##" no
+   texto, sem limite de tamanho — um título de arquivo virava um heading de
+   ~40px dentro da bolha, dominando a leitura e, pior ainda, contrariando a
+   própria regra do DESIGN.md ("Sem Display Rule": nenhum papel
+   display/headline neste produto Operate). Trava no mesmo peso do título da
+   tela (DESIGN.md "Title": ~14px/500) — chamativo o bastante pra marcar
+   ênfase, sem virar manchete. */
+.q-message-text h1, .q-message-text h2, .q-message-text h3,
+.q-message-text h4, .q-message-text h5, .q-message-text h6 {
+  font-size: 0.875rem !important; font-weight: 600 !important;
+  line-height: 1.4 !important; margin: 4px 0 !important; }
+
 /* Sem as "setas" padrão do Quasar: o visual é de cartão. */
 .q-message-text::before, .q-message-text::after { display: none !important; }
 

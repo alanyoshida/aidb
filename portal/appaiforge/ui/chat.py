@@ -168,7 +168,10 @@ _DEBUG_KINDS = {"command_run", "file_edited"}
 _DEBUG_CSS = ".af-hide-debug .af-debug { display: none !important; }"
 
 
-def render_chat(system: System, user: User, initial_session_id: str | None = None) -> None:
+def render_chat(
+    system: System, user: User,
+    initial_session_id: str | None = None, initial_debug_on: bool = False,
+) -> None:
     queue = get_queue()
     ui.add_css(_DEBUG_CSS)
     _AVATAR_USER, _AVATAR_AGENT = _avatars(user)
@@ -274,6 +277,12 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
     empty_hint: dict = {"el": None}  # placeholder de sessão nova sem runs ainda
+    # call_id -> label da linha de debug já renderizada, pra atualizar no lugar
+    # em vez de empilhar uma segunda linha quando o mesmo comando muda de
+    # "executando" pra "comando" (ver render_event). Zerado sempre que
+    # log_box é limpo (troca de sessão, nova run) — outra sessão não deve
+    # reaproveitar o label de uma renderização anterior.
+    debug_rows: dict = {}
 
     def _clear_empty_hint() -> None:
         if empty_hint["el"] is not None:
@@ -298,10 +307,32 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
         sidebar_col.classes(remove="af-open")
         sidebar_backdrop.classes(remove="af-open")
 
+    def _sync_url() -> None:
+        # grava sessão ativa e o estado do switch de Debug na URL (sem
+        # navegar) pra sobreviver ao reload que a troca de tema força
+        # (precisa ser reload de verdade pros tokens do tema saírem certos
+        # já no head — ver common.py). Sem isto, trocar de tema no meio de
+        # uma conversa sempre derrubava a sessão ativa, e o Debug sempre
+        # voltava desligado (achados do critique). json.dumps escapa o id
+        # pra uso seguro dentro da JS string.
+        params = []
+        if active_session["id"]:
+            params.append(f"session={active_session['id']}")
+        if debug["on"]:
+            params.append("debug=1")
+        query = "?" + "&".join(params) if params else "?"
+        ui.run_javascript(f"history.replaceState(null, '', {json.dumps(query)})")
+
     def _update_input_blocked() -> None:
+        # current_run["id"] também desabilita o envio: sem isto, mandar uma
+        # mensagem com uma run já em andamento nesta sessão era um no-op
+        # silencioso (do_send recusava, mas nada na tela avisava — achado do
+        # critique). blocked_row (aviso de contexto reiniciado) só aparece
+        # pelo motivo original, não por uma run em andamento.
         blocked = active_session["blocked"]
+        disabled = blocked or current_run["id"] is not None
         blocked_row.set_visibility(blocked)
-        if blocked:
+        if disabled:
             prompt.disable()
             send_btn.disable()
         else:
@@ -434,16 +465,12 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
         if active_session["id"] == sess_id:
             return
         active_session["id"] = sess_id
-        # grava na URL (sem navegar) pra sobreviver ao reload que a troca de
-        # tema força (precisa ser reload de verdade pros tokens do tema
-        # saírem certos já no head — ver common.py). Sem isto, trocar de tema
-        # no meio de uma conversa sempre derrubava a sessão ativa (achado do
-        # critique). json.dumps escapa o id pra uso seguro dentro da JS string.
-        ui.run_javascript(f"history.replaceState(null, '', '?session=' + {json.dumps(sess_id)})")
+        _sync_url()
         current_run["id"] = None
         current_run["shown"] = 0
         log_box.clear()
         empty_hint["el"] = None  # log_box.clear() já removeu o elemento do DOM
+        debug_rows.clear()
 
         # Atualiza rótulo do título
         with session_scope() as s:
@@ -673,11 +700,24 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
             # competindo com as respostas de verdade pela mesma leitura
             # (achado do critique). Ícone + texto monoespaçado, mesmo
             # tratamento discreto já usado pros eventos de status acima.
+            #
+            # call_id (quando o harness manda um) identifica a MESMA chamada
+            # de ferramenta em "executando" e "comando" — atualiza o label já
+            # na tela em vez de empilhar uma segunda linha permanente, que
+            # lia como se dois comandos tivessem rodado (achado do critique,
+            # rodada seguinte à que introduziu o texto distinto das duas).
+            call_id = event.meta.get("call_id") or ""
+            existing = debug_rows.get(call_id) if call_id else None
+            if existing is not None:
+                existing.set_text(text)
+                return
             with box, ui.row().classes("w-full items-center gap-1 af-debug"):
                 icon = _EVENT_ICON.get(event.kind)
                 if icon:
                     ui.icon(icon).classes("text-xs text-gray-400")
-                ui.label(text).classes("text-xs text-gray-400 font-mono")
+                label = ui.label(text).classes("text-xs text-gray-400 font-mono")
+            if call_id:
+                debug_rows[call_id] = label
             return
 
         with box:
@@ -734,6 +774,7 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
                 current_run["shown"] = 0
                 log_box.clear()
                 empty_hint["el"] = None  # log_box.clear() já removeu o elemento do DOM
+                debug_rows.clear()
             buffer = queue.buffers.get(current_run["id"])
             if buffer:
                 events = buffer.snapshot()
@@ -741,6 +782,7 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
                     render_event(log_box, event)
                 current_run["shown"] = len(events)
             interrupt_btn.set_visibility(True)
+            _update_input_blocked()
             # queue.pending_gates reflete só o pedido ATUALMENTE pendente — ao contrário
             # de varrer o histórico do buffer, que continuaria "True" para sempre depois
             # que o editor já aprovou (o evento gate_request fica no buffer até o fim da run)
@@ -770,6 +812,7 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
                 set_state("agente livre", busy=False)
             current_run["id"] = None
             interrupt_btn.set_visibility(False)
+            _update_input_blocked()
         if pending_prompt["text"] and state["running"] is None and not position:
             text = pending_prompt["text"]
             pending_prompt["text"] = None
@@ -805,8 +848,15 @@ def render_chat(system: System, user: User, initial_session_id: str | None = Non
                 el.classes(remove="af-hide-debug")
             else:
                 el.classes(add="af-hide-debug")
+        _sync_url()
 
     debug_switch.on_value_change(on_debug_change)
+    if initial_debug_on:
+        # restaura o switch de Debug gravado na URL por on_debug_change —
+        # sem isto, o switch sempre voltava desligado depois de um reload
+        # (achado do critique, mesma causa do bug da sessão acima: o reload
+        # de troca de tema zera o estado local em Python).
+        debug_switch.set_value(True)
 
     _load_sessions()
     if initial_session_id:

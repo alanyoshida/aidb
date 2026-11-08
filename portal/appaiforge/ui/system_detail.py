@@ -106,11 +106,13 @@ def register() -> None:
             with ui.tab_panel(chat_tab):
                 from .chat import render_chat
 
-                # sessão gravada na URL por _switch_session (ver chat.py) — sobrevive
-                # ao reload que trocar de tema força, que senão sempre derrubava a
-                # sessão ativa no meio de uma conversa (achado do critique)
+                # sessão e estado do Debug gravados na URL por _sync_url (ver chat.py)
+                # — sobrevivem ao reload que trocar de tema força, que senão sempre
+                # derrubava a sessão ativa e desligava o Debug no meio de uma
+                # conversa (achados do critique)
                 initial_session_id = ui.context.client.request.query_params.get("session")
-                render_chat(system, user, initial_session_id)
+                initial_debug_on = ui.context.client.request.query_params.get("debug") == "1"
+                render_chat(system, user, initial_session_id, initial_debug_on)
             with ui.tab_panel(editor_tab):
                 _render_editor(system, user)
             with ui.tab_panel(conn_tab):
