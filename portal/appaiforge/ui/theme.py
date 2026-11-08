@@ -210,9 +210,20 @@ body, .nicegui-content, .q-layout, .q-page-container, .q-page {
 .text-red-400, .text-red-500, .text-red-600, .text-red-700 { color: var(--ap-danger) !important; }
 .text-green-600, .text-green-700 { color: var(--ap-success) !important; }
 .text-amber-600, .text-amber-700, .text-orange-600, .text-orange-700 { color: var(--ap-warning) !important; }
+/* Os cards de gate/pergunta no chat usam o prop text-color do Quasar
+   (ex.: ui.chat_message(...).props("text-color=green-10")), que gera estas
+   classes fixas da paleta do Quasar — nunca foram pensadas pro tema escuro
+   (green-10/blue-10 são tons escuros, pra fundo claro) e ficavam ilegíveis
+   sobre a bolha escura do agente (achado ao vivo). Mesmo tratamento acima. */
+.text-red-10 { color: var(--ap-danger) !important; }
+.text-orange-10 { color: var(--ap-warning) !important; }
+.text-green-10 { color: var(--ap-success) !important; }
+.text-blue-10 { color: var(--ap-accent) !important; }
 .bg-red-50 { background: var(--ap-danger-bg) !important; }
 .border-red-300, .border-red-400 { border-color: var(--ap-danger-border) !important; }
 .border-orange-400 { border-color: var(--ap-warning) !important; }
+.text-blue-700 { color: var(--ap-accent) !important; }
+.border-blue-400 { border-color: var(--ap-accent) !important; }
 .bg-white { background: var(--ap-surface) !important; }
 .text-primary { color: var(--ap-accent) !important; }
 
