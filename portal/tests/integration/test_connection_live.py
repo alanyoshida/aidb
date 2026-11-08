@@ -23,17 +23,17 @@ def target_pg():
 
 def test_conexao_valida_e_aceita(target_pg):
     # não levanta
-    connections.test_connection(**target_pg)
+    connections.test_connection(kind="postgres", **target_pg)
 
 
 def test_credenciais_erradas_sao_recusadas(target_pg):
     with pytest.raises(connections.ConnectionFailed):
-        connections.test_connection(**{**target_pg, "password": "errada"})
+        connections.test_connection(kind="postgres", **{**target_pg, "password": "errada"})
 
 
 def test_host_inacessivel_e_recusado(target_pg):
     with pytest.raises(connections.ConnectionFailed):
-        connections.test_connection(**{**target_pg, "port": 1})
+        connections.test_connection(kind="postgres", **{**target_pg, "port": 1})
 
 
 def test_cadastro_exige_conexao_valida(clean_db, target_pg):

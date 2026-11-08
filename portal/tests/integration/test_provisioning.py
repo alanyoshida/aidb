@@ -34,10 +34,10 @@ def test_provisiona_container_com_limites_labels_e_workspace(system):
     assert attrs["HostConfig"]["NanoCpus"] == expected_cpu
     assert attrs["HostConfig"]["Memory"] == settings.container_mem_mb * 1024 * 1024
     assert attrs["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
-    # workspace com opencode.json e bind montado
+    # config com opencode.json, bind montado em /opencode-config (ro)
     assert (docker_sdk.__name__) or True
-    workspace = os.path.join(get_settings().workspaces_dir, system.slug)
-    assert os.path.isfile(os.path.join(workspace, "opencode.json"))
+    config_dir = os.path.join(get_settings().configs_dir, system.slug)
+    assert os.path.isfile(os.path.join(config_dir, "opencode.json"))
 
 
 def test_workspace_persiste_entre_reinicios(system):
@@ -65,9 +65,12 @@ def test_workspace_persiste_entre_reinicios(system):
 
 def test_reconciliacao_recria_container_ausente(system):
     from appaiforge.edge import system_container_name
+    from appaiforge.models import SystemStatus
     from appaiforge.provisioning import provision_system, reconcile
+    from appaiforge.services.systems import set_status
 
     provision_system(system)
+    set_status(system.id, SystemStatus.active, "")  # visível para reconcile()
     _client().containers.get(system_container_name(system.slug)).remove(force=True)
 
     reconcile()
@@ -162,7 +165,7 @@ def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
     while time.time() < deadline:
         try:
             container = _client().containers.get(system_container_name(system.slug))
-            result = container.exec_run(["cat", "/workspace/opencode.json"])
+            result = container.exec_run(["cat", "/opencode-config/opencode.json"])
             if result.exit_code == 0:
                 config = json.loads(result.output.decode())
                 if config.get("mcp"):
@@ -170,12 +173,15 @@ def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
                     assert env_result.exit_code == 0, "DATABASE_URL_PRINCIPAL ausente no container"
                     env_line = env_result.output.decode()
                     assert "127.0.0.1" in env_line, env_line
-                    assert live_pg["password"] not in env_line, "credencial vazou pro env do sistema"
+                    # checagem por ":senha@" (não por substring simples): a senha de teste
+                    # do testcontainers é "test", igual ao nome do banco na DSN de loopback
+                    # (.../test), então um "not in" simples dava falso positivo ali
+                    assert f":{live_pg['password']}@" not in env_line, "credencial vazou pro env do sistema"
                     assert "@" not in env_line.split("=", 1)[1], "DSN não deveria carregar user:senha@"
                     assert "principal" in config["mcp"]
                     mcp_url = config["mcp"]["principal"]["command"][2]
                     assert "127.0.0.1" in mcp_url
-                    assert live_pg["password"] not in mcp_url, "credencial vazou pro cmdline do MCP"
+                    assert f":{live_pg['password']}@" not in mcp_url, "credencial vazou pro cmdline do MCP"
                     assert config["model"].startswith("zhipuai/")  # provider glm -> zhipuai (models.dev)
                     return
         except Exception as exc:  # container sendo recriado nesse instante

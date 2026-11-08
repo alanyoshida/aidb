@@ -27,7 +27,12 @@ def docker_env(tmp_path, monkeypatch):
 def system(docker_env, clean_db):
     from appaiforge import auth
     from appaiforge.models import UserType
+    from appaiforge.services import catalog
     from appaiforge.services.systems import create_system
 
+    # sem isto, system.provider ("glm" por padrão) não resolve provider_id/base_url
+    # no catalog (tabela vazia após clean_db) — mesmo padrão dos fixtures unitários
+    # (ver `editor` em test_llm_provisioning.py)
+    catalog.ensure_presets()
     editor = auth.create_user("prov@t.local", "pw", UserType.editor.value)
     return create_system(editor, "Sistema Prov", f"prov-{os.urandom(3).hex()}")

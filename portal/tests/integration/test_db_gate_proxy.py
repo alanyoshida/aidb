@@ -136,6 +136,28 @@ def _wait_sidecar_running(slug: str) -> None:
     raise AssertionError(f"sidecar {name} não subiu em 60s")
 
 
+def _wait_dbgate_port_ready(container, port: int, deadline_s: float = 20) -> None:
+    """`_wait_sidecar_running` só prova que o container do sidecar existe e
+    está `running` no Docker — não que os listeners asyncio dentro dele já
+    terminaram de bindar (mesmo achado de `_wait_dbgate_port_ready` em
+    test_network_perimeter.py). Sem isto, a conexão de teste ocasionalmente
+    chega antes do bind: vira `ConnectionRefusedError` do lado do cliente
+    (não um erro do protocolo Postgres), a classificação do gate nunca
+    corre, e a auditoria correspondente nunca aparece — flakiness achada
+    correndo o teste repetidas vezes."""
+    deadline = time.time() + deadline_s
+    script = (
+        "import socket\n"
+        f"s = socket.create_connection(('127.0.0.1', {port}), timeout=1)\n"
+        "s.close()\n"
+    )
+    while time.time() < deadline:
+        if container.exec_run(["python3", "-c", script]).exit_code == 0:
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"proxy de gate de banco não respondeu em {port} a tempo")
+
+
 def _agent_port_for(system_id: str, connection_name: str = "vendas") -> int:
     from appaiforge.provisioning import db_connections_manifest
 
@@ -193,6 +215,26 @@ def _count_clientes(live_pg) -> int:
             return cur.fetchone()[0]
 
 
+def _wait_decision(system_id: str, sql: str, deadline_s: float = 5) -> dict:
+    """O proxy responde ao cliente e SÓ DEPOIS audita no portal
+    (`_pump_client_to_upstream`: `_refuse` primeiro, `audit_shadow` em
+    seguida) — o exec do cliente já pode ter retornado antes desse POST
+    HTTP (rede real, sidecar -> portal fake) terminar. Sem esperar aqui, a
+    checagem corre de vez em quando antes da auditoria aparecer (achado:
+    4 tentativas, 1 passou e 3 falharam com a mesma `decisions` vazia)."""
+    from appaiforge import gate
+
+    deadline = time.time() + deadline_s
+    last = []
+    while time.time() < deadline:
+        last = gate.list_decisions(system_id)
+        match = next((d for d in last if d["sql"] == sql), None)
+        if match is not None:
+            return match
+        time.sleep(0.2)
+    raise AssertionError(f"nenhuma decisão para {sql!r} em {deadline_s}s: {last}")
+
+
 def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_portal, live_pg, monkeypatch):
     """Task 8.1 (revista): `DELETE FROM clientes` (sem WHERE, confirmável)
     em modo enforce é recusada pelo proxy na hora, sem segurar a conexão
@@ -214,6 +256,7 @@ def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_p
     _wait_sidecar_running(system.slug)
     agent_port = _agent_port_for(system.id)
     container = _client().containers.get(system_container_name(system.slug))
+    _wait_dbgate_port_ready(container, agent_port)
 
     result = _exec_sql_via_proxy(container, agent_port, live_pg["database"], "DELETE FROM clientes")
     output = result.output.decode()
@@ -221,13 +264,9 @@ def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_p
     assert "sem WHERE" in output or "42501" in output
     assert _count_clientes(live_pg) == 2  # dados intactos
 
-    from appaiforge import gate
-
-    decisions = gate.list_decisions(system.id)
-    assert any(
-        d["sql"] == "DELETE FROM clientes" and d["decision"] == "bloqueada" and d["classification"] == "confirmavel"
-        for d in decisions
-    )
+    decision = _wait_decision(system.id, "DELETE FROM clientes")
+    assert decision["decision"] == "bloqueada"
+    assert decision["classification"] == "confirmavel"
 
 
 def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, monkeypatch):
@@ -250,6 +289,7 @@ def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, mo
     _wait_sidecar_running(system.slug)
     agent_port = _agent_port_for(system.id)
     container = _client().containers.get(system_container_name(system.slug))
+    _wait_dbgate_port_ready(container, agent_port)
 
     result = _exec_sql_via_proxy(container, agent_port, live_pg["database"], "DELETE FROM clientes")
     assert result.exit_code == 0, result.output.decode()
@@ -283,15 +323,13 @@ def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_po
     _wait_sidecar_running(system.slug)
     app_port = _app_port_for(system.id)
     container = _client().containers.get(system_container_name(system.slug))
+    _wait_dbgate_port_ready(container, app_port)
 
     result = _exec_sql_via_proxy(container, app_port, live_pg["database"], "DELETE FROM clientes")
     assert result.exit_code != 0, result.output.decode()
     assert _count_clientes(live_pg) == 2
 
-    from appaiforge import gate
-
-    decisions = gate.list_decisions(system.id)
-    app_decision = next(d for d in decisions if d["sql"] == "DELETE FROM clientes")
+    app_decision = _wait_decision(system.id, "DELETE FROM clientes")
     assert app_decision["origin"] == "app"
     assert app_decision["decision"] == "bloqueada"
 
