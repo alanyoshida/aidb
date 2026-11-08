@@ -1,6 +1,8 @@
 """Detalhe do sistema: estado, provedor e conexões de banco (specs system-management, db-connections)."""
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from nicegui import ui
 
@@ -9,6 +11,22 @@ from ..rbac import can_access_system, can_manage_system
 from ..services import catalog, connections
 from ..services.systems import get_system, rename_system, revoke_inference_access, set_provider
 from .common import get_current_user, notify, render_header
+
+
+def _stamp(iso: str) -> str:
+    """Formata um `created_at` ISO (UTC) no fuso de exibição, como "dd/mm HH:MM"
+    — mesma convenção do chat (`ui/chat.py:_stamp`)."""
+    from ..config import get_settings
+
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return ""
+    try:
+        local = dt.astimezone(ZoneInfo(get_settings().display_timezone))
+    except ZoneInfoNotFoundError:
+        local = dt
+    return local.strftime("%d/%m %H:%M")
 
 _STATUS_LABEL = {"provisioning": "provisionando", "active": "ativo", "error": "erro", "archived": "arquivado"}
 _STATUS_COLOR = {"active": "positive", "provisioning": "warning", "error": "negative"}
@@ -584,7 +602,7 @@ def _render_checkpoints(system, user) -> None:
                         cp_service.rollback(system, sha)
                         notify(f"workspace restaurado para {sha[:8]}", "positive")
 
-                    with ui.timeline_entry(title=cp["git_sha"][:8], icon="commit"):
+                    with ui.timeline_entry(title=cp["git_sha"][:8], subtitle=_stamp(cp["created_at"]), icon="commit"):
                         ui.label(cp["message"][:140]).classes("text-sm")
                         with ui.row().classes("gap-2"):
                             ui.button("Restaurar", icon="restore", on_click=do_rollback).props("dense outline")
@@ -696,7 +714,7 @@ def _render_gate_history(system) -> None:
                 autor = d["author_email"] or "sistema"
                 with ui.row().classes("w-full items-center"):
                     ui.label(f"[{d['decision']}] {d['sql'][:70]}").classes(f"text-sm {color}")
-                    ui.label(f"({d['origin']} · autor: {autor})").classes("text-xs text-gray-500")
+                    ui.label(f"({d['origin']} · autor: {autor} · {_stamp(d['created_at'])})").classes("text-xs text-gray-500")
 
     refresh_gate()
     ui.timer(2.0, refresh_gate)
