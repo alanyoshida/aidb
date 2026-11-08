@@ -52,8 +52,12 @@ def _run(cmd: list[str]) -> str:
     return result.stdout
 
 
+_SIDECAR_ROLES = ("dbgate-sidecar", "httpsproxy-sidecar")
+
+
 def _e2e_sidecar_ids() -> list[str]:
-    """Sidecars de gate de banco (change db-proxy-gate-data-plane) sobem com
+    """Sidecars (gate de banco, change db-proxy-gate-data-plane; proxy
+    HTTP(S) de saída, change agent-https-forward-proxy) sobem com
     `network_mode: container:<id do sistema>` (D1) — não têm entrada própria
     em `Networks`, então o filtro por rede do `docker ps` nunca os vê.
     Resolve pela cadeia (`HostConfig.NetworkMode`) até o container do
@@ -61,9 +65,11 @@ def _e2e_sidecar_ids() -> list[str]:
     E2E — mesmo isolamento do filtro de rede acima, sem depender dele."""
     result = []
     try:
-        candidates = _run([
-            "docker", "ps", "-aq", "--filter", "label=appaiforge.role=dbgate-sidecar",
-        ]).split()
+        candidates = []
+        for role in _SIDECAR_ROLES:
+            candidates += _run([
+                "docker", "ps", "-aq", "--filter", f"label=appaiforge.role={role}",
+            ]).split()
     except RuntimeError:
         return result
     for cid in candidates:
@@ -106,7 +112,7 @@ def clean_stack():
     for cid in names:
         try:
             name = _run(["docker", "inspect", "--format", "{{.Name}}", cid]).strip().lstrip("/")
-            slug = name.removeprefix("appaiforge-sys-").removesuffix("-dbgate")
+            slug = name.removeprefix("appaiforge-sys-").removesuffix("-dbgate").removesuffix("-httpsproxy")
             if slug and slug not in slugs_vivos:
                 _run(["docker", "rm", "-f", name])
         except RuntimeError:

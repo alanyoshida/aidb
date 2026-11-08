@@ -254,17 +254,23 @@ def test_connect_tcp_ports_inclui_agent_port_de_cada_conexao_do_manifesto(editor
     assert 15402 in payload["connect_tcp_ports"]
     assert 15401 not in payload["connect_tcp_ports"]
     assert 15403 not in payload["connect_tcp_ports"]
-    for porta_estatica in (443, 80, 53):
-        assert porta_estatica in payload["connect_tcp_ports"]
+    assert 53 in payload["connect_tcp_ports"]
+    # 443/80 saíram da lista estática (change agent-https-forward-proxy) — só
+    # a porta do proxy HTTP(S) de saída continua liberada pra essa faixa
+    assert 443 not in payload["connect_tcp_ports"]
+    assert 80 not in payload["connect_tcp_ports"]
+    from appaiforge.provisioning import HTTPS_PROXY_PORT
+
+    assert HTTPS_PROXY_PORT in payload["connect_tcp_ports"]
 
 
 def test_connect_tcp_ports_sem_manifesto_mantem_so_as_estaticas(editor, tmp_path):
-    from appaiforge.provisioning import write_agent_profile
+    from appaiforge.provisioning import HTTPS_PROXY_PORT, write_agent_profile
 
     system = create_system(editor, "NET2", "prov-net-vazio")
     payload = write_agent_profile(system, str(tmp_path), [])
 
-    assert payload["connect_tcp_ports"] == [443, 80, 53]
+    assert payload["connect_tcp_ports"] == [53, HTTPS_PROXY_PORT]
 
 
 def test_connect_tcp_ports_inclui_porta_do_broker_quando_habilitado(editor, tmp_path, monkeypatch):
@@ -308,14 +314,14 @@ def test_provision_system_passa_aidb_agent_profile_no_env(editor, tmp_path, monk
     class FakeContainer:
         id = "fake-id"
 
-    captured = {}
+    calls = []
 
     class FakeContainers:
         def get(self, name):
             raise docker.errors.NotFound("not found")
 
         def run(self, **kwargs):
-            captured.update(kwargs)
+            calls.append(kwargs)
             return FakeContainer()
 
     class FakeNetworks:
@@ -346,6 +352,9 @@ def test_provision_system_passa_aidb_agent_profile_no_env(editor, tmp_path, monk
     finally:
         get_settings.cache_clear()
 
+    # "volumes" só está presente na chamada do container do sistema — as dos
+    # sidecars (dbgate, proxy HTTP(S)) não montam volume nenhum
+    captured = next(c for c in calls if "volumes" in c)
     assert captured["environment"]["AIDB_AGENT_PROFILE"] == "/opencode-config/agent-profile.json"
     assert "ANTHROPIC_API_KEY" not in captured["environment"]  # sem chave real injetada à toa
 
@@ -358,14 +367,14 @@ def _provision_with_fake_docker(system, tmp_path, monkeypatch):
     class FakeContainer:
         id = "fake-id"
 
-    captured = {}
+    calls = []
 
     class FakeContainers:
         def get(self, name):
             raise docker.errors.NotFound("not found")
 
         def run(self, **kwargs):
-            captured.update(kwargs)
+            calls.append(kwargs)
             return FakeContainer()
 
     class FakeNetworks:
@@ -394,7 +403,9 @@ def _provision_with_fake_docker(system, tmp_path, monkeypatch):
         provision_system(system)
     finally:
         get_settings.cache_clear()
-    return captured
+    # "volumes" só está presente na chamada do container do sistema — as dos
+    # sidecars (dbgate, proxy HTTP(S)) não montam volume nenhum
+    return next(c for c in calls if "volumes" in c)
 
 
 def test_sistema_reduzido_recebe_identidade_nao_root(editor, tmp_path, monkeypatch):

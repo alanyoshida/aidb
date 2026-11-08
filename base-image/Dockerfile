@@ -40,6 +40,10 @@ RUN pip install --no-cache-dir "mcp>=1.0" sqlglot asyncpg aiomysql mysqlclient g
 COPY dbproxy /opt/dbproxy
 RUN pip install --no-cache-dir httpx
 
+# Proxy HTTP(S) de saída (change agent-https-forward-proxy, etapa 5): só
+# stdlib (asyncio), nenhuma dependência nova.
+COPY httpproxy /opt/httpproxy
+
 # supervisor como PID 1
 COPY afsupervisor /opt/afsupervisor/afsupervisor
 ENV PYTHONPATH=/opt/afsupervisor

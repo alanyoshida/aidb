@@ -51,6 +51,27 @@ def _wait_sidecar_running(slug: str) -> None:
     raise AssertionError(f"sidecar {name} não subiu em 60s")
 
 
+def _wait_dbgate_port_ready(container, port: int, deadline_s: float = 20) -> None:
+    """O sidecar (container Docker) fica `running` antes do processo asyncio
+    dentro dele terminar de montar os listeners — mesmo achado do proxy
+    HTTP(S) de saída (ver `_wait_proxy_ready` em test_https_proxy.py):
+    `_wait_sidecar_running` só prova que o container existe, não que a porta
+    já aceita conexão. Sem este passo o teste corre direto pro script com
+    Landlock e vê `ConnectionRefusedError` nesse intervalo, por fora de
+    qualquer coisa que o Landlock decida."""
+    deadline = time.time() + deadline_s
+    script = (
+        "import socket\n"
+        f"s = socket.create_connection(('127.0.0.1', {port}), timeout=1)\n"
+        "s.close()\n"
+    )
+    while time.time() < deadline:
+        if container.exec_run(["python3", "-c", script]).exit_code == 0:
+            return
+        time.sleep(0.5)
+    raise AssertionError(f"proxy de gate de banco não respondeu em {port} a tempo")
+
+
 def test_agente_sandboxed_alcanca_o_proxy_mas_nao_o_postgres_real(system, docker_env, live_pg):
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
@@ -83,6 +104,7 @@ def test_agente_sandboxed_alcanca_o_proxy_mas_nao_o_postgres_real(system, docker
     assert live_pg["port"] not in profile["connect_tcp_ports"], (
         "a porta real do Postgres não deveria estar liberada — só a do proxy"
     )
+    _wait_dbgate_port_ready(container, agent_port)
 
     script = f"""
 import sys, socket, json

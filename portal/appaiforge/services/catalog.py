@@ -177,6 +177,39 @@ def _stored_key(provider_id: str) -> str | None:
         return decrypt_secret(row.key_encrypted) if row is not None else None
 
 
+# Hosts conhecidos dos provedores nativos, usados pelo proxy HTTP(S) de saída
+# (change agent-https-forward-proxy) para calcular a allow-list de um sistema
+# sem broker — só hostname público, nenhum segredo. Propósito diferente de
+# `_DEFAULT_MODELS_URL` (URL de listagem de modelo, não host de rede) e por
+# isso não reaproveitado dali: `anthropic` não lista modelos por API hoje
+# (PRESETS acima não tem fetch de lista pra ele), mas tem host bem conhecido
+# pra allow-list.
+PROVIDER_HOSTS = {
+    "openrouter": "openrouter.ai",
+    "openai": "api.openai.com",
+    "anthropic": "api.anthropic.com",
+}
+
+
+def provider_host(provider: dict) -> str | None:
+    """Host real que este provedor configurado alcança sem o broker — usado
+    pra calcular a allow-list do proxy HTTP(S) de saída (change
+    `agent-https-forward-proxy`). `None` só se um provedor customizado não
+    tiver `base_url` (não deveria acontecer: o catálogo exige `base_url`
+    para `openai-compatible` na criação)."""
+    pid = provider["id"]
+    base = (provider.get("base_url") or "").strip()
+    if not base and pid == "glm":
+        from ..config import get_settings
+
+        base = get_settings().glm_base_url
+    if base:
+        from urllib.parse import urlparse
+
+        return urlparse(base).hostname
+    return PROVIDER_HOSTS.get(pid)
+
+
 def _models_url(provider: dict) -> str:
     pid = provider["id"]
     base = (provider.get("base_url") or "").strip()

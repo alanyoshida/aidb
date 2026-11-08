@@ -67,18 +67,17 @@ PROFILES: dict[str, dict] = {
             "/home/agent/.local",
             "/tmp",
         ],
-        # Portas TCP sempre liberadas para conexão de saída, independente do
-        # sistema (etapa 5 do roadmap de confinamento, change
-        # agent-network-perimeter) — 443/80 para provedor de LLM direto
-        # (quando o broker está desligado, hoje o padrão) e para pip/npm/uv;
-        # 53 é TCP mesmo (DNS por UDP nunca passa pelo Landlock de rede, que
-        # só cobre TCP — isto é só o fallback raro de resposta grande).
-        # Deixadas abertas por decisão de escopo (design.md D4), não lacuna:
-        # nem o banco real nem o broker escutam nessas portas, então isto não
-        # reabre o bypass que esta change fecha. As portas do proxy de gate
-        # de banco e do broker são calculadas por sistema em
-        # `provisioning.write_agent_profile` e somadas a esta lista estática.
-        "connect_tcp_ports": [443, 80, 53],
+        # Porta TCP sempre liberada para conexão de saída, independente do
+        # sistema (etapa 5, change agent-network-perimeter) — só 53 (TCP
+        # mesmo: DNS por UDP nunca passa pelo Landlock de rede, que só cobre
+        # TCP; isto é só o fallback raro de resposta grande). 443 e 80
+        # SAÍRAM desta lista estática (change agent-https-forward-proxy,
+        # ADR a registrar): toda saída HTTP(S) do agente passa a ser
+        # obrigatoriamente pelo proxy de saída, cuja porta é calculada por
+        # sistema em `provisioning.write_agent_profile` e somada a esta
+        # lista estática — junto das portas do proxy de gate de banco e do
+        # broker, que já eram calculadas ali.
+        "connect_tcp_ports": [53],
     },
 }
 

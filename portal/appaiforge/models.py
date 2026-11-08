@@ -136,6 +136,13 @@ class System(Base):
     # Versão do token opaco de inferência (etapa 3, ADR 0020). Revogar o acesso
     # de um sistema = incrementar esta versão; o token antigo deixa de validar.
     inference_token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Controles do proxy HTTP(S) de saída (change agent-https-forward-proxy,
+    # D6/D7): desligar internet_enabled esvazia a allow-list do proxy por
+    # completo (o broker, quando habilitado, não passa por este proxy, então
+    # não é afetado); ligar restricted_network substitui a allow-list padrão
+    # pela lista de AllowedDomain cadastrada, em vez de somar a ela.
+    internet_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    restricted_network: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -164,6 +171,22 @@ class DbConnection(Base):
     access_mode: Mapped[str] = mapped_column(String(20), default="read_write")
     status: Mapped[str] = mapped_column(String(20), default="unknown")
     status_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AllowedDomain(Base):
+    """Domínio liberado no modo restrito do proxy HTTP(S) de saída (change
+    `agent-https-forward-proxy`, D7) — só usado quando `System.restricted_network`
+    está ligado; nasce pré-populada com os registros de pacote mais usados
+    (task 4.2), editável pelo editor do sistema a partir daí."""
+
+    __tablename__ = "allowed_domains"
+    __table_args__ = (UniqueConstraint("system_id", "domain", name="uq_allowed_domain_per_system"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
+    domain: Mapped[str] = mapped_column(String(255))
+    author_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

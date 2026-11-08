@@ -13,7 +13,7 @@ from ..provisioning import decide_execution_mode
 from ..rbac import can_create_systems, can_manage_system
 from ..security import generate_secret
 from ..config import get_settings
-from . import audit
+from . import audit, network_policy
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +67,9 @@ def create_system(user: User, name: str, slug: str, provider: str | None = None,
         actor_id=user.id, actor_email=user.email, action="system.create", resource_type="system",
         resource_id=system.id, system_id=system.id, details={"name": system.name, "slug": system.slug},
     )
+    # pré-popula a lista do modo restrito desde já (task 4.2) — pronta pra
+    # quando o editor ligar o modo restrito, sem pip/npm quebrar na hora
+    network_policy.seed_default_domains_if_empty(system.id)
     return system
 
 

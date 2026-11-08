@@ -80,7 +80,7 @@ def test_arquivamento_para_container_e_preserva_workspace(system, docker_env):
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
     from appaiforge.models import SystemStatus
-    from appaiforge.provisioning import archive_system, provision_system
+    from appaiforge.provisioning import archive_system, httpsproxy_sidecar_name, provision_system
     from appaiforge.services.systems import get_system
 
     provision_system(system)
@@ -93,6 +93,10 @@ def test_arquivamento_para_container_e_preserva_workspace(system, docker_env):
 
     with pytest.raises(docker.errors.NotFound):
         _client().containers.get(system_container_name(system.slug))
+    # achado real (change agent-https-forward-proxy): o sidecar do proxy HTTP(S)
+    # ficava órfão no arquivamento — só o de banco era removido
+    with pytest.raises(docker.errors.NotFound):
+        _client().containers.get(httpsproxy_sidecar_name(system.slug))
     assert os.path.isdir(workspace)  # workspace preservado
     assert get_system(system.id).status == SystemStatus.archived
 

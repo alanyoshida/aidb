@@ -37,6 +37,12 @@ AGENT_GID = 1000
 # (portas "reais" dos bancos) para nunca ser confundida com elas em debug.
 DB_GATE_PORT_BASE = 15400
 
+# Porta de loopback do proxy HTTP(S) de saída (change agent-https-forward-proxy)
+# — uma só por sistema (ao contrário do proxy de banco, não há "uma por
+# conexão"), fora da faixa do DB_GATE_PORT_BASE pra nunca colidir mesmo com
+# muitas conexões cadastradas num sistema.
+HTTPS_PROXY_PORT = 15500
+
 
 class CapacityReached(Exception):
     pass
@@ -125,6 +131,51 @@ def _broker_connect_port() -> int:
 
     parsed = urlparse(get_settings().inference_broker_url)
     return parsed.port or (443 if parsed.scheme == "https" else 80)
+
+
+def _broker_destination() -> tuple[str, int]:
+    """Host:porta do broker de inferência, para a allow-list do proxy
+    HTTP(S) de saída (change `agent-https-forward-proxy`, D2) — diferente
+    de `_broker_connect_port` (só a porta, pro Landlock que é agnóstico de
+    endereço), aqui o host importa: a allow-list deste proxy é por
+    `host:porta`, não só porta."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(get_settings().inference_broker_url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return parsed.hostname or "broker", port
+
+
+# Registros de pacote tocados por `pip`/`npm`/`uv` numa instalação comum —
+# confirmado por spike real (design.md, task 1.2): nenhum CDN/mirror extra
+# apareceu para `requests`/`left-pad`/`httpx`. Não cobre instalação direto
+# de git (risco já registrado no design).
+PACKAGE_REGISTRY_HOSTS: tuple[tuple[str, int], ...] = (
+    ("pypi.org", 443),
+    ("files.pythonhosted.org", 443),
+    ("registry.npmjs.org", 443),
+)
+
+
+def default_https_allowlist(system: System) -> list[tuple[str, int]]:
+    """Allow-list padrão (D2) do proxy HTTP(S) de saída pra um sistema: o
+    host do provedor de LLM configurado quando o broker de inferência está
+    desligado (global, `inference_broker_enabled`), OU `host:porta` do
+    broker quando está ligado — nunca os dois, porque o endpoint que o
+    agente usa (etapa 3) só aponta pra um dos dois — mais os registros de
+    pacote, iguais para todo sistema."""
+    entries: list[tuple[str, int]] = list(PACKAGE_REGISTRY_HOSTS)
+    if get_settings().inference_broker_enabled:
+        entries.append(_broker_destination())
+    else:
+        from .services import catalog
+
+        provider = catalog.get_provider(system.provider)
+        if provider is not None:
+            host = catalog.provider_host(provider)
+            if host:
+                entries.append((host, 443))
+    return entries
 
 
 _LOOPBACK_SCHEMES = {"postgres": "postgresql", "mysql": "mysql"}
@@ -291,17 +342,23 @@ def write_agent_profile(system: System, config_dir: str, manifest: list[dict]) -
     JSON em config_dir, ao lado do config do agente. Contém só o NOME da env
     de credencial, nunca o valor de nenhum segredo.
 
-    `connect_tcp_ports` combina as portas estáticas do perfil (443/80/53) com
-    as calculadas para este sistema — o `agent_port` (nunca `app_port`: esse
-    é da app gerada, que não roda confinada) de cada conexão do manifesto do
-    proxy de gate de banco (etapa 4), mais a porta do broker de inferência
-    quando habilitado (etapa 3). `bind_tcp_ports` é só a porta do próprio
+    `connect_tcp_ports` combina a porta estática do perfil (53, DNS) com as
+    calculadas para este sistema — o `agent_port` (nunca `app_port`: esse é
+    da app gerada, que não roda confinada) de cada conexão do manifesto do
+    proxy de gate de banco (etapa 4), a porta do broker de inferência quando
+    habilitado (etapa 3), e a porta do proxy HTTP(S) de saída (change
+    agent-https-forward-proxy) — único jeito de alcançar 443/80, que saíram
+    da lista estática do perfil. `bind_tcp_ports` é só a porta do próprio
     harness — o agente confinado nunca precisa escutar em outra (etapa 5,
     change agent-network-perimeter)."""
     from .agent_profiles import get_profile, resolve_credential_env
 
     profile = get_profile()
-    connect_tcp_ports = list(profile.get("connect_tcp_ports", [])) + [m["agent_port"] for m in manifest]
+    connect_tcp_ports = (
+        list(profile.get("connect_tcp_ports", []))
+        + [m["agent_port"] for m in manifest]
+        + [HTTPS_PROXY_PORT]
+    )
     if get_settings().inference_broker_enabled:
         connect_tcp_ports.append(_broker_connect_port())
     payload = {
@@ -350,10 +407,11 @@ def provision_system(system: System) -> str:
 
     client = _docker()
     container_name = system_container_name(system.slug)
-    # o sidecar depende do netns do sistema (`network_mode: container:<id>`,
+    # os sidecars dependem do netns do sistema (`network_mode: container:<id>`,
     # D1) — remover primeiro evita um sidecar órfão apontando pra um
     # container que já não existe mais (achado ao recriar via reconciliação)
     _remove_container_if_exists(client, dbgate_sidecar_name(system.slug))
+    _remove_container_if_exists(client, httpsproxy_sidecar_name(system.slug))
     # container antigo com mesma identidade é substituído
     _remove_container_if_exists(client, container_name)
 
@@ -386,6 +444,13 @@ def provision_system(system: System) -> str:
         # exec do agente (capability agent-sandbox, etapa 2). O modo já está
         # fixado desde a criação do sistema; o supervisor só confia nele.
         "AIDB_EXECUTION_MODE": system.execution_mode.value,
+        # Convenção universal que pip/npm/uv/o cliente HTTP do agente já
+        # respeitam (change agent-https-forward-proxy, D4) — 443/80 saíram
+        # do Landlock estático (agent_profiles.py), então ferramenta que
+        # ignora isto falha ao tentar conectar direto, fail-closed aceito.
+        "HTTP_PROXY": f"http://127.0.0.1:{HTTPS_PROXY_PORT}",
+        "HTTPS_PROXY": f"http://127.0.0.1:{HTTPS_PROXY_PORT}",
+        "NO_PROXY": "",
         **(
             _broker_credential_env(system)
             if settings.inference_broker_enabled
@@ -432,6 +497,7 @@ def provision_system(system: System) -> str:
             raise
 
     _provision_dbgate_sidecar(system, container.id, manifest)
+    _provision_httpsproxy_sidecar(system, container.id)
     set_container(system.id, container.id)
     return container.id
 
@@ -488,6 +554,57 @@ def _provision_dbgate_sidecar(system: System, system_container_id: str, manifest
         },
         restart_policy={"Name": "unless-stopped"},
     )
+
+
+def httpsproxy_sidecar_name(slug: str) -> str:
+    return f"{system_container_name(slug)}-httpsproxy"
+
+
+def _provision_httpsproxy_sidecar(system: System, system_container_id: str) -> None:
+    """Proxy HTTP(S) de saída (change `agent-https-forward-proxy`, D1):
+    container próprio, `network_mode: container:<id>` do sistema — mesmo
+    padrão do sidecar de gate de banco. Ao contrário dele, sobe sempre
+    (toda saída HTTP(S) do agente passa a depender deste proxy, não só
+    sistemas com conexão de banco cadastrada)."""
+    client = _docker()
+    name = httpsproxy_sidecar_name(system.slug)
+    _remove_container_if_exists(client, name)
+
+    from .services.network_policy import final_https_allowlist
+
+    settings = get_settings()
+    allow = final_https_allowlist(system)
+    env = {
+        "LISTEN_PORT": str(HTTPS_PROXY_PORT),
+        "ALLOWED_HOSTS": json.dumps(allow),
+    }
+    client.containers.run(
+        detach=True,
+        image=settings.base_image,
+        name=name,
+        command=["python", "/opt/httpproxy/sidecar.py"],
+        network_mode=f"container:{system_container_id}",
+        environment=env,
+        labels={
+            "appaiforge.system_id": system.id,
+            "appaiforge.slug": system.slug,
+            "appaiforge.managed": "true",
+            "appaiforge.role": "httpsproxy-sidecar",
+        },
+        restart_policy={"Name": "unless-stopped"},
+    )
+
+
+def refresh_https_allowlist(system: System) -> None:
+    """Recria só o sidecar do proxy HTTP(S) de saída com a allow-list
+    recalculada (change `agent-https-forward-proxy`, controles da seção 4)
+    — bem mais leve que `refresh_connections` (que recria o container do
+    sistema inteiro, interrompendo sessões): internet habilitada, modo
+    restrito e a lista de domínios não mudam nenhuma env do container do
+    agente, só a allow-list que o sidecar aplica."""
+    if not system.container_id:
+        return
+    _provision_httpsproxy_sidecar(system, system.container_id)
 
 
 def _execution_identity(mode: ExecutionMode) -> dict:
@@ -547,6 +664,10 @@ def stop_and_remove(system: System) -> None:
     except docker.errors.NotFound:
         pass
     try:
+        client.containers.get(httpsproxy_sidecar_name(system.slug)).remove(force=True)
+    except docker.errors.NotFound:
+        pass
+    try:
         client.containers.get(system_container_name(system.slug)).remove(force=True)
     except docker.errors.NotFound:
         pass
@@ -588,6 +709,7 @@ def reconcile() -> None:
             system_container = client.containers.get(system_container_name(slug))
             publish_app_by_slug(slug)
             _reconcile_dbgate_sidecar(system_id, slug, system_container.id)
+            _reconcile_httpsproxy_sidecar(system_id, slug, system_container.id)
         except docker.errors.NotFound:
             log.warning("reconciliação: container ausente para %s; recriando", slug)
             from .services.systems import get_system
@@ -623,6 +745,24 @@ def _reconcile_dbgate_sidecar(system_id: str, slug: str, system_container_id: st
     system = get_system(system_id)
     if system is not None:
         _provision_dbgate_sidecar(system, system_container_id, manifest)
+
+
+def _reconcile_httpsproxy_sidecar(system_id: str, slug: str, system_container_id: str) -> None:
+    """Mesmo racional do `_reconcile_dbgate_sidecar`, pro proxy HTTP(S) de
+    saída — esse sobe sempre (nunca condicional a manifesto), então não há
+    `if not manifest: return` aqui."""
+    client = _docker()
+    try:
+        client.containers.get(httpsproxy_sidecar_name(slug))
+        return
+    except docker.errors.NotFound:
+        pass
+    log.warning("reconciliação: sidecar do proxy HTTP(S) ausente para %s; recriando", slug)
+    from .services.systems import get_system
+
+    system = get_system(system_id)
+    if system is not None:
+        _provision_httpsproxy_sidecar(system, system_container_id)
 
 
 def _check_connections_health(system_id: str) -> None:

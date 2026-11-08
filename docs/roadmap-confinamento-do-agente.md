@@ -407,13 +407,14 @@ permissão. ADR 0021.
 ## Etapa 5 — Perímetro: tornar os proxies inescapáveis
 
 **Status: ✅ concluída** (change `agent-network-perimeter`, [ADR 0022](adr/0022-confinamento-de-rede-por-porta-tcp-via-landlock.md)) —
-**com um corte de escopo decidido em operação**: só a restrição de porta TCP (fecha o bypass dos
-proxies de banco/broker). A segunda metade do texto original abaixo (negar 443, proxy HTTP(S) para
-pip/npm/LLM direto) **não foi implementada nesta change** — decisão de escopo, registrada no
-proposal.md: exige construir uma peça de infraestrutura nova (proxy com CONNECT tunneling) e
-decidir o que fazer com a chamada direta ao provedor de LLM quando o broker está desligado (hoje o
-padrão); fica para uma change futura separada, sem bloquear o objetivo principal, que não depende
-disso. O texto original do roadmap (abaixo) é mantido como registro da intenção completa.
+**com um corte de escopo decidido em operação, fechado depois**: a entrega original só trouxe a
+restrição de porta TCP para os proxies de banco/broker, deixando 443/80 abertos por decisão de
+escopo (texto original abaixo, mantido como registro da intenção completa). Essa segunda metade —
+negar 443, proxy HTTP(S) para pip/npm/LLM direto — **foi concluída em 2026-11-08** pela change
+`agent-https-forward-proxy` ([ADR 0024](adr/0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md)):
+sidecar por sistema com `CONNECT` tunneling cego, allow-list por host calculada por sistema
+(provedor de LLM/broker + registros de pacote), e dois controles por sistema (internet
+habilitada/desabilitada; modo restrito com lista de domínios cadastrada pelo editor).
 
 **Objetivo**: fechar o bypass das etapas 3 e 4, **em Docker local, sem privilégio nenhum**,
 reusando o Landlock da etapa 2.
@@ -427,8 +428,8 @@ próprias (ex.: 15432, 13306, 18080). O Landlock do agente usa `LANDLOCK_ACCESS_
 ~~`BIND_TCP` liberado só em 8080 (app) e 4096 (harness)~~ — corrigido na implementação: o agente
 confinado nunca escuta a porta da app (8080); quem a abre é o processo da app gerada, que roda fora
 do `preexec_fn` de confinamento desde a etapa 2 (nunca teve Landlock, nem de filesystem, e isto não
-muda aqui). `BIND_TCP` do agente é só a 4096 (harness). E **443 continua aberto** (corte de
-escopo acima), não negado como o texto original planejava.
+muda aqui). `BIND_TCP` do agente é só a 4096 (harness). ~~E **443 continua aberto**~~ — fechado pelo
+ADR 0024: 443/80 saíram da lista estática, só a porta do proxy HTTP(S) de saída entra.
 
 Funciona porque **Landlock é por árvore de processos, não por namespace**: o agente está
 confinado; o processo do proxy, no outro container, não.
@@ -439,8 +440,10 @@ endereço, liberar a porta do broker cobre os dois casos sem mudança. E vale se
 **injeção de credencial é da etapa 3**; a etapa 5 só impõe que o caminho seja usado.
 
 HTTP(S) geral (`pip`, `npm`, `uv`): forçar `HTTP_PROXY`/`HTTPS_PROXY` e negar a 443. Ferramenta
-que ignora proxy env simplesmente falha — fail-closed, aceitável. **Fora de escopo nesta change**
-(ver corte de escopo acima) — fica para uma change futura.
+que ignora proxy env simplesmente falha — fail-closed, aceitável. ~~Fora de escopo nesta change~~ —
+feito pela `agent-https-forward-proxy` (ADR 0024): confirmado por spike real que `pip`/`npm`/`uv`
+respeitam as variáveis sem flag adicional, tocando só `pypi.org`/`files.pythonhosted.org`/
+`registry.npmjs.org` numa instalação comum.
 
 **Spike obrigatório antes de comprometer**: confirmar que as regras de rede do Landlock se
 aplicam a conexões de **loopback** (são só por porta, agnósticas de endereço — mas isso é
@@ -448,18 +451,20 @@ load-bearing aqui). ✅ Confirmado por spike real, virado teste (`test_apply_lan
 porta liberada conecta, porta não liberada nega com `PermissionError` (não `ConnectionRefusedError`),
 e a camada de filesystem da etapa 2 continua valendo depois do segundo `landlock_restrict_self`.
 
-**Entrega verificável**: o agente não alcança nada além das portas do gate (ressalvada a 443/80/53,
-ver corte de escopo). Sem eBPF, sem iptables, sem daemon privilegiado, sem reboot. Provado em
-integração real (`test_network_perimeter.py`): de dentro de um sistema `sandboxed` com conexão
-Postgres real, conectar no `agent_port` do proxy funciona; conectar direto na porta real do
-Postgres — alcançável na rede, só negada pelo Landlock — falha.
+**Entrega verificável**: o agente não alcança nada além das portas do gate (ressalvada a ~~443/80~~/53
+~~, ver corte de escopo~~ — 443/80 fechadas pelo ADR 0024, só 53/DNS continua sempre liberada). Sem
+eBPF, sem iptables, sem daemon privilegiado, sem reboot. Provado em integração real
+(`test_network_perimeter.py`): de dentro de um sistema `sandboxed` com conexão Postgres real,
+conectar no `agent_port` do proxy funciona; conectar direto na porta real do Postgres — alcançável
+na rede, só negada pelo Landlock — falha. O mesmo vale agora pra 443/80 (`test_https_proxy.py`):
+conectar no proxy HTTP(S) funciona; conectar direto em 443 falha.
 
 **Não resolve ainda**: exfiltração **pelo prompt** — o endpoint do LLM é legítimo e o agente pode
 mandar conteúdo do workspace por ele. Irredutível; o próprio OpenShell admite o mesmo limite.
-Também não resolve (corte de escopo desta change, não lacuna esquecida): acesso direto a provedor
-de LLM e a registros de pacote continuam por 443, sem proxy HTTP(S) forçado.
+~~Também não resolve (corte de escopo desta change, não lacuna esquecida): acesso direto a provedor
+de LLM e a registros de pacote continuam por 443, sem proxy HTTP(S) forçado.~~ Fechado pelo ADR 0024.
 
-**Specs/ADR**: extensão de `agent-sandbox`. ADR 0022.
+**Specs/ADR**: extensão de `agent-sandbox`. ADR 0022 e [0024](adr/0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md).
 
 ---
 

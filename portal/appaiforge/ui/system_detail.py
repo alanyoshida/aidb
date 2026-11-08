@@ -8,7 +8,7 @@ from nicegui import ui
 
 from ..models import System
 from ..rbac import can_access_system, can_manage_system
-from ..services import catalog, connections
+from ..services import catalog, connections, network_policy
 from ..services.systems import get_system, rename_system, revoke_inference_access, set_provider
 from .common import get_current_user, notify, render_header
 
@@ -97,6 +97,7 @@ def register() -> None:
             chat_tab = ui.tab("chat", label="Chat", icon="chat")
             editor_tab = ui.tab("editor", label="Editor", icon="code").props("data-testid=tab-editor")
             conn_tab = ui.tab("conn", label="Conexões", icon="storage")
+            net_tab = ui.tab("net", label="Domínios", icon="public").props("data-testid=tab-domains")
             ckpt_tab = ui.tab("ckpt", label="Checkpoints", icon="history")
             cfg_tab = ui.tab("cfg", label="Configurações", icon="settings")
             audit_tab = ui.tab("audit", label="Auditoria", icon="shield")
@@ -110,6 +111,8 @@ def register() -> None:
                 _render_editor(system, user)
             with ui.tab_panel(conn_tab):
                 _render_connections(system, user)
+            with ui.tab_panel(net_tab):
+                _render_network(system, user)
             with ui.tab_panel(ckpt_tab):
                 _render_checkpoints(system, user)
             with ui.tab_panel(cfg_tab):
@@ -121,7 +124,35 @@ def register() -> None:
 
 
 def _render_configuration(system, user, name_label, breadcrumb_label, provider_label) -> None:
-    """Identidade (nome, provedor/modelo) e ciclo de vida do sistema (spec system-management)."""
+    """Identidade (nome, provedor/modelo), rede de saída e ciclo de vida do
+    sistema (specs system-management, https-forward-proxy)."""
+    ui.label("Rede de saída do agente").classes("font-semibold mt-2")
+    with ui.row().classes("items-center gap-6 mb-2"):
+        with ui.column().classes("gap-0"):
+            ui.switch(
+                "Acesso à internet", value=system.internet_enabled,
+                on_change=lambda e: (
+                    network_policy.set_internet_enabled(system.id, e.value),
+                    notify("Acesso à internet " + ("habilitado" if e.value else "desabilitado — só o broker de inferência continua alcançável") + ".", kind="positive"),
+                ),
+            ).props("data-testid=toggle-internet-enabled")
+            ui.label(
+                "Desligado, o proxy de saída não libera nenhum destino externo; o broker de inferência "
+                "(quando habilitado) não é afetado — ele nunca passa por este proxy."
+            ).classes("text-xs text-gray-500")
+        with ui.column().classes("gap-0"):
+            ui.switch(
+                "Modo restrito", value=system.restricted_network,
+                on_change=lambda e: (
+                    network_policy.set_restricted_network(system.id, e.value),
+                    notify("Modo restrito " + ("ligado — só os domínios da aba \"Domínios\" são liberados." if e.value else "desligado — voltou a usar a allow-list padrão."), kind="positive"),
+                ),
+            ).props("data-testid=toggle-restricted-network")
+            ui.label(
+                "Ligado, substitui a allow-list padrão (provedor de LLM/broker + registros de pacote) "
+                "pela lista cadastrada na aba \"Domínios\" — só ela passa a valer."
+            ).classes("text-xs text-gray-500")
+
     with ui.row().classes("gap-2"):
         ui.button("Renomear sistema", icon="edit", on_click=lambda: open_rename_dialog()).props("dense outline data-testid=rename-system")
         ui.button("Editar provedor/modelo", icon="bolt", on_click=lambda: open_provider_dialog()).props("dense outline data-testid=edit-provider")
@@ -464,6 +495,57 @@ def _render_connections(system, user) -> None:
                             ui.button("Remover", icon="delete", on_click=lambda c=c: ask_remove(c)).props("dense outline color=negative data-testid=conn-remove")
 
     refresh_conns()
+
+
+def _render_network(system, user) -> None:
+    """Lista de domínios do modo restrito do proxy HTTP(S) de saída (change
+    `agent-https-forward-proxy`, D7/D8) — mesmo nível de acesso da aba
+    Conexões: quem gerencia o sistema cadastra os domínios dele. Só tem
+    efeito quando "Modo restrito" está ligado (aba Configurações), mas a
+    lista pode ser editada com o modo desligado também."""
+    manage = can_manage_system(user, system)
+    ui.label(
+        "Domínios liberados quando o \"Modo restrito\" está ligado (aba Configurações) — "
+        "substituem por completo a allow-list padrão (provedor de LLM/broker + registros de pacote)."
+    ).classes("text-sm text-gray-500 mb-2")
+
+    domains_box = ui.column().classes("w-full gap-1")
+
+    def refresh_domains() -> None:
+        domains_box.clear()
+        domains = network_policy.list_allowed_domains(system.id)
+        with domains_box:
+            if not domains:
+                ui.label("Nenhum domínio cadastrado.").classes("text-sm text-gray-500")
+            for d in domains:
+                with ui.row().classes("items-center gap-2"):
+                    ui.label(d["domain"]).classes("font-mono text-sm").props("data-testid=domain-item")
+                    if manage:
+                        ui.button(
+                            icon="delete", on_click=lambda d=d: remove_domain(d["id"])
+                        ).props("dense flat color=negative data-testid=domain-remove")
+
+    def remove_domain(domain_id: str) -> None:
+        network_policy.remove_allowed_domain(system.id, domain_id)
+        refresh_domains()
+
+    if manage:
+        with ui.row().classes("items-center gap-2 mt-2"):
+            new_domain = ui.input("Novo domínio (ex.: api.exemplo.com)").classes("w-80").props("data-testid=new-domain")
+
+            def add_domain() -> None:
+                value = (new_domain.value or "").strip()
+                if not value:
+                    return
+                result = network_policy.add_allowed_domain(system.id, value, author_id=user.id)
+                new_domain.set_value("")
+                if result is None:
+                    notify(f"'{value}' já está na lista.", kind="warning")
+                refresh_domains()
+
+            ui.button("Adicionar", icon="add", on_click=add_domain).props("data-testid=add-domain")
+
+    refresh_domains()
 
 
 def _render_editor(system, user) -> None:

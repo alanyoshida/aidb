@@ -175,11 +175,11 @@ agente gerar (bash, python, o script que ele escrever) e **irrevogáveis** depoi
 - **Landlock de rede** ([ADR 0022](docs/adr/0022-confinamento-de-rede-por-porta-tcp-via-landlock.md)),
   empilhado por cima do de filesystem: conexão TCP de saída só nas portas calculadas para o
   sistema — o `agent_port` de cada conexão cadastrada (proxy de gate de banco, etapa 4), a porta do
-  broker de inferência quando habilitado, e sempre 443/80 (TLS/HTTP — provedor de LLM direto e
-  pip/npm/uv) e 53 (DNS por TCP). Fecha o bypass que as etapas 3/4 deixavam aberto: antes, um agente
-  confinado por filesystem ainda alcançava o Postgres/MySQL real direto, por fora do proxy, bastando
-  descobrir o endereço — a regra de porta do Landlock é agnóstica de endereço, então nega isso
-  mesmo que o agente ache o host real.
+  broker de inferência quando habilitado, a porta do proxy HTTP(S) de saída (abaixo), e sempre 53
+  (DNS por TCP). Fecha o bypass que as etapas 3/4 deixavam aberto: antes, um agente confinado por
+  filesystem ainda alcançava o Postgres/MySQL real direto, por fora do proxy, bastando descobrir o
+  endereço — a regra de porta do Landlock é agnóstica de endereço, então nega isso mesmo que o
+  agente ache o host real.
 
 **O que isso substitui**: a permissão `external_directory` do próprio opencode (pedia confirmação
 no chat toda vez que o agente tocava um caminho fora do workspace, inclusive **falsos-positivos**
@@ -187,11 +187,26 @@ de caminho absoluto já dentro dele) hoje é liberada sem perguntar
 (`permission.external_directory: "allow"`) — a barreira real passou a ser o Landlock, que o
 sistema operacional aplica de verdade e não depende de ninguém clicar em "Aprovar".
 
-**Limites aceitos por ora**: 443/80 continuam abertos por decisão de escopo — acesso direto a
-provedor de LLM (quando o broker está desligado, hoje o padrão) e a registros de pacote não passam
-por um proxy forçado; exfiltração via LLM pelo próprio prompt é um limite irredutível (o endpoint é
-legítimo). Nenhuma das duas camadas de Landlock cobre a app gerada, que roda sem confinamento desde
-sempre. Sistemas em `legacy`/`reduced` não têm nenhuma (ou só a de filesystem) dessas garantias.
+**Proxy HTTP(S) de saída** ([ADR 0024](docs/adr/0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md)):
+443 e 80 saíram da lista fixa do Landlock — a única saída HTTP(S) do agente passa por um sidecar
+(`<slug>-httpsproxy`, mesmo network namespace do sistema), que só libera `CONNECT`/requisição HTTP
+para um destino (`host:porta`) numa **allow-list calculada por sistema**: o host do provedor de LLM
+configurado (quando o broker está desligado) ou o host:porta do broker (quando está ligado — nunca
+os dois), mais os registros de pacote (`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`).
+`HTTP_PROXY`/`HTTPS_PROXY` são injetadas automaticamente no ambiente do container; o proxy nunca
+decripta TLS, só faz o túnel.
+
+- **Acesso à internet** (toggle na aba Configurações, por sistema): desligado, o proxy não libera
+  nenhum destino externo — o broker de inferência (quando habilitado) não é afetado, porque nunca
+  passou por este proxy.
+- **Modo restrito** (toggle + aba Domínios, por sistema): ligado, a allow-list acima é **substituída
+  por completo** pela lista de domínios cadastrada ali — nasce pré-populada com os registros de
+  pacote, editável pelo editor do sistema (mesmo acesso da aba Conexões).
+
+**Limites aceitos por ora**: exfiltração via LLM pelo próprio prompt é um limite irredutível (o
+endpoint é legítimo, o agente pode mandar conteúdo do workspace por ele). Nenhuma das camadas de
+Landlock cobre a app gerada, que roda sem confinamento desde sempre. Sistemas em `legacy`/`reduced`
+não têm nenhuma (ou só a de filesystem) dessas garantias.
 
 ### Migrar um sistema de `legacy` para `sandboxed`
 

@@ -1,6 +1,6 @@
 # 0022 — Confinamento de rede por porta TCP via Landlock
 
-* Status: aceito
+* Status: aceito (o corte de escopo "443/80 continuam abertos" fechado pelo [ADR 0024](0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md))
 * Data: 2026-11-08
 * Decidida em: change `agent-network-perimeter` (design D1–D4), etapa 5 do roadmap de confinamento
 * Estende: [ADR 0019](0019-sandbox-seccomp-landlock-no-supervisor.md) (sandbox seccomp+Landlock)
@@ -28,9 +28,10 @@ A lista de portas liberadas é **calculada por sistema**, não fixa no perfil: o
 cada conexão do manifesto do proxy de gate de banco (dinâmico — varia com o número de conexões do
 sistema), a porta do broker de inferência quando habilitado, e a porta do próprio harness (para
 escuta). Entra no mesmo `agent-profile.json` que já carrega `readable_paths`/`writable_paths`,
-sem canal novo. Além dessas, 443/80 (TLS/HTTP) e 53 (DNS por TCP) ficam **sempre** liberadas —
-decisão de escopo, não lacuna: acesso direto a provedor de LLM (quando o broker está desligado,
-hoje o padrão) e a registros de pacote (pip/npm/uv) continuam como estão.
+sem canal novo. Além dessas, 53 (DNS por TCP) fica **sempre** liberada. 443/80 (TLS/HTTP) também
+ficavam sempre liberadas por decisão de escopo — **revertido pelo ADR 0024**: saíram da lista
+estática, substituídas pela porta de um proxy HTTP(S) de saída obrigatório, com allow-list por
+host calculada por sistema.
 
 Validado por spike real antes de comprometer a abordagem (dentro de um container com a identidade
 `sandboxed` de verdade): uma porta de loopback liberada conecta; uma não liberada nega com
@@ -48,8 +49,7 @@ depois do segundo `landlock_restrict_self`.
 - **Negar 443 e forçar proxy HTTP(S) para pip/npm/LLM direto** — a leitura literal do roadmap
   também pedia isso. Descartada **desta** change: exige construir uma peça de infraestrutura nova
   (proxy com CONNECT tunneling) e decidir o que fazer com a chamada direta ao provedor sem o
-  broker; vira uma change futura separada, sem bloquear o objetivo principal (fechar o bypass dos
-  proxies de banco/broker), que não depende disso.
+  broker; virou a change futura separada prevista aqui — ver ADR 0024, que fecha exatamente isso.
 
 ## Consequências
 
@@ -58,8 +58,9 @@ depois do segundo `landlock_restrict_self`.
 - Adicionar uma nova origem de tráfego de saída no futuro (nova integração, novo provedor atrás de
   porta própria) exige lembrar de abrir a porta no cálculo do perfil — mesmo custo de manutenção já
   aceito para `readable_paths` desde o ADR 0019.
-- Exfiltração via porta 443 (LLM, pacotes) continua possível — limite aceito, consistente com o
-  que o roadmap já chamava de irredutível para o caminho do LLM.
+- ~~Exfiltração via porta 443 (LLM, pacotes) continua possível~~ — fechado pelo ADR 0024 pro
+  acesso direto a qualquer host; exfiltração **pelo prompt** (conteúdo do workspace mandado pro LLM
+  pelo canal legítimo) continua irredutível, como o roadmap já registrava.
 - A app gerada continua sem nenhum Landlock (nem filesystem, nem rede agora) — não muda com esta
   change; confiná-la teria valor de segurança questionável, já que o agente escreve o código dela.
 - Hosts com ABI de Landlock entre 1 e 3 (filesystem funciona, rede não) degradam silenciosamente
