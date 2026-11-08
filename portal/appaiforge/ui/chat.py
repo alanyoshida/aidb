@@ -298,10 +298,18 @@ def render_chat(system: System, user: User) -> None:
                 .order_by(ChatSession.created_at.desc())
                 .limit(20)
             ).scalars().all()
-        # inclui a sessão ativa no fingerprint: sem isto, trocar de sessão sem
-        # criar/remover nenhuma (o caso comum) nunca re-renderizava a lista, e
-        # o destaque de "sessão ativa" ficava preso na primeira renderização
-        fingerprint = (active_session["id"], tuple(r.id for r in rows))
+        # inclui a sessão ativa, o título e o estado de revogação no
+        # fingerprint: sem a sessão ativa, trocar de sessão sem criar/remover
+        # nenhuma (o caso comum) nunca re-renderizava a lista, e o destaque de
+        # "sessão ativa" ficava preso na primeira renderização. Sem título e
+        # revogação, renomear uma sessão não mudava o conjunto de ids — o
+        # fingerprint ficava igual e a lista nunca re-renderizava, nem no
+        # timer de 2s (achado ao vivo: "renomeei e deu OK, mas o nome na
+        # sidebar não mudou").
+        fingerprint = (
+            active_session["id"],
+            tuple((r.id, r.title, r.inference_revoked) for r in rows),
+        )
         if fingerprint == getattr(_load_sessions, "_last", None):
             return
         _load_sessions._last = fingerprint
