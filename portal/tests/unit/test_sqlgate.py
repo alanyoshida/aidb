@@ -124,3 +124,26 @@ def test_statement_que_so_falha_no_tokenizer_e_bloqueada_sem_levantar():
     `SqlglotError` (base de ParseError e TokenError), essa promessa quebra."""
     result = sqlgate.classify("select $$")
     assert isinstance(result, Blocked)
+
+
+def test_reset_query_do_asyncpg_e_normal():
+    """Achado real (change agent-https-forward-proxy, testado ao vivo):
+    `UNLISTEN *` sozinho derruba o tokenizer do sqlglot inteiro (não
+    reconhece `UNLISTEN`, tenta ler o `*` como multiplicação) — e é
+    exatamente o reset que o próprio asyncpg manda ao devolver uma conexão
+    pro pool (`Connection.get_reset_query()`). Sem tratamento, toda app
+    gerada usando `asyncpg.create_pool()` (padrão comum) ficava bloqueada
+    pelo gate a cada devolução de conexão — nenhum dos comandos do reset
+    toca dado de tabela."""
+    result = sqlgate.classify(
+        "SELECT pg_advisory_unlock_all(); CLOSE ALL; UNLISTEN *; RESET ALL;"
+    )
+    assert isinstance(result, Normal)
+
+
+def test_unlisten_star_escondendo_delete_nao_vira_normal():
+    """O fallback por pedaço (`;`) não deve deixar passar algo perigoso só
+    porque está ao lado de um `UNLISTEN *` válido — cada pedaço continua
+    classificado por conta própria."""
+    result = sqlgate.classify("UNLISTEN *; DELETE FROM clientes;")
+    assert isinstance(result, Confirmable)

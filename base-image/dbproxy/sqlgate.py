@@ -15,6 +15,7 @@ confirmável. Múltiplas statements numa mesma string assumem a pior classe.
 """
 
 import dataclasses
+import re
 
 import sqlglot
 from sqlglot import exp
@@ -32,6 +33,15 @@ DDL_KEYS = {
     "attach",
     "detach",
 }
+
+# `UNLISTEN *` é o único padrão conhecido que derruba o tokenizer do
+# sqlglot inteiro (ele não reconhece `UNLISTEN` e tenta ler o `*` como
+# multiplicação) — é exatamente o que o asyncpg manda sozinho ao devolver
+# uma conexão pro pool (`Connection.get_reset_query()`:
+# `SELECT pg_advisory_unlock_all(); CLOSE ALL; UNLISTEN *; RESET ALL;`).
+# Casamento estrito por padrão (não por palavra-chave solta) — qualquer
+# outra coisa que o parser não entenda continua bloqueada, postura padrão.
+_UNLISTEN_STAR_RE = re.compile(r"^unlisten\s+\*$", re.IGNORECASE)
 
 
 @dataclasses.dataclass
@@ -53,23 +63,54 @@ class Blocked:
     reason: str
 
 
+_RANK = {Normal: 0, Confirmable: 1, Blocked: 2}
+
+
+def _worst(results) -> object:
+    worst: tuple[int, object] = (0, Normal())
+    for result in results:
+        rank = _RANK[type(result)]
+        if rank > worst[0]:
+            worst = (rank, result)
+    return worst[1]
+
+
 def classify(sql: str):
     """Classifica o texto (uma ou mais statements) — nunca levanta exceção."""
     try:
         statements = [s for s in sqlglot.parse(sql, dialect="postgres") if s is not None]
     except sqlglot.errors.SqlglotError as exc:
-        return Blocked(f"statement não interpretada pelo parser: {exc}")
+        return _classify_unparseable_batch(sql, exc)
 
     if not statements:
         return Blocked("statement vazia")
 
-    worst: tuple[int, object] = (0, Normal())
-    for statement in statements:
-        result = _classify_one(statement)
-        rank = {Normal: 0, Confirmable: 1, Blocked: 2}[type(result)]
-        if rank > worst[0]:
-            worst = (rank, result)
-    return worst[1]
+    return _worst(_classify_one(s) for s in statements)
+
+
+def _classify_unparseable_batch(sql: str, original_exc: Exception) -> object:
+    """O sqlglot falhou pra string inteira — tenta nos pedaços separados
+    por `;` antes de desistir, porque um único trecho que ele não entende
+    (ex.: `UNLISTEN *`) derruba o tokenizer pra string inteira mesmo com
+    trechos ao lado (`CLOSE ALL`, `RESET ALL`) perfeitamente válidos
+    sozinhos. Qualquer pedaço que também falhe sozinho e não bata o padrão
+    estrito conhecido preserva a postura padrão: bloqueada."""
+    chunks = [c.strip() for c in sql.split(";") if c.strip()]
+    if not chunks:
+        return Blocked("statement vazia")
+    return _worst(_classify_chunk(chunk, original_exc) for chunk in chunks)
+
+
+def _classify_chunk(chunk: str, original_exc: Exception) -> object:
+    try:
+        sub_statements = [s for s in sqlglot.parse(chunk, dialect="postgres") if s is not None]
+    except sqlglot.errors.SqlglotError:
+        if _UNLISTEN_STAR_RE.match(chunk):
+            return Normal()
+        return Blocked(f"statement não interpretada pelo parser: {original_exc}")
+    if not sub_statements:
+        return Blocked("statement vazia")
+    return _worst(_classify_one(s) for s in sub_statements)
 
 
 def _classify_one(statement: exp.Expression):
