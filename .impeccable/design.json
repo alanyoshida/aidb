@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-08T00:00:00Z",
+  "title": "Design System: AIDB",
+  "extensions": {
+    "colorMeta": {
+      "accent-indigo": {
+        "role": "primary",
+        "displayName": "Índigo",
+        "canonical": "#4f46e5",
+        "tonalRamp": ["#1e1b4b", "#312e81", "#3730a3", "#4338ca", "#4f46e5", "#6366f1", "#818cf8", "#c7d2fe"]
+      },
+      "accent-teal": {
+        "role": "primary-alt",
+        "displayName": "Teal",
+        "canonical": "#0f766e",
+        "tonalRamp": ["#042f2e", "#134e4a", "#115e59", "#0f766e", "#0d9488", "#14b8a6", "#2dd4bf", "#99f6e4"]
+      },
+      "accent-amber": {
+        "role": "primary-alt",
+        "displayName": "Âmbar",
+        "canonical": "#b45309",
+        "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fde68a"]
+      },
+      "accent-violet": {
+        "role": "primary-alt",
+        "displayName": "Violeta",
+        "canonical": "#6d4aff",
+        "tonalRamp": ["#2e1065", "#4c1d95", "#5b21b6", "#6d28d9", "#6d4aff", "#8b5cf6", "#a78bfa", "#ddd6fe"]
+      },
+      "bg": { "role": "neutral", "displayName": "Fundo da Página", "canonical": "#f1f2f8", "tonalRamp": ["#1e293b", "#334155", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f1f2f8", "#ffffff"] },
+      "surface": { "role": "neutral", "displayName": "Superfície", "canonical": "#ffffff", "tonalRamp": ["#1e293b", "#334155", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0", "#f8fafc", "#ffffff"] },
+      "text": { "role": "neutral", "displayName": "Texto Principal", "canonical": "#1e293b", "tonalRamp": ["#0f172a", "#1e293b", "#334155", "#475569", "#64748b", "#94a3b8", "#cbd5e1", "#e2e8f0"] },
+      "danger": { "role": "semantic-danger", "displayName": "Erro", "canonical": "#dc2626", "tonalRamp": ["#450a0a", "#7f1d1d", "#991b1b", "#b91c1c", "#dc2626", "#ef4444", "#f87171", "#fca5a5"] },
+      "success": { "role": "semantic-success", "displayName": "Sucesso", "canonical": "#15803d", "tonalRamp": ["#052e16", "#14532d", "#166534", "#15803d", "#16a34a", "#22c55e", "#4ade80", "#bbf7d0"] },
+      "warning": { "role": "semantic-warning", "displayName": "Aviso", "canonical": "#b45309", "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fde68a"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Título de sessão de chat, nome de conexão, rótulo de seção." },
+      "body": { "displayName": "Body", "purpose": "Texto corrido, mensagens do chat, conteúdo de card." },
+      "label": { "displayName": "Label", "purpose": "Rótulo de campo, badge, timestamp, botão denso." }
+    },
+    "shadows": [
+      { "name": "ambient-light", "value": "0 1px 3px rgba(15,23,42,0.08)", "purpose": "Cards, bolha recebida, notificações — modo claro/pastel." },
+      { "name": "ambient-dark", "value": "0 1px 3px rgba(0,0,0,0.5)", "purpose": "Mesmo papel, modo escuro — mais forte por causa do menor contraste de borda." }
+    ],
+    "motion": [
+      { "name": "pulse-busy", "value": "ap-pulse 1.4s ease-in-out infinite", "purpose": "Indicador de disponibilidade do agente quando há execução em curso; desliga sob prefers-reduced-motion." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Ação de confirmação — enviar mensagem, salvar.",
+      "html": "<button class=\"ds-btn-primary\">Salvar</button>",
+      "css": ".ds-btn-primary { background: #4f46e5; color: #ffffff; padding: 8px 20px; border: none; border-radius: 6px; font-family: Roboto, -apple-system, Helvetica Neue, Arial, sans-serif; font-size: 0.875rem; font-weight: 500; letter-spacing: 0.02em; cursor: pointer; transition: background 0.15s, box-shadow 0.15s; } .ds-btn-primary:hover { background: #4338ca; } .ds-btn-primary:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Ação secundária/navegação — aba, item de lista.",
+      "html": "<button class=\"ds-btn-ghost\">Nova sessão</button>",
+      "css": ".ds-btn-ghost { background: transparent; color: #5b6878; padding: 6px 12px; border: none; border-radius: 6px; font-family: Roboto, -apple-system, Helvetica Neue, Arial, sans-serif; font-size: 0.75rem; cursor: pointer; transition: background 0.15s, color 0.15s; } .ds-btn-ghost:hover { background: #f8fafc; color: #1e293b; } .ds-btn-ghost:focus-visible { outline: 2px solid #4f46e5; outline-offset: 2px; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "refersTo": "badge-status",
+      "description": "Estado do sistema (\"ativo\"), modo de acesso de conexão.",
+      "html": "<span class=\"ds-badge\">ativo</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; background: #4f46e5; color: #ffffff; padding: 2px 10px; border-radius: 9999px; font-family: Roboto, -apple-system, Helvetica Neue, Arial, sans-serif; font-size: 0.7rem; font-weight: 500; line-height: 1.6; }"
+    },
+    {
+      "name": "Chat Bubble — Sent",
+      "kind": "custom",
+      "refersTo": "chat-bubble-sent",
+      "description": "Mensagem do usuário, alinhada à direita.",
+      "html": "<div class=\"ds-bubble-row ds-bubble-row--sent\"><div class=\"ds-bubble ds-bubble--sent\">crie um CRUD da tabela clientes</div></div>",
+      "css": ".ds-bubble-row { display: flex; } .ds-bubble-row--sent { justify-content: flex-end; } .ds-bubble { max-width: 70%; padding: 10px 14px; font-family: Roboto, -apple-system, Helvetica Neue, Arial, sans-serif; font-size: 1rem; line-height: 1.5; } .ds-bubble--sent { background: #4f46e5; color: #ffffff; border-radius: 16px 16px 4px 16px; }"
+    },
+    {
+      "name": "Chat Bubble — Received",
+      "kind": "custom",
+      "refersTo": "chat-bubble-received",
+      "description": "Mensagem do agente, alinhada à esquerda.",
+      "html": "<div class=\"ds-bubble-row ds-bubble-row--received\"><div class=\"ds-bubble ds-bubble--received\">Entendi o pedido, começando a gerar.</div></div>",
+      "css": ".ds-bubble-row { display: flex; } .ds-bubble-row--received { justify-content: flex-start; } .ds-bubble { max-width: 70%; padding: 10px 14px; font-family: Roboto, -apple-system, Helvetica Neue, Arial, sans-serif; font-size: 1rem; line-height: 1.5; } .ds-bubble--received { background: #ffffff; color: #1e293b; border: 1px solid #e8ecf0; border-radius: 4px 16px 16px 16px; box-shadow: 0 1px 3px rgba(15,23,42,0.08); }"
+    },
+    {
+      "name": "Chat Input",
+      "kind": "input",
+      "refersTo": "input-chat",
+      "description": "Campo de envio do chat — único input totalmente em pílula do sistema.",
+      "html": "<div class=\"ds-chat-input\"><input type=\"text\" placeholder=\"Peça algo ao agente...\" /><button class=\"ds-chat-send\" aria-label=\"Enviar\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M3 11.5L21 3L13.5 21L11 13L3 11.5Z\" fill=\"currentColor\"/></svg></button></div>",
+      "css": ".ds-chat-input { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 22px; padding: 4px 6px 4px 16px; } .ds-chat-input input { flex: 1; border: none; background: transparent; outline: none; font-family: Roboto, -apple-system, Helvetica Neue, Arial, sans-serif; font-size: 1rem; color: #1e293b; } .ds-chat-send { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; border: none; background: #4f46e5; color: #ffffff; cursor: pointer; }"
+    },
+    {
+      "name": "Availability Dot",
+      "kind": "custom",
+      "refersTo": "availability-dot",
+      "description": "Indicador pulsante de estado do agente (livre/ocupado) — respeita prefers-reduced-motion.",
+      "html": "<span class=\"ds-dot ds-dot--busy\"></span>",
+      "css": ".ds-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #15803d; transition: background 200ms ease; } .ds-dot--busy { background: #b45309; animation: ds-pulse 1.4s ease-in-out infinite; } @keyframes ds-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.72); } } @media (prefers-reduced-motion: reduce) { .ds-dot--busy { animation: none; } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "O Caderno de Operador",
+    "overview": "AIDB é um painel técnico para quem opera sistemas de IA confinados sobre bancos de produção — não um produto de vitrine. A superfície fica quieta por padrão: fundo neutro, texto escuro sobre claro (ou o inverso no modo escuro), sem imagem, sem gradiente, sem textura. A cor aparece só onde carrega significado — um destaque de marca/ação, um estado (ativo, erro, aviso), uma origem (bolha do usuário vs. do agente). É a mesma lógica de um caderno de operador: a maior parte da página é anotação neutra; o grifo colorido é reservado pro que precisa de atenção.\n\nO sistema não tem uma identidade tipográfica própria (Roboto, a fonte padrão do Material/Quasar, nunca foi substituída) nem motivo gráfico assinatura — a assinatura visual do produto é o próprio mecanismo de tema: 4 cores de destaque (Índigo, Teal, Âmbar, Violeta) × 3 modos (Light, Dark, Pastel) = 12 combinações, todas auditadas em contraste WCAG AA, trocáveis em runtime sem reload. Nenhuma combinação é \"a identidade\" — a identidade é o sistema de troca em si.",
+    "keyCharacteristics": [
+      "Neutro por padrão; cor só carrega significado (ação, estado, origem).",
+      "12 combinações de tema trocáveis em runtime, todas auditadas em contraste AA.",
+      "Sem imagem, gradiente ou textura — tudo é cor sólida e tipografia.",
+      "Curvas discretas e consistentes (campos, cards, bolhas de chat) em vez de cantos retos ou excesso de arredondamento.",
+      "Sem elevação dramática: uma única sombra ambiente, usada com moderação."
+    ],
+    "rules": [
+      { "name": "Significado, não Decoração", "body": "Toda cor fora de texto/fundo neutro precisa justificar um papel (ação, estado ou origem). Se a pergunta \"essa cor está dizendo algo ao usuário?\" não tem resposta clara, a cor não deveria estar ali.", "section": "colors" },
+      { "name": "Par \"on-\"", "body": "Toda cor semântica ou de destaque tem um par de texto-sobre-fundo calculado por modo, nunca branco fixo — no modo escuro as cores semânticas ficam claras, e texto branco sobre elas cai pra ~3:1.", "section": "colors" },
+      { "name": "Sem Display", "body": "Não existe papel \"display\"/\"headline\" neste sistema — é um painel de operação (modo Operate), não uma landing page.", "section": "typography" },
+      { "name": "Uma Sombra Só", "body": "Existe exatamente um token de sombra por modo. Um componente novo que \"precisa\" de uma sombra mais forte ou mais sutil é sinal de que a hierarquia deveria vir de cor/borda, não de uma segunda sombra.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do calcular o par de texto \"on-*\" pra qualquer novo fundo semântico ou de destaque — nunca assumir branco.",
+      "Do manter o scroll do chat isolado (altura fixa + scroll interno) em vez de deixar a página inteira rolar.",
+      "Do usar o indicador de disponibilidade (ponto colorido, com variante pulsante) pra qualquer estado \"em progresso\" análogo, respeitando prefers-reduced-motion.",
+      "Do manter a borda como principal separador visual entre superfícies; a sombra é só reforço opcional."
+    ],
+    "donts": [
+      "Don't usar as classes de cor crua do Tailwind ou do Quasar sem mapear pro token do tema — elas quebram contraste no modo escuro.",
+      "Don't introduzir uma segunda sombra ou nível de elevação — um token de sombra por modo é o teto.",
+      "Don't introduzir um papel tipográfico \"display\"/\"headline\" — este é um painel Operate, não uma landing page.",
+      "Don't fixar uma das 4 cores de destaque como \"a\" cor da marca em código novo — todo componente deve ler a cor de destaque ativa, nunca um hex específico."
+    ]
+  }
+}
