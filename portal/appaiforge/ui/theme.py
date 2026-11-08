@@ -366,6 +366,34 @@ CHAT_CSS: Final[str] = """
   padding: 0 16px !important; border: 1px solid var(--ap-border) !important; }
 .af-chat-send { background: var(--ap-accent) !important; color: var(--ap-on-accent) !important; }
 .af-chat-send .q-icon { color: var(--ap-on-accent) !important; }
+
+/* Sidebar de sessões do Chat: coluna fixa à esquerda no desktop. Abaixo de
+   700px ela não cabe ao lado do chat sem empurrar tudo pra baixo (achado do
+   critique) — vira um drawer deslizante, escondido por padrão, com um botão
+   de hambúrguer (só visível nessa largura) e um fundo escurecido pra fechar
+   ao tocar fora. */
+.af-chat-sidebar-toggle, .af-chat-backdrop { display: none; }
+
+@media (max-width: 700px) {
+  .af-chat-sidebar-toggle { display: inline-flex !important; }
+  .af-chat-sidebar {
+    /* 2100/2050: o header do NiceGUI (.q-header) usa z-index 2000 — abaixo
+       disso o drawer "abria" de verdade (classe e transform certos) mas
+       ficava pintado por baixo do header, invisível na prática. */
+    position: fixed; top: 0; left: 0; height: 100vh; z-index: 2100;
+    max-width: 85vw; margin: 0 !important;
+    background: var(--ap-surface); border-right: 1px solid var(--ap-border);
+    box-shadow: var(--ap-shadow);
+    padding: 16px 12px; overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform .2s ease;
+  }
+  .af-chat-sidebar.af-open { transform: translateX(0); }
+  .af-chat-backdrop.af-open {
+    display: block; position: fixed; inset: 0; z-index: 2050;
+    background: rgba(15, 23, 42, 0.4);
+  }
+}
 """
 
 

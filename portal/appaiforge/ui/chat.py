@@ -188,18 +188,27 @@ def render_chat(system: System, user: User) -> None:
         # 150px) resolvia "esconder qual sessão está ativa", mas ainda
         # competia por espaço vertical com o resto do chat. Uma coluna própria
         # não compete com nada — sobra a largura toda do log pro conteúdo.
-        with ui.column().classes("gap-2").style("width: 256px; flex: none"):
+        # Abaixo de 700px (theme.py) ela vira um drawer deslizante; o fundo
+        # escurecido (fecha ao tocar fora) só existe de verdade nessa largura.
+        with ui.column().classes("gap-2 af-chat-sidebar").style("width: 256px; flex: none") as sidebar_col:
             ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
                 'flat dense no-caps data-testid=chat-new-session aria-label="Nova sessão"'
             ).classes("text-xs")
             ui.label("Sessões").classes("text-xs font-semibold text-gray-500")
             with ui.scroll_area().classes("w-full h-96"):
                 sessions_col = ui.column().classes("w-full gap-1")
+        sidebar_backdrop = ui.element("div").classes("af-chat-backdrop").on(
+            "click", lambda: _close_sidebar()
+        )
 
         # --- área principal do chat -------------------------------------------
         with ui.column().classes("grow gap-1").style("min-width: 0"):
             session_title_row = ui.row().classes("w-full items-center gap-1")
             with session_title_row:
+                ui.button(icon="menu", on_click=lambda: _toggle_sidebar()).props(
+                    'flat dense round data-testid=chat-sidebar-toggle '
+                    'aria-label="Abrir lista de sessões"'
+                ).classes("af-chat-sidebar-toggle")
                 session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
                 rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props(
                     'flat dense round aria-label="Renomear esta sessão"'
@@ -253,6 +262,16 @@ def render_chat(system: System, user: User) -> None:
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
+
+    def _toggle_sidebar() -> None:
+        # só tem efeito visual abaixo de 700px (CSS em theme.py) — no desktop
+        # a sidebar já é sempre visível e o botão fica escondido
+        sidebar_col.classes(toggle="af-open")
+        sidebar_backdrop.classes(toggle="af-open")
+
+    def _close_sidebar() -> None:
+        sidebar_col.classes(remove="af-open")
+        sidebar_backdrop.classes(remove="af-open")
 
     def _update_input_blocked() -> None:
         blocked = active_session["blocked"]
@@ -328,6 +347,9 @@ def render_chat(system: System, user: User) -> None:
         from sqlalchemy import select as sa_select
         from ..models import RunEventRecord
 
+        # no mobile (drawer), escolher uma sessão deve revelar o chat por
+        # trás — sem isto o drawer ficava aberto por cima da conversa
+        _close_sidebar()
         if active_session["id"] == sess_id:
             return
         active_session["id"] = sess_id
