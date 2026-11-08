@@ -95,6 +95,44 @@ def test_dedup_colapsa_comando_e_usage_repetidos(editor, fake_workspace):
     assert usages[0].meta["input_tokens"] == 100
 
 
+class InterleavedQuietHarness(HarnessPort):
+    """Achado ao vivo (critique do Chat): dois `command_run` idênticos com um
+    `tool_output` (kind silencioso no chat, _QUIET_KINDS) entre eles — o
+    dedup antigo só lembrava do ÚLTIMO evento despachado, de qualquer kind,
+    então o `tool_output` no meio "zerava" a memória e o segundo
+    `command_run` igual passava, duplicado, no log (o `tool_output` em si
+    nunca aparece na tela, então os dois `command_run` pareciam consecutivos
+    e idênticos pro usuário)."""
+
+    def create_session(self, system: dict) -> str:
+        return "ses_interleaved"
+
+    def interrupt(self, system: dict, session_id: str) -> None:
+        pass
+
+    def reply_gate(self, system: dict, session_id: str, request_id: str, approve: bool) -> None:
+        pass
+
+    def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
+        on_event(RunEvent("run_started"))
+        on_event(RunEvent("command_run", text="total 0", meta={"command": "ls -la"}))
+        on_event(RunEvent("tool_output", text="total 0", meta={"tool": "bash"}))
+        on_event(RunEvent("command_run", text="total 0", meta={"command": "ls -la"}))  # mesmo comando reemitido
+        on_event(RunEvent("run_finished"))
+
+
+def test_dedup_nao_e_quebrado_por_evento_silencioso_no_meio(editor, fake_workspace):
+    harness = InterleavedQuietHarness()
+    queue = AgentQueue(harness)
+    system = create_system(editor, "Dispatch3", "dispatch-interleaved")
+    run = queue.enqueue(system.id, editor.id, "faça algo", chat_session_id=None)
+    _wait_run(queue, run.id)
+
+    events = queue.buffers[run.id].snapshot()
+    command_runs = [e for e in events if e.kind == "command_run"]
+    assert len(command_runs) == 1
+
+
 def test_usage_nao_e_contado_em_dobro_no_banco(editor, fake_workspace):
     from appaiforge.models import TokenUsage
     from sqlalchemy import select

@@ -352,13 +352,21 @@ def render_chat(system: System, user: User) -> None:
                 .where(AgentRun.chat_session_id == sess_id, AgentRun.status != RunStatus.queued)
                 .order_by(AgentRun.created_at)
             ).scalars().all()
-            run_data = [(r.id, r.prompt, r.created_at) for r in runs]
+            run_data = [(r.id, r.prompt, r.created_at, r.status) for r in runs]
 
         with log_box:
-            for run_id, run_prompt, run_at in run_data:
+            for run_id, run_prompt, run_at, run_status in run_data:
                 ui.chat_message(text=run_prompt, name=_sender_label("Você", run_at),
                                 sent=True, avatar=_AVATAR_USER)
-                _load_run_events(run_id)
+                # Uma run ainda em andamento (running/awaiting_approval) não
+                # tem seus eventos recarregados aqui — refresh_state() já
+                # faz esse replay a partir do buffer ao vivo assim que
+                # running_here vira True logo em seguida. Recarregar os dois
+                # duplicava cada evento (achado ao vivo do critique: mesmo
+                # "comando: ..." aparecendo duas vezes ao trocar pra uma
+                # sessão com run ativa).
+                if run_status not in (RunStatus.running, RunStatus.awaiting_approval):
+                    _load_run_events(run_id)
 
         _update_input_blocked()
         _load_sessions()
@@ -517,7 +525,15 @@ def render_chat(system: System, user: User) -> None:
             header = event.meta.get("header") or "pergunta do agente"
             text = f"PERGUNTA DO AGENTE — {header}: {event.text}"
         elif event.kind == "command_run":
-            text = f"comando: {(event.meta.get('command') or event.text or 'comando')[:160]}"
+            command = (event.meta.get("command") or event.text or "comando")[:160]
+            # "status" vem do harness só pra isto: distinguir o comando ainda rodando
+            # (sem output ainda) do mesmo comando já concluído — sem isto os dois
+            # eventos (legitimamente diferentes) renderizavam o mesmo texto e pareciam
+            # duplicados no log de debug. Falta de status (eventos históricos antigos,
+            # já sempre finais) cai no rótulo de concluído.
+            status = event.meta.get("status") or "completed"
+            prefix = "executando" if status in ("pending", "running") else "comando"
+            text = f"{prefix}: {command}"
         elif event.kind == "file_edited":
             files = event.meta.get("files") or ([event.meta["file"]] if event.meta.get("file") else [])
             names = ", ".join(f for f in files if f)

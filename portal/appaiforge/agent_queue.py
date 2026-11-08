@@ -249,7 +249,13 @@ class AgentQueue:
                 cs.harness_session_id = session_id
                 cs.context_reset = False
 
-        last_dispatched: dict = {"key": None}
+        # Por kind, não por slot único: um "command_run" repetido com um
+        # "tool_output"/"usage" (ambos silenciosos no chat, _QUIET_KINDS) no
+        # meio continuava passando pelo dedup, porque o slot único só lembra
+        # do ÚLTIMO evento despachado, de qualquer kind — achado ao vivo do
+        # critique (mesmo "comando: ..." duplicado no log de debug, com um
+        # evento invisível no meio quebrando a memória do dedup).
+        last_dispatched: dict = {}
 
         def on_event(event: RunEvent) -> None:
             try:
@@ -277,11 +283,14 @@ class AgentQueue:
                 return
             # opencode reemite o mesmo estado (ex.: a cada tick de uma tool em andamento,
             # ou o mesmo "usage" duas vezes) — sem isto, o comando aparece duplicado no
-            # chat e o uso de tokens é contado em dobro na auditoria
+            # chat e o uso de tokens é contado em dobro na auditoria. Compara só contra o
+            # último evento do MESMO kind (não o último de qualquer kind): um "tool_output"
+            # ou "usage" silencioso entre dois "command_run" iguais não deve resetar a
+            # memória do dedup pro kind que importa.
             key = _event_key(event)
-            if key == last_dispatched["key"]:
+            if last_dispatched.get(event.kind) == key:
                 return
-            last_dispatched["key"] = key
+            last_dispatched[event.kind] = key
             buffer.push(event)
             if event.kind == "usage":
                 # nem todo provedor reporta modelo no evento; cai para o config do sistema

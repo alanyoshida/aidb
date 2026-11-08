@@ -225,7 +225,12 @@ class OpencodeHarness(HarnessPort):
                 if not isinstance(state, dict):
                     state = {}
                 kind = _TOOL_KIND.get(tool, "tool_output")
-                meta = {"tool": tool}
+                # "status" (pending/running/completed) só preenche de verdade quando a
+                # ferramenta termina; usado pelo chat pra não mostrar o mesmo comando como
+                # "executando" e "concluído" com texto idêntico (achado ao vivo: duas linhas
+                # iguais no log de debug — o comando ainda rodando e o comando pronto são
+                # eventos legitimamente diferentes, mas pareciam duplicados)
+                meta = {"tool": tool, "status": state.get("status", "")}
                 if tool in ("edit", "write"):
                     meta["file"] = (state.get("input") or {}).get("filePath", "")
                 if tool == "bash":
