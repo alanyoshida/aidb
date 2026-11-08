@@ -42,6 +42,9 @@ def fake_opencode():
             elif "/permissions/" in self.path or ("/permission/" in self.path and self.path.endswith("/reply")):
                 state.setdefault("replies", []).append((self.path, body.decode()))
                 self._json({"ok": True})
+            elif self.path.startswith("/question/") and self.path.endswith(("/reply", "/reject")):
+                state.setdefault("question_replies", []).append((self.path, body.decode() if body else ""))
+                self._json(True)
             else:
                 self._json({"error": "not found"}, 404)
 
@@ -255,3 +258,34 @@ def test_gate_request_normalizado_e_reply(fake_opencode):
     assert len(gate_events) == 1
     assert gate_events[0].meta["request_id"] == "per_123"
     assert "DELETE FROM clientes" in gate_events[0].text
+
+
+def test_question_asked_normalizado_e_reply_reject(fake_opencode):
+    """A ferramenta nativa `question` do opencode (achado ao vivo: agente
+    pediu confirmação de um DELETE sem WHERE por conta própria, sem gate
+    nenhum envolvido) é distinta de permission.asked — tem request_id,
+    header e opções próprios."""
+    fake_opencode["events"] = [
+        _evt("question.asked", sessionID=SESSION, id="que_123", tool={"messageID": "msg_1", "callID": "call_1"},
+             questions=[{
+                 "question": "Confirma apagar tudo?", "header": "Confirmar DELETE",
+                 "options": [{"label": "Sim", "description": "apaga tudo"}, {"label": "Não", "description": "cancela"}],
+             }]),
+        _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
+    ]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+
+    events = _run(harness, {"slug": "erp"})
+    question_events = [e for e in events if e.kind == "question_asked"]
+    assert len(question_events) == 1
+    assert question_events[0].meta["request_id"] == "que_123"
+    assert question_events[0].meta["header"] == "Confirmar DELETE"
+    assert question_events[0].meta["options"] == ["Sim", "Não"]
+    assert question_events[0].text == "Confirma apagar tudo?"
+
+    harness.reply_question({"slug": "erp"}, SESSION, "que_123", "Sim")
+    harness.reject_question({"slug": "erp"}, SESSION, "que_999")
+    replies = fake_opencode["question_replies"]
+    assert replies[0][0] == "/question/que_123/reply"
+    assert json.loads(replies[0][1]) == {"answers": [["Sim"]]}
+    assert replies[1][0] == "/question/que_999/reject"

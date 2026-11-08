@@ -141,6 +141,8 @@ _EVENT_ICON = {
     "gate_denied": "block",
     "gate_approved": "check_circle",
     "gate_resolved": "gavel",
+    "question_asked": "help",
+    "question_resolved": "gavel",
 }
 
 _GATE_COLOR_PROPS = {
@@ -148,6 +150,8 @@ _GATE_COLOR_PROPS = {
     "gate_denied": "bg-color=red-2 text-color=red-10",
     "gate_approved": "bg-color=green-2 text-color=green-10",
     "gate_resolved": "bg-color=green-2 text-color=green-10",
+    "question_asked": "bg-color=blue-2 text-color=blue-10",
+    "question_resolved": "bg-color=green-2 text-color=green-10",
 }
 
 _QUIET_KINDS = {"tool_output", "usage"}  # detalhe técnico: fora do chat
@@ -375,14 +379,19 @@ def render_chat(system: System, user: User) -> None:
 
         run_id = current_run["id"]
         info = queue.pending_gates.get(run_id)
+        question = queue.pending_questions.get(run_id)
         dbgate_pending = gate.list_pending_for_run(run_id) if run_id else []
 
-        signature = (info["request_id"] if info else None, tuple(p["id"] for p in dbgate_pending))
+        signature = (
+            info["request_id"] if info else None,
+            question["request_id"] if question else None,
+            tuple(p["id"] for p in dbgate_pending),
+        )
         if approval_state["signature"] == signature:
             return
         approval_state["signature"] = signature
         approval_box.clear()
-        if info is None and not dbgate_pending:
+        if info is None and question is None and not dbgate_pending:
             return
         with approval_box:
             if info is not None:
@@ -412,6 +421,24 @@ def render_chat(system: System, user: User) -> None:
                     with ui.row():
                         ui.button("Aprovar", icon="check", on_click=lambda: decide(True)).props("color=negative data-testid=gate-approve")
                         ui.button("Recusar", icon="close", on_click=lambda: decide(False)).props("outline data-testid=gate-deny")
+
+            # pergunta que o próprio agente fez (ferramenta nativa `question`
+            # do opencode) — sem gate nenhum decidindo, o modelo decidiu
+            # perguntar por conta própria (achado ao vivo: run presa pra
+            # sempre sem isto, não havia como responder pela UI)
+            if question is not None:
+                with ui.card().classes("w-full border-blue-400"):
+                    ui.label(question.get("header") or "O agente tem uma pergunta").classes("font-semibold text-blue-700")
+                    ui.label(question["question"]).classes("text-sm").style("white-space: pre-wrap")
+
+                    def decide_question(label: str) -> None:
+                        queue.decide_question(run_id, question["request_id"], label)
+
+                    with ui.row():
+                        for label in question.get("options", []):
+                            ui.button(
+                                label, on_click=lambda label=label: decide_question(label)
+                            ).props("outline data-testid=question-option")
 
             # pendências do proxy de banco no data plane (sidecar, change
             # db-proxy-gate-data-plane) — a conexão fica segurada do outro lado
@@ -466,6 +493,9 @@ def render_chat(system: System, user: User) -> None:
             else:
                 detail = event.meta.get("command") or event.text or permission or "ação do agente"
                 text = f"PEDIDO DE APROVAÇÃO — permissão '{permission or 'desconhecida'}': {detail}"
+        elif event.kind == "question_asked":
+            header = event.meta.get("header") or "pergunta do agente"
+            text = f"PERGUNTA DO AGENTE — {header}: {event.text}"
         elif event.kind == "command_run":
             text = f"comando: {(event.meta.get('command') or event.text or 'comando')[:160]}"
         elif event.kind == "file_edited":
@@ -514,13 +544,17 @@ def render_chat(system: System, user: User) -> None:
             # que o editor já aprovou (o evento gate_request fica no buffer até o fim da run)
             from .. import gate
 
-            aguardando = queue.pending_gates.get(current_run["id"]) is not None or bool(
+            aguardando_gate = queue.pending_gates.get(current_run["id"]) is not None or bool(
                 gate.list_pending_for_run(current_run["id"])
             )
-            set_state(
-                "aguardando sua aprovação (gate de destrutivas)" if aguardando else "agente executando...",
-                busy=True,
-            )
+            aguardando_pergunta = queue.pending_questions.get(current_run["id"]) is not None
+            if aguardando_pergunta:
+                status_label = "o agente tem uma pergunta"
+            elif aguardando_gate:
+                status_label = "aguardando sua aprovação (gate de destrutivas)"
+            else:
+                status_label = "agente executando..."
+            set_state(status_label, busy=True)
             _render_approval()
         else:
             if current_run["id"] is not None:

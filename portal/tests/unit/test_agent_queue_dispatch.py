@@ -165,3 +165,84 @@ def test_permissao_nao_bash_nao_vira_decisao_de_sql(nonbash_editor, fake_workspa
 
     # não gera entrada no histórico do gate de SQL (não é uma decisão de banco)
     assert gate_service.list_decisions(system.id) == []
+
+
+class QuestionHarness(HarnessPort):
+    """Simula o agente usando a ferramenta nativa `question` do opencode por
+    conta própria (achado ao vivo: pediu confirmação de um DELETE sem WHERE
+    sem nenhum gate envolvido) — distinta do pedido de permissão acima."""
+
+    def __init__(self):
+        self.replied: list[tuple[str, str]] = []
+        self.rejected: list[str] = []
+
+    def create_session(self, system: dict) -> str:
+        return "ses_question"
+
+    def interrupt(self, system: dict, session_id: str) -> None:
+        pass
+
+    def reply_gate(self, system: dict, session_id: str, request_id: str, approve: bool) -> None:
+        pass
+
+    def reply_question(self, system: dict, session_id: str, request_id: str, label: str) -> None:
+        self.replied.append((request_id, label))
+
+    def reject_question(self, system: dict, session_id: str, request_id: str) -> None:
+        self.rejected.append(request_id)
+
+    def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
+        on_event(RunEvent("run_started"))
+        on_event(RunEvent("question_asked", text="Confirma apagar tudo?", meta={
+            "request_id": "que_1", "header": "Confirmar DELETE",
+            "options": ["Sim, apagar", "Cancelar"],
+        }))
+        # a run fica presa aguardando decide_question(); o teste decide e segue
+
+
+@pytest.fixture()
+def question_editor(clean_db):
+    return auth.create_user("question@t.local", "pw", UserType.editor.value)
+
+
+def test_pergunta_do_agente_fica_pendente_ate_decisao_e_nao_gera_gate_decision(question_editor, fake_workspace):
+    """A run fica presa até alguém responder — sem isto, uma pergunta que o
+    próprio modelo faz (não o gate) deixava a execução travada pra sempre."""
+    harness = QuestionHarness()
+    queue = AgentQueue(harness)
+    system = create_system(question_editor, "Question", "dispatch-question")
+    run = queue.enqueue(system.id, question_editor.id, "fazer delete sem where", chat_session_id=None)
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline and run.id not in queue.pending_questions:
+        time.sleep(0.05)
+    info = queue.pending_questions.get(run.id)
+    assert info is not None
+    assert info["question"] == "Confirma apagar tudo?"
+    assert info["options"] == ["Sim, apagar", "Cancelar"]
+
+    ok = queue.decide_question(run.id, "que_1", "Sim, apagar")
+    assert ok is True
+    assert harness.replied == [("que_1", "Sim, apagar")]
+    assert run.id not in queue.pending_questions
+
+    from appaiforge import gate as gate_service
+
+    # não é uma decisão do gate de SQL — não entra no histórico de destrutivas
+    assert gate_service.list_decisions(system.id) == []
+
+
+def test_interromper_run_com_pergunta_pendente_rejeita_sem_resposta(question_editor, fake_workspace):
+    harness = QuestionHarness()
+    queue = AgentQueue(harness)
+    system = create_system(question_editor, "Question2", "dispatch-question-interrupt")
+    run = queue.enqueue(system.id, question_editor.id, "fazer delete sem where", chat_session_id=None)
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline and run.id not in queue.pending_questions:
+        time.sleep(0.05)
+    assert run.id in queue.pending_questions
+
+    queue.interrupt(run.id, system)
+    assert harness.rejected == ["que_1"]
+    assert run.id not in queue.pending_questions

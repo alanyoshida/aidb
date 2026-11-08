@@ -50,3 +50,13 @@ class HarnessPort:
     def reply_gate(self, system: dict, session_id: str, request_id: str, approve: bool) -> None:
         """Responde um pedido de permissão do gate (spec destructive-gate)."""
         raise NotImplementedError
+
+    def reply_question(self, system: dict, session_id: str, request_id: str, label: str) -> None:
+        """Responde uma pergunta que o próprio agente fez (ferramenta nativa
+        `question` do opencode — distinta do pedido de permissão acima) com
+        o rótulo da opção escolhida pelo editor."""
+        raise NotImplementedError
+
+    def reject_question(self, system: dict, session_id: str, request_id: str) -> None:
+        """Encerra uma pergunta pendente sem resposta (ex.: run interrompida)."""
+        raise NotImplementedError

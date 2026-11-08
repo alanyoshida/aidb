@@ -107,6 +107,7 @@ class AgentQueue:
         self.harness = harness
         self.buffers: dict[str, RunBuffer] = {}
         self.pending_gates: dict[str, dict] = {}  # run_id -> pedido de gate pendente
+        self.pending_questions: dict[str, dict] = {}  # run_id -> pergunta do agente pendente (ferramenta question)
         self._workers: set[str] = set()
         self._lock = threading.Lock()
 
@@ -256,6 +257,9 @@ class AgentQueue:
                 event.meta["command"] = redact(event.meta["command"])
             if event.kind == "gate_request":
                 self._handle_gate_request(system_dict, run_id, run.user_id, run.user_email, event, buffer, session_id)
+                return
+            if event.kind == "question_asked":
+                self._handle_question_asked(system_dict, run_id, event, buffer, session_id)
                 return
             # tool em progresso: opencode manda o "pending" antes de preencher o comando —
             # nada para mostrar ainda (o próximo update deste mesmo comando chega em seguida)
@@ -451,6 +455,28 @@ class AgentQueue:
                 run.status = RunStatus.awaiting_approval
         buffer.push(event)
 
+    def _handle_question_asked(self, system_dict: dict, run_id: str, event: RunEvent, buffer: RunBuffer, session_id: str) -> None:
+        """Pergunta que o próprio agente fez (ferramenta nativa `question` do
+        opencode) — distinta do pedido de permissão (`gate_request`): aqui
+        não há gate nenhum decidindo, o modelo decidiu perguntar por conta
+        própria (achado ao vivo: pediu confirmação de um DELETE sem WHERE
+        por iniciativa dele, não porque o portal pediu). Sem isto, a run
+        ficava presa pra sempre — não existia como responder pela UI."""
+        request_id = event.meta.get("request_id", "")
+        self.pending_questions[run_id] = {
+            "request_id": request_id,
+            "session_id": session_id,
+            "system_slug": system_dict["slug"],
+            "header": event.meta.get("header", ""),
+            "question": event.text,
+            "options": event.meta.get("options", []),
+        }
+        with session_scope() as s:
+            run = s.get(AgentRun, run_id)
+            if run is not None:
+                run.status = RunStatus.awaiting_approval
+        buffer.push(event)
+
     def decide_gate(self, run_id: str, request_id: str, approve: bool, user) -> bool:
         """Decisão do editor sobre um pedido confirmável (spec destructive-gate)."""
         from . import gate
@@ -485,6 +511,24 @@ class AgentQueue:
                 run.status = RunStatus.running
         return True
 
+    def decide_question(self, run_id: str, request_id: str, label: str) -> bool:
+        """Resposta do editor a uma pergunta que o agente fez por conta
+        própria — sem gate nenhum envolvido, não gera GateDecision (não é
+        uma decisão sobre SQL, é só repassar a escolha pro opencode)."""
+        info = self.pending_questions.get(run_id)
+        if info is None or info["request_id"] != request_id:
+            return False
+        self.harness.reply_question({"slug": info["system_slug"]}, info["session_id"], request_id, label)
+        self.pending_questions.pop(run_id, None)
+        buffer = self.buffers.get(run_id)
+        if buffer:
+            buffer.push(RunEvent("question_resolved", text=f"respondida pelo editor: {label}"))
+        with session_scope() as s:
+            run = s.get(AgentRun, run_id)
+            if run is not None and run.status == RunStatus.awaiting_approval:
+                run.status = RunStatus.running
+        return True
+
     def interrupt(self, run_id: str, system: System) -> None:
         # pedido pendente é recusado quando a run é interrompida
         pending = self.pending_gates.pop(run_id, None)
@@ -501,6 +545,14 @@ class AgentQueue:
             buffer = self.buffers.get(run_id)
             if buffer:
                 buffer.push(RunEvent("gate_resolved", text="recusada: execução interrompida"))
+        pending_question = self.pending_questions.pop(run_id, None)
+        if pending_question is not None:
+            self.harness.reject_question(
+                {"slug": system.slug}, pending_question["session_id"], pending_question["request_id"]
+            )
+            buffer = self.buffers.get(run_id)
+            if buffer:
+                buffer.push(RunEvent("question_resolved", text="rejeitada: execução interrompida"))
         with session_scope() as s:
             run = s.get(AgentRun, run_id)
             session_id = None

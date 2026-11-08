@@ -88,6 +88,31 @@ class OpencodeHarness(HarnessPort):
         except httpx.HTTPError as exc:
             log.warning("falha ao responder permissão do gate (%s): %s", request_id, exc)
 
+    def reply_question(self, system: dict, session_id: str, request_id: str, label: str) -> None:
+        """Responde a ferramenta nativa `question` do opencode (distinta do
+        permission.asked acima — o próprio agente decide perguntar, não é o
+        gate de permissão): POST /question/{requestID}/reply, corpo
+        {"answers": [[rótulo]]} — só a primeira pergunta do pedido é
+        suportada (ver achado real no design da task)."""
+        try:
+            base = self.resolve_base_url(system)
+            resp = httpx.post(
+                f"{base}/question/{request_id}/reply",
+                json={"answers": [[label]]},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("falha ao responder pergunta do agente (%s): %s", request_id, exc)
+
+    def reject_question(self, system: dict, session_id: str, request_id: str) -> None:
+        try:
+            base = self.resolve_base_url(system)
+            resp = httpx.post(f"{base}/question/{request_id}/reject", timeout=self.timeout)
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.warning("falha ao rejeitar pergunta do agente (%s): %s", request_id, exc)
+
     def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
         on_event(RunEvent("run_started", meta={"session_id": session_id}))
         base = self.resolve_base_url(system)
@@ -244,6 +269,23 @@ class OpencodeHarness(HarnessPort):
                 },
             )
 
-        return None
+        if etype == "question.asked":
+            questions = props.get("questions") or []
+            if not isinstance(questions, list) or not questions:
+                return None
+            # só a primeira pergunta do pedido é suportada — a ferramenta
+            # permite várias, mas o card do chat (task) só sabe mostrar uma
+            q = questions[0] if isinstance(questions[0], dict) else {}
+            options = q.get("options") or []
+            labels = [o.get("label", "") for o in options if isinstance(o, dict)]
+            return RunEvent(
+                "question_asked",
+                text=q.get("question", ""),
+                meta={
+                    "request_id": props.get("id", ""),
+                    "header": q.get("header", ""),
+                    "options": labels,
+                },
+            )
 
         return None

@@ -69,6 +69,7 @@ class FakeHarness(HarnessPort):
         self.step_delay = step_delay
         self._interrupted: set[str] = set()
         self.decisions: dict[str, bool] = {}  # gate: request_id -> aprovado?
+        self.question_decisions: dict[str, str | None] = {}  # question: request_id -> rótulo (None = rejeitada)
         self.counter = 0
 
     def create_session(self, system: dict) -> str:
@@ -80,6 +81,14 @@ class FakeHarness(HarnessPort):
 
     def reply_gate(self, system: dict, session_id: str, request_id: str, approve: bool) -> None:
         self.decisions[request_id] = approve
+
+    def reply_question(self, system: dict, session_id: str, request_id: str, label: str) -> None:
+        # o harness fake nunca emite question_asked (não simula a ferramenta
+        # nativa do opencode) — implementado só pra satisfazer o contrato
+        self.question_decisions[request_id] = label
+
+    def reject_question(self, system: dict, session_id: str, request_id: str) -> None:
+        self.question_decisions[request_id] = None
 
     def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
         on_event(RunEvent("run_started", meta={"session_id": session_id}))
