@@ -190,7 +190,7 @@ def render_chat(system: System, user: User) -> None:
         # não compete com nada — sobra a largura toda do log pro conteúdo.
         with ui.column().classes("gap-2").style("width: 256px; flex: none"):
             ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
-                "flat dense no-caps data-testid=chat-new-session"
+                'flat dense no-caps data-testid=chat-new-session aria-label="Nova sessão"'
             ).classes("text-xs")
             ui.label("Sessões").classes("text-xs font-semibold text-gray-500")
             with ui.scroll_area().classes("w-full h-96"):
@@ -236,7 +236,7 @@ def render_chat(system: System, user: User) -> None:
                 # existia no botão do topo, fora do aviso — atrito extra bem na hora
                 # em que o usuário já está frustrado)
                 ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
-                    "flat dense no-caps"
+                    'flat dense no-caps aria-label="Nova sessão"'
                 ).classes("text-xs text-amber-600")
             input_row = ui.row().classes("w-full items-center")
             with input_row:

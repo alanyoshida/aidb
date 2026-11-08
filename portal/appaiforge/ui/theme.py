@@ -237,6 +237,15 @@ body, .nicegui-content, .q-layout, .q-page-container, .q-page {
   .text-orange-10 { color: var(--ap-warning) !important; }
   .text-green-10 { color: var(--ap-success) !important; }
   .text-blue-10 { color: var(--ap-accent) !important; }
+  /* Mesmo card, metade do problema (achado de uma segunda rodada de
+     critique): o fundo (`bg-color=orange-2` etc., mesmo prop do Quasar que
+     gera o text-color acima) sofre do mesmo empate de layer — sem isto,
+     fica o pastel claro cru do Quasar atrás de QUALQUER tema, inclusive o
+     escuro. Em vez de tingir o fundo por classe (exigiria 4 tokens `-bg`
+     novos), reusa a superfície neutra do tema — mesmo padrão já usado nas
+     notificações (`.q-notification.ap-notify`, abaixo): o fundo é neutro,
+     o significado semântico mora só na cor do texto (já corrigida acima). */
+  .bg-red-2, .bg-orange-2, .bg-green-2, .bg-blue-2 { background: var(--ap-surface-2) !important; }
 }
 .bg-red-50 { background: var(--ap-danger-bg) !important; }
 .border-red-300, .border-red-400 { border-color: var(--ap-danger-border) !important; }
