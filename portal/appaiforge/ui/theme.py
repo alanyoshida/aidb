@@ -170,8 +170,13 @@ body, .nicegui-content, .q-layout, .q-page-container, .q-page {
 .q-card { border: 1px solid var(--ap-border); box-shadow: var(--ap-shadow) !important; }
 .q-separator { background: var(--ap-border) !important; }
 
-/* Tabs: inativa usa o tom secundário, ativa o destaque. */
+/* Tabs: inativa usa o tom secundário, ativa o destaque. O Quasar aplica
+   opacity:0.85 na aba inativa por cima da cor — suficiente pra derrubar
+   --ap-muted (escolhido pra ficar >=5:1 em opacidade cheia) pra 3.7:1 no modo
+   claro (achado do critique: #5b6878 a 85% sobre #f1f2f8 vira #727d8b). A
+   hierarquia já vem da cor (--ap-muted vs. --ap-accent); a opacidade some. */
 .q-tabs { color: var(--ap-muted) !important; }
+.q-tab:not(.q-tab--active) { opacity: 1 !important; }
 .q-tab--active { color: var(--ap-accent) !important; }
 .q-tabs .q-tab__indicator { background: var(--ap-accent) !important; }
 
@@ -214,11 +219,25 @@ body, .nicegui-content, .q-layout, .q-page-container, .q-page {
    (ex.: ui.chat_message(...).props("text-color=green-10")), que gera estas
    classes fixas da paleta do Quasar — nunca foram pensadas pro tema escuro
    (green-10/blue-10 são tons escuros, pra fundo claro) e ficavam ilegíveis
-   sobre a bolha escura do agente (achado ao vivo). Mesmo tratamento acima. */
-.text-red-10 { color: var(--ap-danger) !important; }
-.text-orange-10 { color: var(--ap-warning) !important; }
-.text-green-10 { color: var(--ap-success) !important; }
-.text-blue-10 { color: var(--ap-accent) !important; }
+   sobre a bolha escura do agente (achado ao vivo). Mesmo tratamento acima.
+
+   Precisam de `@layer theme` (não só !important solto): o NiceGUI declara
+   `@layer theme, base, quasar, nicegui, components, utilities, overrides,
+   quasar_importants` no documento, e `.text-blue-10` etc. do próprio Quasar
+   vivem dentro da layer `quasar_importants` com `!important`. Pela regra de
+   cascata de layers, `!important` inverte a ordem (layer mais cedo vence) E
+   qualquer coisa fora de layer nenhuma perde pra qualquer layer nomeada —
+   aumentar especificidade sozinho não resolve, confirmado ao vivo (achado do
+   critique: contraste 1.69:1 na "PERGUNTA DO AGENTE" no modo escuro, o
+   `.text-blue-10` cru do Quasar vencendo mesmo com um seletor mais
+   específico aqui). `theme` é a primeira layer declarada, então ganha de
+   `quasar_importants` (a última) nessa inversão. */
+@layer theme {
+  .text-red-10 { color: var(--ap-danger) !important; }
+  .text-orange-10 { color: var(--ap-warning) !important; }
+  .text-green-10 { color: var(--ap-success) !important; }
+  .text-blue-10 { color: var(--ap-accent) !important; }
+}
 .bg-red-50 { background: var(--ap-danger-bg) !important; }
 .border-red-300, .border-red-400 { border-color: var(--ap-danger-border) !important; }
 .border-orange-400 { border-color: var(--ap-warning) !important; }

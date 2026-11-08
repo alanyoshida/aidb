@@ -118,9 +118,14 @@ def render_artifact_segment(box, kind: str, raw: str) -> None:
 
 
 def _render_artifact_error(box, kind: str, err: str, raw: str) -> None:
-    with box, ui.card().classes("w-full border border-red-300 bg-red-50 p-2"):
-        ui.label(f"Artifact inválido ({kind}): {err}").classes("text-xs text-red-700 font-medium")
-        with ui.expansion("Ver conteúdo bruto").classes("text-xs text-red-500"):
+    # tokens do tema direto por estilo em vez de classe Tailwind crua
+    # (achado do critique: nomes de cor crus só funcionavam aqui por
+    # depender de um remapeamento global coincidente — ver DESIGN.md)
+    with box, ui.card().classes("w-full p-2").style(
+        "border: 1px solid var(--ap-danger-border); background: var(--ap-danger-bg);"
+    ):
+        ui.label(f"Artifact inválido ({kind}): {err}").classes("text-xs font-medium").style("color: var(--ap-danger)")
+        with ui.expansion("Ver conteúdo bruto").classes("text-xs").style("color: var(--ap-danger)"):
             ui.code(raw, language="text").classes("text-xs")
 
 # marcadores de transição de execução: ficam fora das bolhas de chat
@@ -178,15 +183,27 @@ def render_chat(system: System, user: User) -> None:
 
     with ui.row().classes("w-full items-center justify-start"):
         ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
-            "flat dense data-testid=chat-new-session"
+            "flat dense no-caps data-testid=chat-new-session"
         ).classes("text-xs")
+
+    # Lista sempre visível (sem expansion/colapso): reaberto a pedido do
+    # operador depois do critique apontar que uma lista colapsada abaixo do
+    # input custava rolagem + clique a cada troca, e também escondia qual
+    # sessão estava ativa — justo o estado que o bug do título em branco
+    # mais precisava deixar óbvio. Altura própria com scroll (achado ao vivo
+    # contra homolog-crm: um sistema com várias dezenas de sessões reais
+    # empurrava o chat inteiro pra fora da tela sem isto).
+    with ui.column().classes("w-full gap-1"):
+        ui.label("Sessões").classes("text-xs font-semibold text-gray-500")
+        with ui.scroll_area().classes("w-full").style("max-height: 150px"):
+            sessions_col = ui.column().classes("w-full gap-1")
 
     session_title_row = ui.row().classes("w-full items-center gap-1")
     with session_title_row:
         session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
-        rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props("flat dense round").tooltip(
-            "Renomear esta sessão"
-        )
+        rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props(
+            'flat dense round aria-label="Renomear esta sessão"'
+        ).tooltip("Renomear esta sessão")
     rename_row = ui.row().classes("w-full items-center gap-1")
     rename_row.set_visibility(False)
     with rename_row:
@@ -210,24 +227,29 @@ def render_chat(system: System, user: User) -> None:
             state_dot.classes(remove="ap-dot--busy")
     debug = {"on": False}
     debug_switch = ui.switch("Debug (mostrar comandos e arquivos alterados)").props("data-testid=chat-debug")
-    blocked_row = ui.row().classes("w-full items-center justify-center gap-1")
+    blocked_row = ui.row().classes("w-full items-center justify-center gap-2")
     blocked_row.set_visibility(False)
     with blocked_row:
         ui.icon("refresh").classes("text-sm text-amber-600")
-        ui.label("Contexto do agente foi reiniciado nesta sessão — crie uma nova sessão para continuar.").classes(
-            "text-xs text-amber-600"
-        )
+        ui.label("Contexto do agente foi reiniciado nesta sessão.").classes("text-xs text-amber-600")
+        # ação embutida no próprio aviso (achado do critique: a correção só
+        # existia no botão do topo, fora do aviso — atrito extra bem na hora
+        # em que o usuário já está frustrado)
+        ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
+            "flat dense no-caps"
+        ).classes("text-xs text-amber-600")
     input_row = ui.row().classes("w-full items-center")
     with input_row:
-        prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props("data-testid=chat-input borderless")
-        send_btn = ui.button(icon="send").classes("af-chat-send").props("flat round data-testid=chat-send")
+        prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props(
+            'data-testid=chat-input borderless aria-label="Mensagem para o agente"'
+        )
+        send_btn = ui.button(icon="send").classes("af-chat-send").props(
+            'flat round data-testid=chat-send aria-label="Enviar mensagem"'
+        ).tooltip("Enviar mensagem")
         interrupt_btn = ui.button(icon="stop").props(
             'color=negative flat round data-testid=chat-interrupt aria-label="Interromper"'
         ).tooltip("Interromper")
         interrupt_btn.set_visibility(False)
-
-    with ui.expansion("Sessões", icon="chat").classes("w-full"):
-        sessions_col = ui.column().classes("w-full gap-1")
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
@@ -257,7 +279,10 @@ def render_chat(system: System, user: User) -> None:
                 .order_by(ChatSession.created_at.desc())
                 .limit(20)
             ).scalars().all()
-        fingerprint = tuple(r.id for r in rows)
+        # inclui a sessão ativa no fingerprint: sem isto, trocar de sessão sem
+        # criar/remover nenhuma (o caso comum) nunca re-renderizava a lista, e
+        # o destaque de "sessão ativa" ficava preso na primeira renderização
+        fingerprint = (active_session["id"], tuple(r.id for r in rows))
         if fingerprint == getattr(_load_sessions, "_last", None):
             return
         _load_sessions._last = fingerprint
@@ -274,14 +299,16 @@ def render_chat(system: System, user: User) -> None:
                     ui.button(
                         label,
                         on_click=lambda sid=sess_id: _switch_session(sid),
-                    ).props("flat dense align=left").classes(btn_classes + " grow")
+                    ).props("flat dense no-caps align=left").classes(btn_classes + " grow")
                     if r.inference_revoked:
                         ui.icon("block").classes("text-xs text-red-500").tooltip("Inferência revogada")
                     else:
                         ui.button(
                             icon="block",
                             on_click=lambda sid=sess_id: _revoke_session_inference(sid),
-                        ).props("flat dense round size=sm").tooltip("Revogar inferência desta sessão")
+                        ).props(
+                            'flat dense round size=sm aria-label="Revogar inferência desta sessão"'
+                        ).tooltip("Revogar inferência desta sessão")
 
     def _revoke_session_inference(sess_id: str) -> None:
         from .common import notify
@@ -520,7 +547,26 @@ def render_chat(system: System, user: User) -> None:
     def refresh_state() -> None:
         state = queue.system_state(system.id)
         position = state.get("queued", [])
-        if state["running"]:
+        # o sistema só processa uma run por vez — ela sempre pertence a UMA
+        # sessão, nunca necessariamente à que está sendo exibida agora (achado
+        # do critique: trocar de sessão sem isto vazava a run de outra sessão
+        # pro log_box e pro approval_box desta aqui)
+        running_here = state["running"] is not None and state["running_session_id"] == active_session["id"]
+        if not running_here and active_session["id"] is None and state["running"] is not None:
+            # pouso na página sem ter clicado em nenhuma sessão ainda: acompanha
+            # a run em andamento em vez de ficar sem título nem sessão nenhuma
+            # (achado do critique: título ficava em branco neste caso)
+            from ..db import session_scope as _session_scope
+
+            active_session["id"] = state["running_session_id"]
+            with _session_scope() as s:
+                cs = s.get(ChatSession, active_session["id"])
+                session_title_label.set_text((cs.title if cs else "") or "sessão sem título")
+                active_session["blocked"] = bool(cs.context_reset) if cs else False
+            _update_input_blocked()
+            _load_sessions()
+            running_here = True
+        if running_here:
             if current_run["id"] != state["running"]:
                 current_run["id"] = state["running"]
                 current_run["shown"] = 0
@@ -553,7 +599,9 @@ def render_chat(system: System, user: User) -> None:
                     for event in events[current_run["shown"]:]:
                         render_event(log_box, event)
                     current_run["shown"] = len(events)
-            if position:
+            if state["running"] is not None:
+                set_state("agente ocupado em outra sessão", busy=True)
+            elif position:
                 set_state(f"{len(position)} pedido(s) na fila", busy=True)
             else:
                 set_state("agente livre", busy=False)

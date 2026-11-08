@@ -51,6 +51,8 @@ def test_render_artifact_segment_echart_invalido_nao_lanca(monkeypatch):
             return self
         def props(self, *a, **kw):
             return self
+        def style(self, *a, **kw):
+            return self
 
     fb = FakeBox()
     monkeypatch.setattr(chat_mod.ui, "card", lambda **kw: fb)

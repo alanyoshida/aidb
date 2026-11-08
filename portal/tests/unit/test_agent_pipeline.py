@@ -85,6 +85,37 @@ def test_fila_executa_dois_pedidos_em_serie_na_ordem(clean_db, fake_workspace):
     assert summaries == ["pedido-1", "pedido-2"]
 
 
+def test_system_state_informa_a_sessao_da_run_em_andamento(clean_db, fake_workspace):
+    """Achado do critique (chat.py): o portal só processa uma run por sistema
+    de cada vez, mas um sistema pode ter várias sessões de chat — sem saber a
+    QUAL sessão a run em andamento pertence, a UI não tinha como distinguir
+    "é a minha sessão" de "é outra sessão do mesmo sistema", e acabava
+    vazando o conteúdo de uma run alheia pra sessão que o editor estava
+    olhando."""
+    editor = auth.create_user("state@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "Estado", "estado-sessao")
+
+    class SlowFake(FakeHarness):
+        def run(self, system, session_id, prompt, on_event):
+            on_event(RunEvent("run_started"))
+            time.sleep(0.3)
+            on_event(RunEvent("run_finished", meta={"summary": prompt}))
+
+    queue = AgentQueue(SlowFake(str(fake_workspace), step_delay=0))
+    run = queue.enqueue(system.id, editor.id, "pedido único")
+
+    deadline = time.time() + 5
+    state = {}
+    while time.time() < deadline:
+        state = queue.system_state(system.id)
+        if state["running"] is not None:
+            break
+        time.sleep(0.05)
+
+    assert state["running"] == run.id
+    assert state["running_session_id"] == run.chat_session_id
+
+
 def test_checkpoints_commit_e_rollback(fake_workspace):
     from appaiforge.config import get_settings
     from pathlib import Path

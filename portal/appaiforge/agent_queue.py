@@ -138,7 +138,13 @@ class AgentQueue:
         return run
 
     def system_state(self, system_id: str) -> dict:
-        """Estado da fila para exibição: run corrente + fila de espera."""
+        """Estado da fila para exibição: run corrente + fila de espera.
+
+        `running_session_id` existe pra quem exibe várias sessões de chat do
+        mesmo sistema (UI) distinguir "a run corrente é desta sessão que estou
+        vendo" de "o sistema está ocupado numa sessão diferente" — o sistema só
+        processa uma run por vez, então a run corrente sempre pertence a UMA
+        sessão só, nunca à sessão que o editor porventura esteja olhando."""
         with session_scope() as s:
             runs = s.execute(
                 select(AgentRun)
@@ -148,10 +154,11 @@ class AgentQueue:
                 )
                 .order_by(AgentRun.created_at)
             ).scalars().all()
-            out = {"running": None, "queued": []}
+            out = {"running": None, "running_session_id": None, "queued": []}
             for r in runs:
                 if r.status in (RunStatus.running, RunStatus.awaiting_approval) and out["running"] is None:
                     out["running"] = r.id
+                    out["running_session_id"] = r.chat_session_id
                 elif r.status == RunStatus.queued:
                     out["queued"].append(r.id)
             return out
