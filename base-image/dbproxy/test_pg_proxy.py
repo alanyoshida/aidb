@@ -334,43 +334,12 @@ def test_normal_delete_por_pk_e_repassada_sem_tocar_cliente():
     assert bytes(client_writer.buf) == b""
 
 
-# ---------- hold da confirmável: segura, consulta o portal, libera/recusa (task 2.3) ----------
+# ---------- confirmável em enforce: recusada direto, sem pedir aprovação (decisão do operador) ----------
 
-def test_confirmavel_aprovada_e_repassada(monkeypatch):
-    calls = []
-
-    async def fake_request_and_wait(system_id, sql, **kwargs):
-        calls.append((system_id, sql, kwargs))
-        return "aprovada"
-
-    monkeypatch.setattr(pg_proxy.portal_gate, "request_and_wait", fake_request_and_wait)
-
-    delete_sem_where = _q("DELETE FROM t")
-    terminate = _simple_msg(b"X")
-    client_writer = _MemoryWriter()
-    up_writer = _MemoryWriter()
-
-    async def go():
-        reader = _reader_with(delete_sem_where + terminate)
-        await _pump_client_to_upstream(reader, client_writer, up_writer, _GATE_CTX, "enforce")
-
-    _run(go())
-    assert bytes(up_writer.buf) == delete_sem_where + terminate  # só libera depois da aprovação
-    assert bytes(client_writer.buf) == b""
-    assert len(calls) == 1
-    system_id, sql, kwargs = calls[0]
-    assert (system_id, sql) == ("sys-test", "DELETE FROM t")
-    assert kwargs["origin"] == "agente"
-    assert kwargs["connection_name"] == ""
-    assert kwargs["reason"] == "DELETE sem WHERE afeta a tabela inteira"
-
-
-def test_confirmavel_recusada_nao_chega_ao_upstream(monkeypatch):
-    async def fake_request_and_wait(system_id, sql, **kwargs):
-        return "recusada"
-
-    monkeypatch.setattr(pg_proxy.portal_gate, "request_and_wait", fake_request_and_wait)
-
+def test_confirmavel_em_enforce_e_recusada_direto_sem_chegar_ao_upstream():
+    """Uma DELETE/UPDATE sem WHERE restritivo é tratada como destrutiva
+    igual a um DDL: recusada na hora, sem segurar a conexão nem consultar
+    o portal por uma decisão humana."""
     delete_sem_where = _q("DELETE FROM t")
     terminate = _simple_msg(b"X")
     client_writer = _MemoryWriter()
@@ -382,36 +351,19 @@ def test_confirmavel_recusada_nao_chega_ao_upstream(monkeypatch):
 
     _run(go())
     assert bytes(up_writer.buf) == terminate  # DELETE nunca chega ao banco
-    assert client_writer.buf[0:1] == b"E"
-    assert b"recusada" in bytes(client_writer.buf)
-    assert bytes(client_writer.buf).endswith(ready_for_query())
+    expected_client = (
+        error_response("DELETE sem WHERE afeta a tabela inteira", code="42501", severity="ERROR") + ready_for_query()
+    )
+    assert bytes(client_writer.buf) == expected_client
 
 
-def test_confirmavel_expirada_e_tratada_como_recusa(monkeypatch):
-    async def fake_request_and_wait(system_id, sql, **kwargs):
-        return "expirada"
+def test_confirmavel_em_enforce_tambem_audita_com_enforced_true(monkeypatch):
+    audited = []
 
-    monkeypatch.setattr(pg_proxy.portal_gate, "request_and_wait", fake_request_and_wait)
+    async def fake_audit_shadow(ctx, sql, **kwargs):
+        audited.append((sql, kwargs.get("enforced")))
 
-    delete_sem_where = _q("DELETE FROM t")
-    terminate = _simple_msg(b"X")
-    client_writer = _MemoryWriter()
-    up_writer = _MemoryWriter()
-
-    async def go():
-        reader = _reader_with(delete_sem_where + terminate)
-        await _pump_client_to_upstream(reader, client_writer, up_writer, _GATE_CTX, "enforce")
-
-    _run(go())
-    assert bytes(up_writer.buf) == terminate
-    assert b"expirada" in bytes(client_writer.buf)
-
-
-def test_confirmavel_portal_indisponivel_e_recusa_segura(monkeypatch):
-    async def fake_request_and_wait(system_id, sql, **kwargs):
-        raise pg_proxy.portal_gate.PortalUnavailable("sem rede")
-
-    monkeypatch.setattr(pg_proxy.portal_gate, "request_and_wait", fake_request_and_wait)
+    monkeypatch.setattr(pg_proxy.portal_gate, "audit_shadow", fake_audit_shadow)
 
     delete_sem_where = _q("DELETE FROM t")
     terminate = _simple_msg(b"X")
@@ -423,16 +375,10 @@ def test_confirmavel_portal_indisponivel_e_recusa_segura(monkeypatch):
         await _pump_client_to_upstream(reader, client_writer, up_writer, _GATE_CTX, "enforce")
 
     _run(go())
-    assert bytes(up_writer.buf) == terminate  # falha de rede nunca libera por omissão
-    assert b"recusada" in bytes(client_writer.buf)
+    assert audited == [("DELETE FROM t", True)]
 
 
-def test_confirmavel_bloqueada_via_parse_descarta_bind_execute_at_sync(monkeypatch):
-    async def fake_request_and_wait(system_id, sql, **kwargs):
-        return "recusada"
-
-    monkeypatch.setattr(pg_proxy.portal_gate, "request_and_wait", fake_request_and_wait)
-
+def test_confirmavel_via_parse_descarta_bind_execute_at_sync():
     parse = _parse_msg("DELETE FROM t")
     bind = _simple_msg(b"B", b"bind data")
     execute = _simple_msg(b"E", b"\x00" + struct.pack("!i", 0))

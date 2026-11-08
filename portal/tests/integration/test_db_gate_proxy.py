@@ -36,9 +36,12 @@ def _gateway_ip(network_name: str) -> str:
 
 
 def _build_fake_portal_app():
-    """As 3 rotas internas do gate de banco (main.py), chamando o mesmo
-    `gate` de produção contra o banco real do teste — sem subir o portal
-    inteiro (NiceGUI, sync do LiteLLM) só pra o sidecar ter quem chamar."""
+    """A rota interna de auditoria do gate de banco (main.py), chamando o
+    mesmo `gate` de produção contra o banco real do teste — sem subir o
+    portal inteiro (NiceGUI, sync do LiteLLM) só pra o sidecar ter quem
+    chamar. `bloqueada`/`confirmável` em enforce são recusadas pelo proxy
+    por conta própria (sem pedir decisão a um humano); esta rota só
+    registra a auditoria depois do fato."""
     import hmac
 
     from fastapi import FastAPI, Request
@@ -53,26 +56,6 @@ def _build_fake_portal_app():
         expected = get_settings().db_gate_proxy_service_token
         supplied = request.headers.get("x-aidb-dbgate-token", "")
         return bool(expected) and hmac.compare_digest(supplied, expected)
-
-    @app.post("/internal/db-gate/requests")
-    async def create_request(request: Request):
-        if not _authorized(request):
-            return JSONResponse({"error": "não autorizado"}, status_code=401)
-        payload = await request.json()
-        result = gate.create_request(
-            payload["system_id"], payload["sql"], origin=payload["origin"],
-            connection_name=payload.get("connection_name", ""), reason=payload.get("reason", ""),
-        )
-        return JSONResponse(result, status_code=201)
-
-    @app.get("/internal/db-gate/requests/{request_id}")
-    def get_request(request_id: str, request: Request):
-        if not _authorized(request):
-            return JSONResponse({"error": "não autorizado"}, status_code=401)
-        result = gate.get_request(request_id)
-        if result is None:
-            return JSONResponse({"error": "pedido não encontrado"}, status_code=404)
-        return JSONResponse(result)
 
     @app.post("/internal/db-gate/audit")
     async def audit(request: Request):
@@ -121,13 +104,13 @@ def dbgate_portal(docker_env, monkeypatch):
     up = False
     while time.time() < deadline:
         try:
-            httpx.get(f"http://127.0.0.1:{port}/internal/db-gate/requests/x", timeout=1)
+            httpx.post(f"http://127.0.0.1:{port}/internal/db-gate/audit", json={}, timeout=1)
             up = True
             break
         except httpx.HTTPError:
             time.sleep(0.2)
     if not up:
-        raise AssertionError("portal fake (rotas do gate) não subiu em 10s")
+        raise AssertionError("portal fake (rota de auditoria do gate) não subiu em 10s")
 
     yield gateway
     server.should_exit = True
@@ -210,29 +193,11 @@ def _count_clientes(live_pg) -> int:
             return cur.fetchone()[0]
 
 
-def _wait_pending_request(system_id: str, origin: str) -> dict:
-    from appaiforge.db import session_scope
-    from appaiforge.models import GateRequest
-
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        with session_scope() as s:
-            row = (
-                s.query(GateRequest)
-                .filter(GateRequest.system_id == system_id, GateRequest.origin == origin, GateRequest.status == "pendente")
-                .order_by(GateRequest.created_at.desc())
-                .first()
-            )
-            if row is not None:
-                return {"id": row.id, "sql": row.sql, "origin": row.origin, "run_id": row.run_id}
-        time.sleep(0.5)
-    raise AssertionError(f"nenhum GateRequest pendente ({origin}) apareceu em 30s")
-
-
-def test_confirmavel_em_enforce_aguarda_aprovacao_e_executa_so_depois(system, dbgate_portal, live_pg, monkeypatch):
-    """Task 8.1: `DELETE FROM clientes` (sem WHERE, confirmável) em modo
-    enforce segura a conexão até o editor decidir; aprovada, a statement
-    executa de verdade."""
+def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_portal, live_pg, monkeypatch):
+    """Task 8.1 (revista): `DELETE FROM clientes` (sem WHERE, confirmável)
+    em modo enforce é recusada pelo proxy na hora, sem segurar a conexão
+    nem pedir decisão a um humano — mesmo tratamento de uma DDL. Os dados
+    continuam intactos."""
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
     from appaiforge.provisioning import provision_system
@@ -250,30 +215,19 @@ def test_confirmavel_em_enforce_aguarda_aprovacao_e_executa_so_depois(system, db
     agent_port = _agent_port_for(system.id)
     container = _client().containers.get(system_container_name(system.slug))
 
-    result_holder: dict = {}
-
-    def _run_delete():
-        result_holder["result"] = _exec_sql_via_proxy(container, agent_port, live_pg["database"], "DELETE FROM clientes")
-
-    thread = threading.Thread(target=_run_delete)
-    thread.start()
-
-    pending = _wait_pending_request(system.id, origin="agente")
-    assert "DELETE FROM clientes" in pending["sql"]
+    result = _exec_sql_via_proxy(container, agent_port, live_pg["database"], "DELETE FROM clientes")
+    output = result.output.decode()
+    assert result.exit_code != 0, output  # recusada: o cliente recebe um erro, não um resultado
+    assert "sem WHERE" in output or "42501" in output
+    assert _count_clientes(live_pg) == 2  # dados intactos
 
     from appaiforge import gate
 
-    decided = gate.decide_request(pending["id"], approve=True)
-    assert decided["status"] == "aprovada"
-
-    thread.join(timeout=30)
-    assert "result" in result_holder, "exec_run não terminou a tempo da aprovação"
-    output = result_holder["result"].output.decode()
-    assert result_holder["result"].exit_code == 0, output
-    assert _count_clientes(live_pg) == 0
-
     decisions = gate.list_decisions(system.id)
-    assert any(d["sql"] == "DELETE FROM clientes" and d["decision"] == "aprovada" for d in decisions)
+    assert any(
+        d["sql"] == "DELETE FROM clientes" and d["decision"] == "bloqueada" and d["classification"] == "confirmavel"
+        for d in decisions
+    )
 
 
 def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, monkeypatch):
@@ -308,9 +262,11 @@ def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, mo
 
 
 def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_portal, live_pg, monkeypatch):
-    """Task 8.3: a mesma statement confirmável, vinda do listener da app
-    (porta "app" do manifesto), gera um pedido com `origin="app"` — distinto
-    do pedido que viria do listener do agente."""
+    """Task 8.3 (revista): a mesma statement confirmável, vinda do listener
+    da app (porta "app" do manifesto), é recusada igual à do agente e
+    audita com `origin="app"` — distinto do que viria do listener do
+    agente, e sem run associado (a app gerada não é uma execução do
+    agente)."""
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
     from appaiforge.provisioning import provision_system
@@ -328,18 +284,16 @@ def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_po
     app_port = _app_port_for(system.id)
     container = _client().containers.get(system_container_name(system.slug))
 
-    thread = threading.Thread(
-        target=lambda: _exec_sql_via_proxy(container, app_port, live_pg["database"], "DELETE FROM clientes")
-    )
-    thread.start()
-
-    pending = _wait_pending_request(system.id, origin="app")
-    assert pending["run_id"] is None  # origem app nunca tem run associado (gate.py, create_request)
+    result = _exec_sql_via_proxy(container, app_port, live_pg["database"], "DELETE FROM clientes")
+    assert result.exit_code != 0, result.output.decode()
+    assert _count_clientes(live_pg) == 2
 
     from appaiforge import gate
 
-    gate.decide_request(pending["id"], approve=True)
-    thread.join(timeout=30)
+    decisions = gate.list_decisions(system.id)
+    app_decision = next(d for d in decisions if d["sql"] == "DELETE FROM clientes")
+    assert app_decision["origin"] == "app"
+    assert app_decision["decision"] == "bloqueada"
 
 
 def test_app_gerada_funciona_pelo_proxy_sem_credencial_no_env(system, dbgate_portal, live_pg):

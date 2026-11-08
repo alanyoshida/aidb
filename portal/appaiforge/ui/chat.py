@@ -375,23 +375,19 @@ def render_chat(system: System, user: User) -> None:
     approval_state: dict = {"signature": None}
 
     def _render_approval() -> None:
-        from .. import gate
-
         run_id = current_run["id"]
         info = queue.pending_gates.get(run_id)
         question = queue.pending_questions.get(run_id)
-        dbgate_pending = gate.list_pending_for_run(run_id) if run_id else []
 
         signature = (
             info["request_id"] if info else None,
             question["request_id"] if question else None,
-            tuple(p["id"] for p in dbgate_pending),
         )
         if approval_state["signature"] == signature:
             return
         approval_state["signature"] = signature
         approval_box.clear()
-        if info is None and question is None and not dbgate_pending:
+        if info is None and question is None:
             return
         with approval_box:
             if info is not None:
@@ -439,38 +435,6 @@ def render_chat(system: System, user: User) -> None:
                             ui.button(
                                 label, on_click=lambda label=label: decide_question(label)
                             ).props("outline data-testid=question-option")
-
-            # pendências do proxy de banco no data plane (sidecar, change
-            # db-proxy-gate-data-plane) — a conexão fica segurada do outro lado
-            # até decidir aqui; ao contrário do pedido acima, não há `reply_gate`
-            # do harness envolvido, decide_request só muda o status no banco.
-            for pending in dbgate_pending:
-                with ui.card().classes("w-full border-orange-400"):
-                    ui.label("O agente pede aprovação para uma operação destrutiva (proxy de banco)").classes(
-                        "font-semibold text-orange-700"
-                    )
-                    ui.label(f"SQL: {pending['sql']}").classes("text-sm").style("white-space: pre-wrap")
-                    ui.label(f"motivo: {pending['reason']}").classes("text-xs text-gray-600")
-                    if pending.get("connection_name"):
-                        ui.label(f"conexão: {pending['connection_name']}").classes("text-xs text-gray-600")
-
-                    def decide_dbgate(approve: bool, request_id=pending["id"]) -> None:
-                        from ..models import User as UserM
-                        from ..db import session_scope
-
-                        with session_scope() as s:
-                            author = s.get(UserM, user.id)
-                            author_id = author.id if author else None
-                            author_email = author.email if author else ""
-                        gate.decide_request(request_id, approve, author_id=author_id, author_email=author_email)
-
-                    with ui.row():
-                        ui.button(
-                            "Aprovar", icon="check", on_click=lambda rid=pending["id"]: decide_dbgate(True, rid)
-                        ).props("color=negative data-testid=dbgate-approve")
-                        ui.button(
-                            "Recusar", icon="close", on_click=lambda rid=pending["id"]: decide_dbgate(False, rid)
-                        ).props("outline data-testid=dbgate-deny")
 
     def render_event(box, event) -> None:
         if event.kind in _QUIET_KINDS:
@@ -542,11 +506,7 @@ def render_chat(system: System, user: User) -> None:
             # queue.pending_gates reflete só o pedido ATUALMENTE pendente — ao contrário
             # de varrer o histórico do buffer, que continuaria "True" para sempre depois
             # que o editor já aprovou (o evento gate_request fica no buffer até o fim da run)
-            from .. import gate
-
-            aguardando_gate = queue.pending_gates.get(current_run["id"]) is not None or bool(
-                gate.list_pending_for_run(current_run["id"])
-            )
+            aguardando_gate = queue.pending_gates.get(current_run["id"]) is not None
             aguardando_pergunta = queue.pending_questions.get(current_run["id"]) is not None
             if aguardando_pergunta:
                 status_label = "o agente tem uma pergunta"

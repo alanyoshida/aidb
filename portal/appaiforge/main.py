@@ -66,51 +66,6 @@ def create_app() -> FastAPI:
             return JSONResponse({"error": "sistema não encontrado"}, status_code=404)
         return JSONResponse(context)
 
-    @application.post("/internal/db-gate/requests")
-    async def db_gate_create_request(request: Request) -> JSONResponse:
-        """Proxy de banco (sidecar) registra um pedido de aprovação para uma
-        statement confirmável (autenticado por token de serviço)."""
-        from .config import get_settings
-        from . import gate
-
-        expected = get_settings().db_gate_proxy_service_token
-        supplied = request.headers.get("x-aidb-dbgate-token", "")
-        if not expected or not hmac.compare_digest(supplied, expected):
-            return JSONResponse({"error": "não autorizado"}, status_code=401)
-        try:
-            payload = await request.json()
-        except Exception:  # noqa: BLE001 - payload inválido não deve derrubar o portal
-            return JSONResponse({"error": "payload inválido"}, status_code=400)
-        system_id = payload.get("system_id")
-        sql = payload.get("sql")
-        origin = payload.get("origin")
-        if not system_id or not sql or origin not in ("agente", "app"):
-            return JSONResponse(
-                {"error": "system_id, sql e origin ('agente' ou 'app') são obrigatórios"}, status_code=400
-            )
-        result = gate.create_request(
-            system_id, sql, origin=origin,
-            connection_name=payload.get("connection_name", ""),
-            reason=payload.get("reason", ""),
-        )
-        return JSONResponse(result, status_code=201)
-
-    @application.get("/internal/db-gate/requests/{request_id}")
-    def db_gate_get_request(request_id: str, request: Request) -> JSONResponse:
-        """Proxy consulta o desfecho (pendente/aprovada/recusada/expirada)
-        enquanto segura a conexão com o cliente."""
-        from .config import get_settings
-        from . import gate
-
-        expected = get_settings().db_gate_proxy_service_token
-        supplied = request.headers.get("x-aidb-dbgate-token", "")
-        if not expected or not hmac.compare_digest(supplied, expected):
-            return JSONResponse({"error": "não autorizado"}, status_code=401)
-        result = gate.get_request(request_id)
-        if result is None:
-            return JSONResponse({"error": "pedido não encontrado"}, status_code=404)
-        return JSONResponse(result)
-
     @application.post("/internal/db-gate/audit")
     async def db_gate_audit(request: Request) -> JSONResponse:
         """Modo sombra (task 6.1): classifica e audita sem segurar nada —

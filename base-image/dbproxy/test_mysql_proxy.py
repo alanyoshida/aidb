@@ -305,11 +305,32 @@ def test_bloqueada_via_com_stmt_prepare_so_err_nenhum_descarte_necessario():
     assert bytes(client_writer.buf)[4:5] == b"\xff"
 
 
-def test_confirmavel_aprovada_e_repassada(monkeypatch):
-    async def fake_decide(ctx, sql, reason, **kwargs):
-        return "aprovada"
+def test_confirmavel_em_enforce_e_recusada_direto_sem_chegar_ao_upstream():
+    """Uma DELETE/UPDATE sem WHERE restritivo é tratada como destrutiva
+    igual a um DDL: recusada na hora, sem segurar a conexão nem consultar
+    o portal por uma decisão humana."""
+    delete_sem_where = _query_packet(0, "DELETE FROM t")
+    quit_pkt = _quit_packet(1)
+    client_writer = _MemoryWriter()
+    up_writer = _MemoryWriter()
 
-    monkeypatch.setattr(mysql_proxy.portal_gate, "decide_confirmable", fake_decide)
+    async def go():
+        reader = _reader_with(delete_sem_where + quit_pkt)
+        await _pump_client_to_upstream(reader, client_writer, up_writer, _GATE_CTX, "enforce")
+
+    _run(go())
+    assert bytes(up_writer.buf) == quit_pkt  # DELETE nunca chega ao banco
+    assert bytes(client_writer.buf)[4:5] == b"\xff"  # ERR_Packet
+    assert b"DELETE sem WHERE" in bytes(client_writer.buf)
+
+
+def test_confirmavel_em_enforce_tambem_audita_com_enforced_true(monkeypatch):
+    audited = []
+
+    async def fake_audit_shadow(ctx, sql, **kwargs):
+        audited.append((sql, kwargs.get("enforced")))
+
+    monkeypatch.setattr(mysql_proxy.portal_gate, "audit_shadow", fake_audit_shadow)
 
     delete_sem_where = _query_packet(0, "DELETE FROM t")
     quit_pkt = _quit_packet(1)
@@ -321,28 +342,7 @@ def test_confirmavel_aprovada_e_repassada(monkeypatch):
         await _pump_client_to_upstream(reader, client_writer, up_writer, _GATE_CTX, "enforce")
 
     _run(go())
-    assert bytes(up_writer.buf) == delete_sem_where + quit_pkt
-    assert bytes(client_writer.buf) == b""
-
-
-def test_confirmavel_recusada_nao_chega_ao_upstream(monkeypatch):
-    async def fake_decide(ctx, sql, reason, **kwargs):
-        return "recusada"
-
-    monkeypatch.setattr(mysql_proxy.portal_gate, "decide_confirmable", fake_decide)
-
-    delete_sem_where = _query_packet(0, "DELETE FROM t")
-    quit_pkt = _quit_packet(1)
-    client_writer = _MemoryWriter()
-    up_writer = _MemoryWriter()
-
-    async def go():
-        reader = _reader_with(delete_sem_where + quit_pkt)
-        await _pump_client_to_upstream(reader, client_writer, up_writer, _GATE_CTX, "enforce")
-
-    _run(go())
-    assert bytes(up_writer.buf) == quit_pkt
-    assert b"recusada" in bytes(client_writer.buf)
+    assert audited == [("DELETE FROM t", True)]
 
 
 # ---------- modo sombra (task 6.1) ----------

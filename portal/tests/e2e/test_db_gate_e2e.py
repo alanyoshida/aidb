@@ -3,19 +3,24 @@ db-proxy-gate-data-plane) — cobre "o caminho novo", diferente de
 `test_gate.py` (que simula o gate antigo via texto casado pelo harness fake,
 sem nenhum SQL de verdade rodando).
 
+`bloqueada` e `confirmável` em modo enforce nunca pedem aprovação — o proxy
+recusa as duas na hora (decisão do operador: achado ao vivo de que o card
+de aprovação genérico deixava passar disfarces de SQL destrutivo). O que
+resta provar aqui é que (1) a recusa realmente impede a escrita e (2) ela
+aparece no chat, não só na auditoria silenciosa.
+
 O harness fake não executa bash nenhum, então não há como chegar no SQL real
 por uma mensagem de chat. Em vez disso, este teste:
 1) manda uma mensagem que o harness fake reconhece como destrutiva
    (`TRUNCATE`), só para deixar a *run* do sistema em `awaiting_approval` —
-   é essa run ativa que `gate._active_run_id` usa para amarrar o pedido novo
+   é essa run ativa que `gate._active_run_id` usa para amarrar a notificação
    (origem `agente`) ao chat, exatamente como aconteceria com o harness real
    executando algo que toca o proxy;
 2) com a run presa nesse estado, dispara a statement de verdade por dentro
    do container do sistema, via `asyncpg` contra o listener do sidecar —
    isso sim atravessa o protocolo real do Postgres;
-3) verifica que o card NOVO (`dbgate-approve`, distinto do card antigo
-   `gate-approve`) aparece no chat e que aprová-lo libera a conexão de
-   verdade (a `DELETE` executa e o audit mostra "aprovada").
+3) verifica que a `DELETE` falha na hora (nunca chega ao banco) e que o chat
+   mostra a notificação de bloqueio com a query à mostra.
 
 Modo enforce é obrigatório para isto (sombra nunca segura nada) — como
 `db_gate_mode` é env var do processo do portal, não dá pra mudar em
@@ -26,7 +31,6 @@ E2E dedicado com a env trocada, e devolve ao default (sombra) no teardown.
 import os
 import pathlib
 import subprocess
-import threading
 import time
 import uuid
 
@@ -189,7 +193,7 @@ def _delete_via_proxy(slug: str):
     return container.exec_run(["python3", "-c", script])
 
 
-def test_statement_real_e_segurada_e_liberada_pelo_card_novo_do_chat(enforce_portal, page, suffix):
+def test_confirmavel_em_enforce_e_recusada_direto_e_avisa_no_chat(enforce_portal, page, suffix):
     slug = _create_system(page, suffix)
     _register_vendas_connection(page)
     _wait_sidecar_running(slug)
@@ -204,33 +208,21 @@ def test_statement_real_e_segurada_e_liberada_pelo_card_novo_do_chat(enforce_por
     # e o gate antigo bloqueia automaticamente, sem card — precisa ser
     # "DELETE SEM WHERE", a mesma frase de test_gate.py): só serve pra
     # deixar a run do sistema em awaiting_approval (card antigo, control
-    # plane) — é essa run ativa que o proxy usa para amarrar o pedido novo
+    # plane) — é essa run ativa que o proxy usa para amarrar a notificação
     # ao chat; o SQL de verdade do teste não passa por aqui.
     page.locator('[data-testid=chat-input]').fill("agora DELETE SEM WHERE na tabela clientes")
     page.locator('[data-testid=chat-send]').click()
     page.get_by_text("PEDIDO DE APROVAÇÃO").wait_for(timeout=60_000)
 
-    result_holder: dict = {}
+    result = _delete_via_proxy(slug)
+    output = result.output.decode()
+    assert result.exit_code != 0, output  # recusada na hora, sem pedir aprovação
+    assert "sem WHERE" in output
 
-    def _run_delete():
-        result_holder["result"] = _delete_via_proxy(slug)
-
-    thread = threading.Thread(target=_run_delete)
-    thread.start()
-
-    # card novo (proxy de banco), distinto do antigo (gate-approve) — os
-    # dois ficam visíveis ao mesmo tempo
-    page.locator('[data-testid=dbgate-approve]').wait_for(timeout=30_000)
-    page.get_by_text("proxy de banco").wait_for(timeout=5_000)
+    # a recusa aparece ao vivo no chat, com a query bloqueada à mostra —
+    # não só na auditoria silenciosa (correção pedida pelo operador)
+    page.get_by_text("bloqueada pelo proxy de banco").wait_for(timeout=10_000)
     page.get_by_text("DELETE FROM clientes").first.wait_for(timeout=5_000)
-    page.locator('[data-testid=gate-approve]').wait_for(timeout=5_000)  # o antigo não some
-
-    page.locator('[data-testid=dbgate-approve]').click()
-
-    thread.join(timeout=30)
-    assert "result" in result_holder, "exec_run não terminou a tempo da aprovação"
-    output = result_holder["result"].output.decode()
-    assert result_holder["result"].exit_code == 0, output
 
     # resolve o pedido antigo (TRUNCATE) pra run do harness fake terminar limpa
     page.locator('[data-testid=gate-deny]').click()

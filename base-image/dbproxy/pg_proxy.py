@@ -287,12 +287,14 @@ async def _pump_client_to_upstream(client_reader: asyncio.StreamReader, client_w
                                    gate_mode: str = "shadow") -> None:
     """Classifica `Q`/`Parse` com o sqlgate antes de repassar.
 
-    `gate_mode="enforce"`: `bloqueada` nunca chega ao upstream; um `Parse`
-    bloqueado ou uma `confirmável` não aprovada entram em modo de descarte
-    (Bind/Describe/Execute pipelinados somem) até o `Sync`, só então o
-    `ReadyForQuery` libera o cliente — mesma recuperação de erro do
-    protocolo estendido real do Postgres. `confirmável` segura a conexão e
-    consulta o portal (task 2.3) antes de liberar ou recusar.
+    `gate_mode="enforce"`: `bloqueada` e `confirmável` nunca chegam ao
+    upstream — as duas são recusadas na hora, sem segurar a conexão nem
+    pedir aprovação (decisão do operador: uma `DELETE`/`UPDATE` sem WHERE
+    restritivo é tratada como destrutiva igual a um DDL, não como algo que
+    um aprovador avulso deveria poder liberar). Um `Parse` recusado entra em
+    modo de descarte (Bind/Describe/Execute pipelinados somem) até o `Sync`,
+    só então o `ReadyForQuery` libera o cliente — mesma recuperação de erro
+    do protocolo estendido real do Postgres.
 
     `gate_mode="shadow"` (default, task 6.1): classifica e audita no portal
     (sem segurar nada — `bloqueada`/`confirmável` passam igual à `normal`);
@@ -316,29 +318,16 @@ async def _pump_client_to_upstream(client_reader: asyncio.StreamReader, client_w
             sql = extract_sql(tag, msg[5:])
             if sql is not None:
                 result = classify(sql)
-                if isinstance(result, Blocked):
+                if isinstance(result, (Blocked, Confirmable)):
+                    label = "BLOQUEADA" if isinstance(result, Blocked) else "CONFIRMAVEL"
                     if gate_mode != "enforce":
-                        log("SOMBRA (seria bloqueada):", sql, "-", result.reason)
+                        log(f"SOMBRA (seria {label.lower()}):", sql, "-", result.reason)
                         await portal_gate.audit_shadow(gate_ctx, sql, log=log)
                     else:
-                        log("BLOQUEADA:", sql, "-", result.reason)
+                        log(f"{label}:", sql, "-", result.reason)
                         discarding = await _refuse(client_writer, tag, result.reason)
                         await portal_gate.audit_shadow(gate_ctx, sql, log=log, enforced=True)
                         continue
-                elif isinstance(result, Confirmable):
-                    if gate_mode != "enforce":
-                        log("SOMBRA (seria confirmável):", sql, "-", result.reason)
-                        await portal_gate.audit_shadow(gate_ctx, sql, log=log)
-                    else:
-                        log("CONFIRMAVEL, segurando:", sql, "-", result.reason)
-                        status = await portal_gate.decide_confirmable(gate_ctx, sql, result.reason, log=log)
-                        if status != "aprovada":
-                            log(f"CONFIRMAVEL {status}:", sql)
-                            discarding = await _refuse(
-                                client_writer, tag, f"statement confirmável {status} (motivo: {result.reason})"
-                            )
-                            continue
-                        log("CONFIRMAVEL aprovada:", sql)
                 else:
                     log("normal:", sql)
             up_writer.write(msg)
