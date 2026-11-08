@@ -218,7 +218,7 @@ def render_chat(system: System, user: User) -> None:
             with rename_row:
                 rename_input = ui.input("Novo título").classes("grow")
                 ui.button("OK", on_click=lambda: _confirm_rename()).props("flat dense")
-                ui.button("×", on_click=lambda: rename_row.set_visibility(False)).props("flat dense")
+                ui.button("×", on_click=lambda: _cancel_rename()).props("flat dense")
 
             # --- log do chat ---------------------------------------------------
             with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
@@ -235,7 +235,9 @@ def render_chat(system: System, user: User) -> None:
                 else:
                     state_dot.classes(remove="ap-dot--busy")
             debug = {"on": False}
-            debug_switch = ui.switch("Debug (mostrar comandos e arquivos alterados)").props("data-testid=chat-debug")
+            debug_switch = ui.switch("Debug").props("data-testid=chat-debug").tooltip(
+                "Mostra os comandos executados e arquivos alterados pelo agente"
+            )
             blocked_row = ui.row().classes("w-full items-center justify-center gap-2")
             blocked_row.set_visibility(False)
             with blocked_row:
@@ -262,6 +264,12 @@ def render_chat(system: System, user: User) -> None:
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
+    empty_hint: dict = {"el": None}  # placeholder de sessão nova sem runs ainda
+
+    def _clear_empty_hint() -> None:
+        if empty_hint["el"] is not None:
+            empty_hint["el"].delete()
+            empty_hint["el"] = None
 
     def _toggle_sidebar() -> None:
         # só tem efeito visual abaixo de 700px (CSS em theme.py) — no desktop
@@ -328,10 +336,13 @@ def render_chat(system: System, user: User) -> None:
                         on_click=lambda sid=sess_id: _switch_session(sid),
                     ).props("flat dense no-caps align=left").classes(btn_classes + " grow")
                     if r.inference_revoked:
+                        # "block" (sólido) só aqui, como estado permanente — o botão de
+                        # ação usa um ícone diferente (achado do critique: o mesmo "block"
+                        # pros dois ficava sobrecarregado, só funcionava pelo contexto)
                         ui.icon("block").classes("text-xs text-red-500").tooltip("Inferência revogada")
                     else:
                         ui.button(
-                            icon="block",
+                            icon="do_not_disturb_on",
                             on_click=lambda sid=sess_id: _revoke_session_inference(sid),
                         ).props(
                             'flat dense round size=sm aria-label="Revogar inferência desta sessão"'
@@ -364,6 +375,7 @@ def render_chat(system: System, user: User) -> None:
         current_run["id"] = None
         current_run["shown"] = 0
         log_box.clear()
+        empty_hint["el"] = None  # log_box.clear() já removeu o elemento do DOM
 
         # Atualiza rótulo do título
         with session_scope() as s:
@@ -385,6 +397,19 @@ def render_chat(system: System, user: User) -> None:
             run_data = [(r.id, r.prompt, r.created_at, r.status) for r in runs]
 
         with log_box:
+            if not run_data:
+                # sessão nova: o log em branco só com o placeholder do input não
+                # orientava quem chega aqui pela primeira vez (achado do critique).
+                # Guarda a referência pra remover só este elemento (não o log_box
+                # inteiro) assim que a primeira mensagem for enviada.
+                empty_hint["el"] = ui.column().classes(
+                    "w-full items-center justify-center gap-1"
+                ).style("padding: 32px 16px")
+                with empty_hint["el"]:
+                    ui.icon("chat_bubble_outline").classes("text-2xl text-gray-400")
+                    ui.label("Comece digitando uma mensagem para o agente.").classes(
+                        "text-xs text-gray-400"
+                    )
             for run_id, run_prompt, run_at, run_status in run_data:
                 ui.chat_message(text=run_prompt, name=_sender_label("Você", run_at),
                                 sent=True, avatar=_AVATAR_USER)
@@ -438,6 +463,10 @@ def render_chat(system: System, user: User) -> None:
         rename_row.set_visibility(False)
         rename_state["editing"] = False
         _load_sessions()
+
+    def _cancel_rename() -> None:
+        rename_row.set_visibility(False)
+        rename_state["editing"] = False
 
     # -------------------------------------------------------------------------
     # Lógica de envio e execução
@@ -617,6 +646,7 @@ def render_chat(system: System, user: User) -> None:
                 current_run["id"] = state["running"]
                 current_run["shown"] = 0
                 log_box.clear()
+                empty_hint["el"] = None  # log_box.clear() já removeu o elemento do DOM
             buffer = queue.buffers.get(current_run["id"])
             if buffer:
                 events = buffer.snapshot()
@@ -661,6 +691,7 @@ def render_chat(system: System, user: User) -> None:
             active_session["id"] = run.chat_session_id
             current_run["id"] = run.id
             current_run["shown"] = 0
+            _clear_empty_hint()
             with log_box:
                 ui.chat_message(text=text, name=_sender_label("Você", datetime.now(timezone.utc)),
                                 sent=True, avatar=_AVATAR_USER)
