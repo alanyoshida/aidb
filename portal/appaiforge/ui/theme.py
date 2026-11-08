@@ -367,6 +367,20 @@ CHAT_CSS: Final[str] = """
 .af-chat-send { background: var(--ap-accent) !important; color: var(--ap-on-accent) !important; }
 .af-chat-send .q-icon { color: var(--ap-on-accent) !important; }
 
+/* Botão de sessão na sidebar: um título longo (+ " · horário" concatenado)
+   só cortava sem reticências. Duas causas empilhadas: (1) o texto real do
+   Quasar mora dentro de `.q-btn__content > .block`, não no `<button>` em
+   si, então `overflow`/`text-overflow` no botão não tinha efeito nenhum;
+   (2) o `.q-scrollarea__content` da lista de sessões cresce pra caber o
+   conteúdo (é assim que a QScrollArea sabe que precisa rolar) — sem travar
+   a largura em 100%, o botão simplesmente empurrava o conteúdo da área de
+   scroll pra mais largo que os 256px da sidebar, cortando o texto fora da
+   viewport em vez de truncar com reticências. */
+.af-chat-sidebar .q-scrollarea__content { max-width: 100%; }
+.af-session-btn .q-btn__content { min-width: 0; flex-wrap: nowrap; }
+.af-session-btn .q-btn__content > .block {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
 /* Sidebar de sessões do Chat: coluna fixa à esquerda no desktop. Abaixo de
    700px ela não cabe ao lado do chat sem empurrar tudo pra baixo (achado do
    critique) — vira um drawer deslizante, escondido por padrão, com um botão

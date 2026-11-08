@@ -344,26 +344,31 @@ def render_chat(system: System, user: User) -> None:
                 ui.label("Nenhuma sessão ainda.").classes("text-xs text-gray-400")
             for r in rows:
                 sess_id = r.id
-                label = r.title or "sessão sem título"
+                base_label = r.title or "sessão sem título"
+                # título + horário numa linha só, mesmo padrão "Nome · horário"
+                # já usado pro remetente das mensagens (_sender_label) — a
+                # primeira versão colocava o horário numa segunda linha abaixo
+                # do título, mas sem nada separando um par título+horário do
+                # próximo, ficava ambíguo de qual sessão era o horário de cima
+                # ou de baixo (achado ao vivo do usuário).
+                stamp = _stamp(r.created_at)
+                label = f"{base_label} · {stamp}" if stamp else base_label
                 is_active = r.id == active_session["id"]
                 btn_classes = "text-xs text-left w-full " + ("font-bold text-primary" if is_active else "text-gray-600")
                 with ui.row().classes("w-full items-center no-wrap gap-1"):
-                    with ui.column().classes("gap-0 grow").style("min-width: 0"):
-                        # color=None: sem isto o ui.button do NiceGUI aplica
-                        # color='primary' por padrão (vira a classe .text-primary
-                        # do Quasar) em cima do texto de QUALQUER sessão, mesmo
-                        # inativa — a classe .text-gray-600 que marcamos pra
-                        # inativa nunca vencia (achado ao vivo do critique: as
-                        # duas sessões, ativa e inativa, renderizavam na mesma
-                        # cor indigo; só o negrito diferenciava).
-                        ui.button(
-                            label, color=None,
-                            on_click=lambda sid=sess_id: _switch_session(sid),
-                        ).props("flat dense no-caps align=left").classes(btn_classes)
-                        # timestamp de criação como desambiguador (achado do
-                        # critique: duas sessões "Nova sessão" sem nada que as
-                        # diferencie na lista, pior ainda com o bug de cor acima)
-                        ui.label(_stamp(r.created_at)).classes("text-xs text-gray-400")
+                    # color=None: sem isto o ui.button do NiceGUI aplica
+                    # color='primary' por padrão (vira a classe .text-primary
+                    # do Quasar) em cima do texto de QUALQUER sessão, mesmo
+                    # inativa — a classe .text-gray-600 que marcamos pra
+                    # inativa nunca vencia (achado ao vivo do critique: as
+                    # duas sessões, ativa e inativa, renderizavam na mesma
+                    # cor indigo; só o negrito diferenciava).
+                    ui.button(
+                        label, color=None,
+                        on_click=lambda sid=sess_id: _switch_session(sid),
+                    ).props("flat dense no-caps align=left").classes(
+                        btn_classes + " grow af-session-btn"
+                    ).style("min-width: 0")
                     if r.inference_revoked:
                         # "block" (sólido) só aqui, como estado permanente — o botão de
                         # ação usa um ícone diferente (achado do critique: o mesmo "block"
