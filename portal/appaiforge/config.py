@@ -96,16 +96,16 @@ class Settings(BaseSettings):
 
     # Gate de banco no data plane (etapa 4 do confinamento, change
     # db-proxy-gate-data-plane). Segredo compartilhado entre o portal e o
-    # sidecar do proxy (mesmo padrão do broker) e prazo de espera por uma
-    # decisão antes do pedido confirmável expirar.
+    # sidecar do proxy (mesmo padrão do broker).
     db_gate_proxy_service_token: str = ""
-    db_gate_approval_timeout_seconds: int = 120
     # "enforce" (default desde a task 7.3, por pedido do operador): o proxy
-    # aplica a decisão de verdade — bloqueada nunca chega ao banco,
-    # confirmável segura e espera aprovação no chat. "shadow" (task 6.1):
-    # classifica e audita sem segurar nada, pra comparar com os globs de
-    # permission.bash antes de confiar no proxy (spike S5, task 6.2) —
-    # ainda disponível por flag pra quem quiser esse período de observação.
+    # aplica a decisão de verdade — bloqueada e confirmável são recusadas na
+    # hora, sem pedir aprovação a ninguém (achado ao vivo: segurar e pedir
+    # aprovação deixava passar disfarces de SQL destrutivo se alguém
+    # aprovasse por hábito). "shadow" (task 6.1): classifica e audita sem
+    # segurar nada, pra comparar com os globs de permission.bash antes de
+    # confiar no proxy (spike S5, task 6.2) — ainda disponível por flag pra
+    # quem quiser esse período de observação.
     db_gate_mode: str = "enforce"
 
     session_ttl_days: int = 7

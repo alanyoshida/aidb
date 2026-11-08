@@ -25,11 +25,11 @@ O proxy SHALL autenticar a conexão ao banco real usando a credencial guardada n
 - **THEN** o proxy completa a autenticação com o banco real e a consulta executa normalmente
 
 ### Requirement: Gate sobre toda statement do wire protocol
-O proxy SHALL extrair e classificar cada statement que atravessa a conexão com o classificador canônico: `normal` SHALL ser repassada; `bloqueada` SHALL ser recusada com erro de protocolo ao cliente sem tocar o banco; `confirmável` SHALL ser segurada até a decisão do editor, executando após aprovação ou devolvendo erro após recusa.
+O proxy SHALL extrair e classificar cada statement que atravessa a conexão com o classificador canônico: `normal` SHALL ser repassada; `bloqueada` e `confirmável` SHALL ser recusadas na hora, com erro de protocolo ao cliente, sem tocar o banco e sem segurar a conexão para uma decisão humana — tratamento idêntico para as duas classes (ver ADR 0023).
 
-#### Scenario: DELETE em massa via arquivo é segurado
+#### Scenario: DELETE em massa via arquivo é recusado direto, sem pedir decisão
 - **WHEN** o agente grava um arquivo `.sql` contendo `DELETE FROM clientes` e executa `psql -f arquivo.sql` apontando para o DSN de loopback
-- **THEN** o proxy classifica a statement como confirmável e a execução aguarda a decisão do editor no chat
+- **THEN** o proxy classifica a statement como confirmável e a recusa na hora — o cliente recebe erro de protocolo, o banco não é tocado e nenhuma decisão humana é solicitada
 
 #### Scenario: DDL recusada por qualquer caminho
 - **WHEN** uma statement `DROP TABLE` chega por qualquer cliente da conexão (MCP, psql, script Python, app gerada)
@@ -56,6 +56,6 @@ O proxy SHALL suportar um modo sombra em que classifica e audita cada statement 
 - **WHEN** o proxy está em modo sombra e recebe `DELETE FROM clientes`
 - **THEN** a statement executa no banco e a classificação confirmável fica registrada
 
-#### Scenario: Enforcing segura a mesma statement
+#### Scenario: Enforcing recusa a mesma statement direto
 - **WHEN** o proxy está em modo enforcing e recebe a mesma statement
-- **THEN** a execução aguarda a decisão do editor e só executa após aprovação
+- **THEN** a statement é recusada na hora, sem segurar a execução nem pedir decisão de ninguém

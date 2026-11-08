@@ -339,21 +339,31 @@ no env como alternativa descartada, com o motivo (granularidade por sessão invi
 
 ## Etapa 4 — Proxy de banco e o gate no data plane
 
-**Status: ✅ concluída** (change `db-proxy-gate-data-plane`, [ADR 0021](adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)).
+**Status: ✅ concluída** (change `db-proxy-gate-data-plane`, [ADR 0021](adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)
+e [ADR 0023](adr/0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md)).
 Sidecar real por sistema (`network_mode: container:<id>`) com proxy de wire protocol Postgres e
 MySQL em Python asyncio, validado contra bancos reais (spikes S8 e MySQL) e com testes de
-integração/E2E ponta a ponta contra Docker real: statement confirmável em modo `enforce` segura a
-conexão e só executa após aprovação pelo card novo do chat (distinto do card antigo); modo `shadow`
-(default) executa tudo e só audita; origem `agente`/`app` atribuída por listener separado;
-container do sistema sem credencial usável no env/cmdline, só o sidecar guarda a credencial real.
-Ferramenta de comparação sombra-vs-globs (`gate_comparison.py`, CLI `compare-gate-decisions`)
-construída e testada, mas **ainda não rodou contra uso real** — por isso o default continua
-`shadow` e os globs de `permission.bash` continuam como cinto-e-suspensório: trocar o default para
-`enforce` (e aí sim apagar os globs de SQL) depende de medir falso-positivo em produção, não de
-mais código. Correção de rota em relação ao parágrafo original abaixo: o `reply_gate`
-([`base.py:50`](../portal/appaiforge/harness/base.py)) **não saiu** do `HarnessPort` — é o
-mecanismo genérico de resposta a qualquer `permission.asked` do opencode (inclusive não-SQL, ex.:
-acesso a diretório fora do workspace), que esta change não tinha motivo para tocar.
+integração/E2E ponta a ponta contra Docker real. Modo `enforce` (default desde 2026-11-07, por
+pedido direto do operador — não por ter fechado a comparação sombra-vs-globs planejada abaixo):
+`bloqueada` e `confirmável` são recusadas **na hora** pelo proxy, sem segurar conexão nem pedir
+aprovação a ninguém — card de aprovação removido do chat (ver correção de rota adiante). Modo
+`shadow` continua disponível por flag pra observar um sistema antes de confiar. Origem `agente`/
+`app` atribuída por listener separado; container do sistema sem credencial usável no env/cmdline,
+só o sidecar guarda a credencial real. Correção de rota em relação ao parágrafo original abaixo: o
+`reply_gate` ([`base.py:50`](../portal/appaiforge/harness/base.py)) **não saiu** do `HarnessPort` —
+é o mecanismo genérico de resposta a qualquer `permission.asked` do opencode (inclusive não-SQL,
+ex.: acesso a diretório fora do workspace), que esta change não tinha motivo para tocar.
+
+**Segunda correção de rota (2026-11-07, ADR 0023, achado ao vivo)**: o parágrafo "Faça em dois
+passos" abaixo planejava medir falso-positivo do modo sombra por uma semana antes de confiar na
+`confirmável` decidir sozinha com aprovação humana. Em uso real, um `DELETE` sem `WHERE` foi
+segurado, apareceu num card de aprovação genérico igual ao de qualquer pedido de permissão, e
+alguém aprovou por hábito — a statement só não executou de fato por uma FK do schema, não pelo
+gate. `confirmável` em `enforce` passou a ter o mesmo tratamento de `bloqueada` (recusa automática,
+zero decisão humana), fechando a lacuna de vez em vez de medi-la. A comparação sombra-vs-globs
+(`gate_comparison.py`, CLI `compare-gate-decisions`) continua existindo e útil para `bloqueada`/DDL
+em sombra, mas perdeu o objeto original (não há mais uma decisão de "confiar" em `confirmável` a
+validar).
 
 **Objetivo**: o gate funciona independente de **como** a SQL foi emitida, e independente de qual
 agente está rodando. É a etapa que destrava o multi-agente.

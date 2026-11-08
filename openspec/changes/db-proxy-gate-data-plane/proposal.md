@@ -1,5 +1,12 @@
 # Proposal
 
+> **Revisão (D8/ADR 0023, 2026-11-07)**: o "segura statements confirmáveis até a aprovação no
+> chat" descrito abaixo foi implementado, usado em produção e revertido por um achado ao vivo —
+> aprovar por hábito um card genérico deixava passar um `DELETE` sem `WHERE` disfarçado.
+> `confirmável` em enforce agora tem o mesmo tratamento de `bloqueada` (recusa direta, sem hold,
+> sem aprovação). Ver `design.md` (D8) e o ADR 0023 para a decisão completa; este documento fica
+> como registro do racional original.
+
 ## Why
 
 O gate de operações destrutivas hoje vive no **control plane do agente**: o portal intercepta os pedidos de permissão do harness (`reply_gate`) e extrai SQL de strings de comando por regex (`gate.extract_sql`). Isso só protege o que o agente declara — contornável sem malícia por `psql -f arquivo.sql`, heredoc, `python -c "import asyncpg; ..."` ou qualquer binário que fale o protocolo do banco. A etapa 4 do roadmap de confinamento move o gate para o **data plane**: um proxy de wire protocol (Postgres/MySQL) intercepta toda conexão a um banco cadastrado, classifica cada statement com o classificador canônico e segura statements confirmáveis até a aprovação no chat. Com o gatilho no protocolo, o gate passa a valer independente de **como** a SQL foi emitida e de **qual** agente está rodando — a etapa que destrava o multi-agente (etapa 7).

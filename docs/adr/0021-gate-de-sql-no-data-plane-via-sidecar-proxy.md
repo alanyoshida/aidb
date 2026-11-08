@@ -1,6 +1,6 @@
 # 0021 — Gate de SQL no data plane via sidecar proxy de wire protocol
 
-* Status: aceito
+* Status: aceito (D3 — hold/aprovação de `confirmável` — substituída por [0023](0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md); D1/D2/D4–D7 continuam)
 * Data: 2026-11-07
 * Decidida em: change `db-proxy-gate-data-plane` (design D1–D7, etapa 4 do roadmap de confinamento)
 * Substitui parcialmente: [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md) — só o **gatilho** do
@@ -31,7 +31,9 @@ upstream com a credencial real (SCRAM-SHA-256/md5/cleartext no Postgres; `mysql_
 `caching_sha2_password` no MySQL). Toda statement (`Q`/`Parse` no Postgres; `COM_QUERY`/
 `COM_STMT_PREPARE` no MySQL) é classificada com o **mesmo** classificador canônico do ADR 0017
 antes de repassar ao banco real — `bloqueada` nunca chega ao upstream, `confirmável` segura a
-conexão e consulta o portal (D3, mesmo padrão de token de serviço do broker), `normal` passa direto.
+conexão e consulta o portal (D3, mesmo padrão de token de serviço do broker; **revisado pelo ADR
+0023** — em enforce, `confirmável` passa a ser recusada direto, igual a `bloqueada`, sem segurar
+nem consultar ninguém), `normal` passa direto.
 
 Dois listeners por conexão (porta do agente, porta da app gerada) atribuem a origem sem mudança de
 schema — o campo `origin` do `GateDecision` já existia (D4). As credenciais reais só existem no env

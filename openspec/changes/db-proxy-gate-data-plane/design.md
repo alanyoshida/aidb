@@ -39,9 +39,11 @@ Proxy escrito em Python asyncio, convivendo com o `afsupervisor` na imagem dos s
 
 A autenticação é **terminada no proxy**: o cliente conecta sem senha em loopback (o proxy aceita), e o proxy abre a conexão upstream com a credencial real (SCRAM-SHA-256/md5 no Postgres; `mysql_native_password`/`caching_sha2_password` no MySQL). É a parte mais pesada da implementação — mitigada pelo spike S8 (ver tasks) antes de comprometer o caminho.
 
-### D3 — Decisão humana via portal, segurando a conexão
+### D3 — Decisão humana via portal, segurando a conexão (❌ revertida pela D8 — ver abaixo)
 
 Statement confirmável: o proxy consulta o portal por HTTP interno com token de serviço (mesmo padrão do broker), o portal cria o pedido pendente associado ao **run/sessão ativos** (a serialização de um run por sistema dá a atribuição de graça, como na etapa 3), a UI de aprovação do chat decide, e o proxy libera a statement ou devolve erro de protocolo ao cliente. **Timeout de espera** com recusa segura: se o editor não decide, o cliente recebe erro (sem hang infinito de `psql` nem de pool da app).
+
+Implementada, usada em produção e **revertida em 2026-11-07** por um achado ao vivo — ver D8. Mantida aqui como registro do que foi construído e por quê; a infraestrutura descrita (endpoints, cliente HTTP de hold, card no chat) não existe mais no código.
 
 ### D4 — Dois listeners por sistema para atribuição de origem
 
@@ -61,18 +63,28 @@ O que de fato muda com o enforcing: `write_opencode_config` gera `permission.bas
 
 `provision_system` passa a criar o sidecar junto do container do sistema, com os segredos das conexões no env **do sidecar** (não do sistema). `refresh_connections` recria ambos — mesma reentrância que a reconciliação já garante. O MCP server recebe o DSN de loopback como argumento (sem senha), e `DATABASE_URL_<NOME>` idem.
 
+### D8 — Confirmável recusada direto em enforce, sem hold nem aprovação (2026-11-07, ADR 0023)
+
+Revisão de D3 a partir de um achado ao vivo (não um spike — uso real em `homolog-crm`): o card de aprovação do proxy ("pede aprovação para uma operação destrutiva") é texto genérico com o SQL embaixo, igual ao card de permissões não-SQL do agente — quem aprova por hábito aprova também um `DELETE` sem `WHERE` disfarçado. Diferente da DDL (sempre recusada, zero decisão humana), `confirmável` era o único caminho em que uma statement de fato destrutiva dependia de alguém prestar atenção e clicar certo.
+
+Em `enforce`, `confirmável` passa a ter o **mesmo tratamento de `bloqueada`**: recusada na hora pelo proxy, sem segurar a conexão, sem consultar o portal, sem card de aprovação. A classificação continua distinta na auditoria (`classification=confirmavel` vs `bloqueada`), só o **tratamento** se unifica. Quando há run ativa, a notificação de bloqueio que já existia só para `bloqueada` (`gate_denied` no chat) passa a cobrir `confirmável` também — fecha o achado de que a recusa de um confirmável segurado não deixava rastro nenhum na conversa.
+
+Toda a infraestrutura de D3 que ficou sem chamador foi removida (não arquivada como código morto): `GateRequest.create_request/get_request/decide_request/list_pending_for_run`, os dois endpoints internos (`POST`/`GET /internal/db-gate/requests*`), o cliente HTTP de hold do proxy (`request_approval`/`wait_decision`/`decide_confirmable`/`request_and_wait`/`PortalUnavailable`) e o card "proxy de banco" no chat. A tabela `gate_requests` fica no banco, inerte, com o histórico de quando D3 esteve ativa — dropá-la exigiria migração sem ganho.
+
+Consequência direta nas Open Questions abaixo: a tarefa 6.2 (medir falso-positivo do modo sombra antes de confiar no proxy) perde objeto para `confirmável` — não há mais uma "decisão de confiar" a validar, o tratamento é automático e uniforme, igual a DDL.
+
 ## Risks / Trade-offs
 
-- **Framing do wire protocol é onde moram os bugs sutis**: mensagens truncadas, pipelining de Parse/Bind/Execute, conexão segurada por minutos aguardando humano. Mitigação: spike de framing + modo sombra + testes de integração com clientes reais (`psql`, `asyncpg`, driver MySQL).
+- **Framing do wire protocol é onde moram os bugs sutis**: mensagens truncadas, pipelining de Parse/Bind/Execute. Mitigação: spike de framing + modo sombra + testes de integração com clientes reais (`psql`, `asyncpg`, driver MySQL).
 - ~~**Autenticação MySQL `caching_sha2_password`** exige troca RSA no primeiro auth — mais complexa que SCRAM. Se o spike mostrar custo alto, o enforcing inicial cobre Postgres e MySQL fica em sombra até destravar.~~ Fechado pelo spike MySQL: custo baixo, RSA-OAEP em Python puro funcionou de primeira — enforcing cobre os dois bancos juntos.
-- **Query segurada por aprovação humana segura a conexão**: pool da app gerada pode esgotar se muitas statements confirmáveis penderem. Mitigação: timeout com erro claro + a app já tem o gate próprio (dbgate) como primeira linha.
-- **Falso-positivo**: a heurística de WHERE restritivo já existe e é estável, mas o sombra existe exatamente para medir antes de bloquear (S5).
+- ~~**Query segurada por aprovação humana segura a conexão**: pool da app gerada pode esgotar se muitas statements confirmáveis penderem.~~ Sem objeto desde a D8: `confirmável` não segura mais nada, é recusada na hora — o risco de esgotar o pool por hold desaparece junto com o hold.
+- **Falso-positivo da heurística de WHERE vira fricção, não mais aprovação**: desde a D8, um falso-positivo não tem mais um "aprovar e seguir" — quem precisar da operação reescreve a statement com `WHERE` explícito ou roda fora do proxy. Aceito: o custo de reescrever é menor que o de uma aprovação por hábito liberar um disfarce de verdade.
 - **Superfície de rotação**: segredos agora vivem no sidecar — trocar credencial de conexão recria sidecar e sistema (reconciliação cobre; mesmo padrão do refresh atual).
-- **Não resolve ainda**: quem descobrir o endereço real do banco contorna o proxy — fechado só na etapa 5 (Landlock por porta). Aceito e registrado no roadmap.
+- **Não resolve ainda**: quem descobrir o endereço real do banco contorna o proxy — fechado na etapa 5 (Landlock por porta, ADR 0022).
 
 ## Open Questions
 
-- S5: quanto falso-positivo o modo sombra revela? Fecha com o período de comparação desta etapa.
+- ~~S5: quanto falso-positivo o modo sombra revela?~~ Sem objeto para `confirmável` desde a D8 (não há mais decisão de confiar a validar); continua relevante só para acompanhar `bloqueada`/DDL em sombra, se algum sistema optar por ficar nesse modo.
 - ~~S8~~ ✅ fechado (2026-11-07) — ver abaixo.
 
 ## Spike S8 — proxy Postgres em Python asyncio (2026-11-07, postgres:16-alpine)
