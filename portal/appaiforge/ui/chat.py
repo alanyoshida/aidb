@@ -181,75 +181,75 @@ def render_chat(system: System, user: User) -> None:
     active_session: dict = {"id": None, "blocked": False}  # ChatSession.id e se o contexto foi reiniciado
     rename_state: dict = {"editing": False}
 
-    with ui.row().classes("w-full items-center justify-start"):
-        ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
-            "flat dense no-caps data-testid=chat-new-session"
-        ).classes("text-xs")
+    with ui.row().classes("w-full gap-4").style("flex-wrap: wrap; align-items: flex-start"):
+        # --- sidebar de sessões, sempre visível ------------------------------
+        # Coluna fixa à esquerda (pedido do operador, depois do critique): a
+        # versão anterior (lista inline acima do título, com scroll limitado a
+        # 150px) resolvia "esconder qual sessão está ativa", mas ainda
+        # competia por espaço vertical com o resto do chat. Uma coluna própria
+        # não compete com nada — sobra a largura toda do log pro conteúdo.
+        with ui.column().classes("gap-2").style("width: 256px; flex: none"):
+            ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
+                "flat dense no-caps data-testid=chat-new-session"
+            ).classes("text-xs")
+            ui.label("Sessões").classes("text-xs font-semibold text-gray-500")
+            with ui.scroll_area().classes("w-full h-96"):
+                sessions_col = ui.column().classes("w-full gap-1")
 
-    # Lista sempre visível (sem expansion/colapso): reaberto a pedido do
-    # operador depois do critique apontar que uma lista colapsada abaixo do
-    # input custava rolagem + clique a cada troca, e também escondia qual
-    # sessão estava ativa — justo o estado que o bug do título em branco
-    # mais precisava deixar óbvio. Altura própria com scroll (achado ao vivo
-    # contra homolog-crm: um sistema com várias dezenas de sessões reais
-    # empurrava o chat inteiro pra fora da tela sem isto).
-    with ui.column().classes("w-full gap-1"):
-        ui.label("Sessões").classes("text-xs font-semibold text-gray-500")
-        with ui.scroll_area().classes("w-full").style("max-height: 150px"):
-            sessions_col = ui.column().classes("w-full gap-1")
+        # --- área principal do chat -------------------------------------------
+        with ui.column().classes("grow gap-1").style("min-width: 0"):
+            session_title_row = ui.row().classes("w-full items-center gap-1")
+            with session_title_row:
+                session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
+                rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props(
+                    'flat dense round aria-label="Renomear esta sessão"'
+                ).tooltip("Renomear esta sessão")
+            rename_row = ui.row().classes("w-full items-center gap-1")
+            rename_row.set_visibility(False)
+            with rename_row:
+                rename_input = ui.input("Novo título").classes("grow")
+                ui.button("OK", on_click=lambda: _confirm_rename()).props("flat dense")
+                ui.button("×", on_click=lambda: rename_row.set_visibility(False)).props("flat dense")
 
-    session_title_row = ui.row().classes("w-full items-center gap-1")
-    with session_title_row:
-        session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
-        rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props(
-            'flat dense round aria-label="Renomear esta sessão"'
-        ).tooltip("Renomear esta sessão")
-    rename_row = ui.row().classes("w-full items-center gap-1")
-    rename_row.set_visibility(False)
-    with rename_row:
-        rename_input = ui.input("Novo título").classes("grow")
-        ui.button("OK", on_click=lambda: _confirm_rename()).props("flat dense")
-        ui.button("×", on_click=lambda: rename_row.set_visibility(False)).props("flat dense")
+            # --- log do chat ---------------------------------------------------
+            with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
+                log_box = ui.column().classes("w-full gap-1 p-2 af-hide-debug")
+                approval_box = ui.column().classes("w-full")
+            with ui.row().classes("w-full items-center justify-center gap-2"):
+                state_dot = ui.element("span").classes("ap-dot")
+                state_label = ui.label("").classes("text-sm text-gray-500")
 
-    # --- log do chat ---------------------------------------------------------
-    with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
-        log_box = ui.column().classes("w-full gap-1 p-2 af-hide-debug")
-        approval_box = ui.column().classes("w-full")
-    with ui.row().classes("w-full items-center justify-center gap-2"):
-        state_dot = ui.element("span").classes("ap-dot")
-        state_label = ui.label("").classes("text-sm text-gray-500")
-
-    def set_state(text: str, busy: bool) -> None:
-        state_label.set_text(text)
-        if busy:
-            state_dot.classes(add="ap-dot--busy")
-        else:
-            state_dot.classes(remove="ap-dot--busy")
-    debug = {"on": False}
-    debug_switch = ui.switch("Debug (mostrar comandos e arquivos alterados)").props("data-testid=chat-debug")
-    blocked_row = ui.row().classes("w-full items-center justify-center gap-2")
-    blocked_row.set_visibility(False)
-    with blocked_row:
-        ui.icon("refresh").classes("text-sm text-amber-600")
-        ui.label("Contexto do agente foi reiniciado nesta sessão.").classes("text-xs text-amber-600")
-        # ação embutida no próprio aviso (achado do critique: a correção só
-        # existia no botão do topo, fora do aviso — atrito extra bem na hora
-        # em que o usuário já está frustrado)
-        ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
-            "flat dense no-caps"
-        ).classes("text-xs text-amber-600")
-    input_row = ui.row().classes("w-full items-center")
-    with input_row:
-        prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props(
-            'data-testid=chat-input borderless aria-label="Mensagem para o agente"'
-        )
-        send_btn = ui.button(icon="send").classes("af-chat-send").props(
-            'flat round data-testid=chat-send aria-label="Enviar mensagem"'
-        ).tooltip("Enviar mensagem")
-        interrupt_btn = ui.button(icon="stop").props(
-            'color=negative flat round data-testid=chat-interrupt aria-label="Interromper"'
-        ).tooltip("Interromper")
-        interrupt_btn.set_visibility(False)
+            def set_state(text: str, busy: bool) -> None:
+                state_label.set_text(text)
+                if busy:
+                    state_dot.classes(add="ap-dot--busy")
+                else:
+                    state_dot.classes(remove="ap-dot--busy")
+            debug = {"on": False}
+            debug_switch = ui.switch("Debug (mostrar comandos e arquivos alterados)").props("data-testid=chat-debug")
+            blocked_row = ui.row().classes("w-full items-center justify-center gap-2")
+            blocked_row.set_visibility(False)
+            with blocked_row:
+                ui.icon("refresh").classes("text-sm text-amber-600")
+                ui.label("Contexto do agente foi reiniciado nesta sessão.").classes("text-xs text-amber-600")
+                # ação embutida no próprio aviso (achado do critique: a correção só
+                # existia no botão do topo, fora do aviso — atrito extra bem na hora
+                # em que o usuário já está frustrado)
+                ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
+                    "flat dense no-caps"
+                ).classes("text-xs text-amber-600")
+            input_row = ui.row().classes("w-full items-center")
+            with input_row:
+                prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props(
+                    'data-testid=chat-input borderless aria-label="Mensagem para o agente"'
+                )
+                send_btn = ui.button(icon="send").classes("af-chat-send").props(
+                    'flat round data-testid=chat-send aria-label="Enviar mensagem"'
+                ).tooltip("Enviar mensagem")
+                interrupt_btn = ui.button(icon="stop").props(
+                    'color=negative flat round data-testid=chat-interrupt aria-label="Interromper"'
+                ).tooltip("Interromper")
+                interrupt_btn.set_visibility(False)
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
