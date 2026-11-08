@@ -136,16 +136,35 @@ def test_texto_da_mensagem_do_usuario_nao_vira_evento_de_mensagem(fake_opencode)
     assert messages[0].text == "a tabela clientes"
 
 
-def test_texto_sem_messageid_conhecido_nao_vira_evento_de_mensagem(fake_opencode):
-    """Falha segura: sem o `message.updated` correspondente (role ainda
-    desconhecido), a parte de texto não é tratada como resposta do agente —
-    melhor perder um fragmento cedo demais do que atribuí-lo errado."""
+def test_resposta_curta_sem_message_updated_ainda_aparece(fake_opencode):
+    """Achado ao vivo: respostas rápidas/curtas (poucos tokens de saída) às
+    vezes streamam a parte de texto ANTES do `message.updated` que diria o
+    role (corrida real contra a latência do próprio opencode) — tratar
+    "role ainda desconhecido" como "esconder" apagava a resposta de verdade
+    do chat. Sem `message.updated` nenhum e com texto que não é o prompt
+    enviado, a parte é tratada como resposta (único role possível no schema
+    do opencode além de "user" é "assistant")."""
     fake_opencode["events"] = [
-        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "fragmento órfão", "messageID": "msg_desconhecido"}),
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "`public.clientes`", "messageID": "msg_rapida"}),
         _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
     ]
     harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
-    events = _run(harness, {"slug": "erp"})
+    events = _run(harness, {"slug": "erp"}, prompt="quais as tabelas do banco ?")
+    messages = [e for e in events if e.kind == "message"]
+    assert len(messages) == 1
+    assert messages[0].text == "`public.clientes`"
+
+
+def test_texto_igual_ao_prompt_sem_role_ainda_e_tratado_como_eco(fake_opencode):
+    """Mesma corrida do teste acima, mas o texto da parte é idêntico ao
+    prompt que acabou de ser enviado — critério de desempate: é o eco da
+    própria mensagem do editor, não vira resposta do agente."""
+    fake_opencode["events"] = [
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "quais as tabelas no banco ?", "messageID": "msg_user_rapido"}),
+        _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
+    ]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    events = _run(harness, {"slug": "erp"}, prompt="quais as tabelas no banco ?")
     assert all(e.kind != "message" for e in events)
 
 

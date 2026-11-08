@@ -48,6 +48,13 @@ class OpencodeHarness(HarnessPort):
         # messageID -> role ("user"/"assistant"), populado por `message.updated` —
         # `message.part.updated` não carrega role nenhum, só `messageID` (ver abaixo)
         self._message_roles: dict[str, str] = {}
+        # sessionID -> texto do prompt em andamento, usado como critério de
+        # desempate quando a parte de texto chega antes do `message.updated`
+        # que diria o role (achado ao vivo: respostas curtas/rápidas do
+        # modelo — poucos tokens de saída — às vezes streamam a parte de
+        # texto antes do evento que anuncia a mensagem; tratar "role ainda
+        # desconhecido" como "esconder" fazia a resposta real sumir do chat)
+        self._pending_prompt: dict[str, str] = {}
 
     def create_session(self, system: dict) -> str:
         base = self.resolve_base_url(system)
@@ -100,6 +107,7 @@ class OpencodeHarness(HarnessPort):
             raise SessionExpiredError(f"sessão opencode {session_id!r} não existe mais")
         resp.raise_for_status()
 
+        self._pending_prompt[session_id] = prompt.strip()
         try:
             with httpx.stream("GET", f"{base}/event", timeout=None) as sse:
                 for line in sse.iter_lines():
@@ -121,6 +129,7 @@ class OpencodeHarness(HarnessPort):
                 on_event(RunEvent("run_error", text=f"falha de comunicação com o harness: {exc}"))
         finally:
             self._aborting.discard(session_id)
+            self._pending_prompt.pop(session_id, None)
 
     def _normalize(self, envelope: dict, session_id: str) -> RunEvent | None:
         etype = envelope.get("type")
@@ -165,15 +174,26 @@ class OpencodeHarness(HarnessPort):
             part = props.get("part", {})
             ptype = part.get("type")
             if ptype == "text":
+                text = (part.get("text") or "").strip()
+                if not text:
+                    return None
                 # a parte não carrega role nenhum (só `messageID`) — sem checar o
                 # role da mensagem dona, a própria pergunta do editor (parte da
                 # mensagem dele, role "user") também vira um RunEvent "message",
                 # e o chat a renderiza como se fosse resposta do agente
-                if self._message_roles.get(part.get("messageID")) != "assistant":
+                role = self._message_roles.get(part.get("messageID"))
+                if role == "user":
                     return None
-                text = (part.get("text") or "").strip()
-                if text:
-                    return RunEvent("message", text=text)
+                if role is None and text == self._pending_prompt.get(session_id):
+                    # `message.updated` (que diria o role) ainda não chegou —
+                    # texto idêntico ao prompt recém-enviado é o eco da
+                    # própria mensagem do editor, não resposta do agente.
+                    # Qualquer outro texto nessa mesma situação é tratado
+                    # como resposta (único outro role possível no schema do
+                    # opencode é "assistant") — não "esconder por via das
+                    # dúvidas", que apagava respostas curtas de verdade.
+                    return None
+                return RunEvent("message", text=text)
             if ptype == "tool":
                 tool = part.get("tool", "")
                 state = part.get("state") or {}
