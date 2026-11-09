@@ -165,16 +165,9 @@ services:
       - apm-server
 
   # Stack de observabilidade opcional (change agent-telemetry-otel):
-  # nenhum destes 4 serviços sobe por padrão — só com `--profile
+  # nenhum destes serviços sobe por padrão — só com `--profile
   # observability`. portal/broker/litellm nunca entram em nenhum profile,
   # continuam sempre ligados como hoje (ver proposal.md/design.md).
-  prometheus:
-    image: prom/prometheus:v2.55.1
-    profiles: ["observability"]
-    volumes:
-      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheusdata:/prometheus
-
   tempo:
     image: grafana/tempo:2.6.1
     profiles: ["observability"]
@@ -191,9 +184,15 @@ services:
       - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - lokidata:/loki
 
+  # Compartilhado entre `observability` e `metrics` (change container-resource-metrics)
+  # - sobe com qualquer um dos dois, nunca duplicado. Sem `depends_on` fixo
+  # de propósito: cada profile pode estar de pé independente do outro, e um
+  # datasource cujo serviço não está rodando naquele momento só fica
+  # indisponível naquele painel específico, sem travar o Grafana nem os
+  # outros datasources.
   grafana:
     image: grafana/grafana:11.3.1
-    profiles: ["observability"]
+    profiles: ["observability", "metrics"]
     ports:
       - "3000:3000"
     environment:
@@ -202,10 +201,38 @@ services:
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafanadata:/var/lib/grafana
+
+  # Profile `metrics` (change container-resource-metrics): uso de CPU,
+  # memória e pids por sistema, sem nenhuma instrumentação no portal — o
+  # cAdvisor lê os cgroups direto, já rotulado com os labels Docker de cada
+  # container (`appaiforge.slug`/`appaiforge.system_id`, de provisioning.py),
+  # e o Prometheus normaliza esses labels em `slug`/`system_id` no scrape
+  # (ver relabel_configs em prometheus.yml) — o dashboard nunca referencia o
+  # nome bruto do label Docker, pra sobreviver à troca de mecanismo de
+  # coleta quando a etapa 8 do roadmap (Kubernetes) acontecer.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    profiles: ["metrics"]
+    command:
+      - "--docker_only=true"
+      - "--disable_metrics=disk,diskIO"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  # `prometheus` nunca teve relação real com Tempo/Loki (traces/logs não
+  # passam por ele) — migrou do profile `observability` pra `metrics`, seu
+  # lugar de fato, já que scrape de métricas é seu único propósito.
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["metrics"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
     depends_on:
-      - prometheus
-      - tempo
-      - loki
+      - cadvisor
 
   # Stack de exemplo Elastic (change agent-telemetry-backend-agnostic):
   # segundo backend de observabilidade pronto, alimentado pelo mesmo

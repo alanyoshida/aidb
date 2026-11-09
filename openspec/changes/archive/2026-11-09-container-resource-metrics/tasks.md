@@ -1,0 +1,27 @@
+# Tasks
+
+## 1. cAdvisor + Prometheus no profile `metrics`
+
+- [x] 1.1 Adicionar o serviço `cadvisor` ao `docker-compose.yml` (profile `metrics`), com as montagens somente-leitura padrão (`/rootfs`, `/var/run`, `/sys`, `/var/lib/docker`); verificar que `docker compose --profile metrics up -d cadvisor` sobe o serviço saudável e que ele expõe métricas `container_cpu_usage_seconds_total`/`container_memory_working_set_bytes`/`container_processes` para pelo menos um container rodando. (achado ao vivo: `cadvisor:v0.49.1` não reconhece o storage backend containerd-snapshotter deste Docker 29.9.3 — `failed to identify the read-write layer ID`, container nunca é criado internamente, zero métrica. Corrigido subindo pra `v0.55.1`, que suporta containerd-snapshotter; `--disable_metrics=disk,diskIO` mantido por escopo, não pela falha)
+- [x] 1.2 Mover o serviço `prometheus` do profile `observability` para `metrics` no `docker-compose.yml`; adicionar o job de scrape do cAdvisor em `deploy/observability/prometheus.yml`, com relabel renomeando `container_label_appaiforge_slug` → `slug` e `container_label_appaiforge_system_id` → `system_id`; verificar que `docker compose --profile observability config --services` não lista mais `prometheus`, e que `docker compose --profile metrics config --services` lista `prometheus` e `cadvisor`. (achado ao vivo: `relabel_configs` não se aplica a labels vindos do corpo raspado da métrica — é `metric_relabel_configs` que faz isso; `relabel_configs` só atua na descoberta do alvo, antes do scrape. Corrigido)
+- [x] 1.3 Verificar ao vivo, com um sistema de teste descartável, que uma query Prometheus por `slug` daquele sistema (ex.: `container_memory_working_set_bytes{slug="<slug>"}`) devolve um valor não-nulo. (confirmado com o sistema de teste "Metrics Verify" — `slug="metrics-verify"`, `system_id` correto, uso de memória real do container principal e do sidecar https-proxy)
+
+## 2. Grafana compartilhado entre profiles
+
+- [x] 2.1 Ajustar `grafana` no `docker-compose.yml` para `profiles: ["observability", "metrics"]` e remover o `depends_on` fixo em `prometheus`/`tempo`/`loki`; verificar que `docker compose --profile metrics up -d` sobe o Grafana mesmo sem o profile `observability` ligado, e que `docker compose --profile observability up -d` também sobe o Grafana mesmo sem `metrics` ligado. (confirmado ao vivo nos dois sentidos: `/api/health` do Grafana respondeu "ok" com só `metrics` de pé, e de novo com só `observability` de pé)
+- [x] 2.2 Verificar que subir os dois profiles juntos (`--profile observability --profile metrics up -d`) resulta em uma única instância de `grafana` rodando, não duas. (confirmado: `docker ps --filter name=appaiforge-grafana` lista exatamente 1 container com os dois profiles de pé)
+
+## 3. Dashboard de recursos por sistema
+
+- [x] 3.1 Criar o provisionamento do dashboard em `deploy/observability/grafana/provisioning/dashboards/`, com uma variável de sistema (`$slug`) e painéis de CPU, memória e pids, cada um como percentual do limite configurado daquele sistema (`container_cpus`/`container_mem_mb`/`container_pids_limit`); verificar que o dashboard aparece automaticamente no Grafana após `docker compose --profile metrics up -d`, sem configuração manual. (achado ao vivo: cAdvisor expõe `container_spec_cpu_quota`/`container_spec_memory_limit_bytes` — dá pra calcular % de CPU/memória dinamicamente, sem hardcode; mas não expõe limite de pids nenhum. Adicionada variável `$pids_limit` no dashboard, default 512, documentada como precisando bater com `APPAIFORGE_CONTAINER_PIDS_LIMIT` se o deploy mudou o padrão. Dashboard confirmado auto-provisionado via `GET /api/search`)
+- [x] 3.2 Verificar ao vivo, com um sistema de teste descartável sob alguma carga (ex.: execução do agente em andamento), que trocar a variável `$slug` no dashboard para aquele sistema mostra uso de CPU/memória/pids diferente de zero, coerente com os limites configurados. (confirmado ao vivo com o sistema "Metrics Verify": memória ~10% e pids 0,2%/0,6% em repouso; disparei uma execução real (loop Python somando até 20 milhões) e o painel de CPU mostrou o pico claramente correlacionado no horário exato da execução, de ~0% pra ~24% do limite)
+
+## 4. Verificação de não regressão
+
+- [x] 4.1 Verificar que o deploy sem nenhum profile, e o deploy só com `observability` (sem `metrics`), continuam funcionando normalmente — Tempo e Loki sobem, Grafana sobe, só o painel de recursos fica sem dado (comportamento esperado, não erro). (confirmado: sem profile, `docker compose config --services` lista só os 6 de sempre e `/api/health` do portal respondeu ok; com só `observability`, Grafana respondeu saudável e a query ao datasource Prometheus devolveu 502 — erro de conexão isolado naquele painel, Grafana e os outros datasources intactos)
+- [x] 4.2 Rodar a suíte de testes unitários (`uv run pytest tests/unit`) e confirmar que nada quebrou (esta change não toca em código Python). (340 passed, 0 failed)
+
+## Workflow follow-up
+
+- Arquivar esta change (`openspec archive container-resource-metrics`) depois que as tarefas acima estiverem implementadas e verificadas, seguindo o protocolo de segurança do projeto (nunca em `homolog-crm`, `pets`, `projetos` ou `chat-a0a915bd`; usar sempre um sistema de teste descartável).
+- Registrar o ADR correspondente em `docs/adr/`, e atualizar o roadmap de confinamento (seção "Não resolve ainda" da etapa 6) indicando que a instrumentação de uso de recursos por sistema foi endereçada.

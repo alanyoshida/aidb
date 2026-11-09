@@ -1,0 +1,14 @@
+# Provider de dashboards (change container-resource-metrics): carrega
+# qualquer .json deste diretório automaticamente, sem passo manual no Grafana.
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

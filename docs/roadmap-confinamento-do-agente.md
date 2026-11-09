@@ -1,7 +1,7 @@
 # Roadmap — confinamento e política do agente
 
-> **Status**: plano aceito; etapas 1–5 concluídas.
-> **Última revisão**: 2026-11-08.
+> **Status**: plano aceito; etapas 1–6 concluídas.
+> **Última revisão**: 2026-11-09.
 > Documento de trabalho de longa duração: uma change OpenSpec por etapa, na ordem abaixo.
 > Ao concluir uma etapa, marque na tabela e registre o ADR correspondente em
 > [`docs/adr/`](adr/README.md).
@@ -15,7 +15,7 @@
 | 3 | Broker de inferência | nenhuma credencial de LLM no container | ✅ concluída (change `inference-broker`, ADR 0020) |
 | 4 | Proxy de banco + gate no data plane | gate independente do agente | ✅ concluída (change `db-proxy-gate-data-plane`, ADR 0021, ADR 0023) |
 | 5 | Perímetro de egress | proxies inescapáveis | ✅ concluída (changes `agent-network-perimeter` + `agent-https-forward-proxy`, ADR 0022, ADR 0024 — segunda metade fechada em 2026-11-08) |
-| 6 | Telemetria OTel | um trace por execução | ⬜ não iniciada |
+| 6 | Telemetria OTel | um trace por execução | ✅ concluída (changes `agent-telemetry-otel` + `agent-telemetry-backend-agnostic`, capability `agent-telemetry`, ADR 0025 — com divergência de escopo: ver seção da etapa) |
 | 7 | Segundo agente | validação da arquitetura | ⬜ não iniciada |
 | 8 | Kubernetes | pod por sistema | ⬜ não iniciada |
 | 9 | KubeArmor / auditoria de kernel (opcional) | regra por binário | ⬜ não iniciada |
@@ -470,8 +470,51 @@ de LLM e a registros de pacote continuam por 443, sem proxy HTTP(S) forçado.~~ 
 
 ## Etapa 6 — Telemetria OTel
 
-**Objetivo**: a chave Debug do chat e a página de auditoria do gate passam a ser **views sobre a
-mesma telemetria**, em vez de pipeline próprio.
+**Status: ✅ concluída** (changes `agent-telemetry-otel` e `agent-telemetry-backend-agnostic`,
+capability `agent-telemetry`, [ADR 0025](adr/0025-telemetria-otel-agnostica-de-backend.md)) —
+**com duas divergências do plano original abaixo, decididas em conversa com o operador**:
+
+1. **A página de auditoria do gate NÃO virou view sobre a telemetria** — decisão invertida de
+   propósito. Se `GateDecision`/`ManagementAudit` dependessem do backend de observabilidade,
+   trocar de Grafana para Elastic (ou desligar o stack) quebraria a trilha de compliance. Os dois
+   continuam gravados em Postgres como sempre, fonte de verdade independente — verificado ao vivo
+   que a aba "Auditoria" continua idêntica, sem nenhuma chamada nova de telemetria alterando esse
+   comportamento.
+2. **O endpoint de exportação não aponta mais direto para um backend** — foi além do plano
+   original. Portal e broker exportam sempre para um **OTel Collector** com endpoint fixo; a
+   escolha do backend (Tempo/Loki, Elastic, ou outro) vira configuração do Collector, nunca da
+   aplicação. Provado ao vivo trocando o backend por trás do Collector (parar o Collector do
+   Tempo, subir o do Elastic no mesmo alias de rede) e vendo o mesmo span aparecer no novo
+   backend, sem nenhuma mudança de código nem de env var.
+
+**Entregue**: span raiz `agent.run` por execução com filhos `tool.bash`/`tool.edit`/`db.query`/
+`policy.decision`/`llm.request`, correlacionados por `run_id` via gerador de ID determinístico
+(permite ao broker, processo separado, reconstruir o span pai sem chamada de rede nova); logs
+estruturados (login, configuração de rede, ciclo de vida de sistema, prompts do chat, espelho da
+auditoria de gestão); Debug log do chat lendo de uma tabela Postgres própria
+(`agent_telemetry_spans`, retenção por TTL configurável — novo para o projeto, nenhuma outra
+tabela do portal tem limpeza automática hoje), não de nenhum backend de observabilidade externo;
+dois profiles de exemplo no `docker-compose.yml` (`observability`: Tempo/Loki/Grafana;
+`observability-elastic`: Elasticsearch/Kibana/APM Server), ambos alimentados pelo mesmo Collector.
+
+**Achado real durante a implementação**: um span órfão (sem `AgentRun` correspondente, de outra
+execução/teste) gravado no mesmo lote de um `BatchSpanProcessor` derrubava o commit inteiro via
+`add_all` — inclusive os spans válidos do mesmo lote. Corrigido para persistir cada span na sua
+própria transação, isolando falhas por linha.
+
+**Não resolve ainda** *(no momento da conclusão desta etapa)*: instrumentação de métricas real. O
+Prometheus sobe no profile `observability`, mas hoje é decorativo — nenhuma métrica da aplicação
+(uso de CPU/memória dos sistemas provisionados, por exemplo) é coletada ou exposta. Fica para uma
+próxima exploração.
+
+**Atualização**: endereçado pela change `container-resource-metrics`
+([ADR 0026](adr/0026-metricas-de-recursos-por-container-via-cadvisor.md)) — cAdvisor + Prometheus em
+profile próprio (`metrics`), dashboard de CPU/memória/pids por sistema no Grafana, rotulado de
+forma portável para uma futura migração a Kubernetes. Disco ficou fora do escopo (sem equivalente
+direto em Kubernetes). Ver ADR 0026 para detalhes.
+
+**Objetivo original**: a chave Debug do chat e a página de auditoria do gate passam a ser **views
+sobre a mesma telemetria**, em vez de pipeline próprio.
 
 **Escopo**: span raiz por run no portal (o `run_id` já existe), com filhos:
 

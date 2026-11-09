@@ -1,7 +1,9 @@
-# Observabilidade opcional (etapa 6, change agent-telemetry-otel). Esta
-# change não instrumenta métricas de aplicação própria — só garante que o
-# Prometheus sobe saudável como parte do stack; scrape de métricas do
-# portal/broker é trabalho futuro.
+# Observabilidade opcional (profile `metrics`, change container-resource-metrics).
+# O job `cadvisor` rotula cada série com `slug`/`system_id` via relabel,
+# nunca com o nome bruto do label Docker (`container_label_appaiforge_*`) —
+# isola a dependência de plataforma aqui, pro dashboard do Grafana não
+# precisar mudar quando a etapa 8 do roadmap (Kubernetes) trocar o cAdvisor
+# standalone pelo que já vem embutido no kubelet.
 global:
   scrape_interval: 15s
 
@@ -9,3 +11,15 @@ scrape_configs:
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+    # metric_relabel_configs (não relabel_configs): os labels
+    # `container_label_appaiforge_*` vêm do corpo já raspado da métrica
+    # (exposição do cAdvisor), não da descoberta do alvo.
+    metric_relabel_configs:
+      - source_labels: [container_label_appaiforge_slug]
+        target_label: slug
+      - source_labels: [container_label_appaiforge_system_id]
+        target_label: system_id

@@ -36,3 +36,5 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0022](0022-confinamento-de-rede-por-porta-tcp-via-landlock.md) | Confinamento de rede por porta TCP via Landlock, fechando o bypass dos proxies de banco/broker | aceito (443/80: ver 0024) |
 | [0023](0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md) | Statement confirmável recusada direto em enforce, sem pedir aprovação (fecha disfarce de SQL destrutivo em card genérico) | aceito |
 | [0024](0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md) | Proxy HTTP(S) de saída obrigatório por sistema, com allow-list por host (fecha o corte de escopo da etapa 5) | aceito |
+| [0025](0025-telemetria-otel-agnostica-de-backend.md) | Telemetria OTel agnóstica de backend via Collector; Debug log em Postgres próprio; gate/auditoria continuam fora da telemetria | aceito |
+| [0026](0026-metricas-de-recursos-por-container-via-cadvisor.md) | Métricas de recursos por container via cAdvisor, rotuladas no scrape pra portabilidade futura a Kubernetes | aceito |

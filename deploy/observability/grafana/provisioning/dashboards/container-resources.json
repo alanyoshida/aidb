@@ -1,0 +1,93 @@
+{
+  "title": "Uso de recursos por sistema",
+  "uid": "container-resource-metrics",
+  "editable": true,
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "slug",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(container_memory_working_set_bytes, slug)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "pids_limit",
+        "type": "textbox",
+        "label": "Limite de pids configurado (APPAIFORGE_CONTAINER_PIDS_LIMIT)",
+        "query": "512",
+        "current": { "text": "512", "value": "512" },
+        "description": "cAdvisor não expõe o limite de pids como métrica (ao contrário de CPU/memória, que vêm de container_spec_cpu_quota/container_spec_memory_limit_bytes) — ajuste aqui se o deploy mudou o padrão."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "CPU — % do limite ($slug)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(container_cpu_usage_seconds_total{slug=\"$slug\", cpu=\"total\"}[1m])) by (name) / on(name) (sum(container_spec_cpu_quota{slug=\"$slug\"}) by (name) / sum(container_spec_cpu_period{slug=\"$slug\"}) by (name))",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Memória — % do limite ($slug)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0, "max": 100 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * container_memory_working_set_bytes{slug=\"$slug\"} / on(name) container_spec_memory_limit_bytes{slug=\"$slug\"}",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Processos (pids) — % do limite configurado ($slug)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "min": 0 },
+        "overrides": []
+      },
+      "description": "Limite vem da variável $pids_limit (texto), não de uma métrica do cAdvisor — ver descrição da variável.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * container_processes{slug=\"$slug\"} / $pids_limit",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    }
+  ]
+}
