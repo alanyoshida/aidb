@@ -4,15 +4,16 @@ mesmo span pai sem chamada de rede nova) e o ciclo de vida do span raiz
 `agent.run` + spans filhos de ferramenta na fila de execução real."""
 
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from opentelemetry import trace
 
-from appaiforge import auth, telemetry
+from appaiforge import telemetry
 from appaiforge.agent_queue import AgentQueue
 from appaiforge.db import session_scope
 from appaiforge.harness.base import HarnessPort, RunEvent
-from appaiforge.models import AgentRun, RunStatus, UserType
+from appaiforge.models import AgentRun, RunStatus
 from appaiforge.services.systems import create_system
 from appaiforge.telemetry import _DeterministicRootIdGenerator
 
@@ -73,11 +74,6 @@ def fake_workspace(tmp_path, monkeypatch):
     get_settings.cache_clear()
     yield tmp_path
     get_settings.cache_clear()
-
-
-@pytest.fixture()
-def editor(clean_db):
-    return auth.create_user("telemetry@t.local", "pw", UserType.editor.value)
 
 
 def _wait_run(queue: AgentQueue, run_id: str, timeout: float = 5.0) -> None:
@@ -152,6 +148,71 @@ def test_span_raiz_abre_e_encerra_com_a_run_e_cobre_o_tool_span(editor, fake_wor
     assert tool.attributes["status"] == "completed"
 
 
+def test_spans_de_uma_run_real_sao_persistidos_em_postgres_e_lidos_pelo_debug_log(
+    editor, fake_workspace, finished_spans, clean_db
+):
+    """Change agent-telemetry-backend-agnostic: o Debug log passa a ler de
+    `agent_telemetry_spans` em Postgres, não mais de uma API de backend de
+    observabilidade externo."""
+    from appaiforge.services import telemetry_query
+
+    queue = AgentQueue(_ToolHarness())
+    system = create_system(editor, "Telemetria Postgres", "telemetria-postgres")
+    run = queue.enqueue(system.id, editor.id, "liste os arquivos", chat_session_id=None)
+    _wait_run(queue, run.id)
+
+    trace.get_tracer_provider().force_flush()
+
+    spans = telemetry_query.fetch_run_trace(run.id)
+    assert spans is not None
+    names = [s["name"] for s in spans]
+    assert "agent.run" in names
+    assert "tool.bash" in names
+    root = next(s for s in spans if s["name"] == "agent.run")
+    tool = next(s for s in spans if s["name"] == "tool.bash")
+    assert tool["parent_span_id"] == root["span_id"]
+    assert tool["attributes"]["status"] == "completed"
+
+
+def test_postgres_span_exporter_falha_ao_gravar_nao_propaga_e_devolve_failure(monkeypatch, clean_db):
+    """Task 2.2: uma falha ao persistir (ex.: Postgres indisponível) nunca
+    propaga pro código que criou/encerrou o span - best effort."""
+    import contextlib
+
+    import appaiforge.db as db_mod
+    from opentelemetry.sdk.trace.export import SpanExportResult
+
+    telemetry.configure("appaiforge-tests")
+
+    @contextlib.contextmanager
+    def _broken_session_scope():
+        raise RuntimeError("Postgres indisponível")
+        yield  # pragma: no cover - nunca alcançado
+
+    monkeypatch.setattr(db_mod, "session_scope", _broken_session_scope)
+
+    span = telemetry.start_child_span("run-postgres-indisponivel", "db.query", {"classification": "normal"})
+    span.end()  # não deve levantar nada
+
+    exporter = telemetry._PostgresSpanExporter()
+    result = exporter.export([span])
+    assert result == SpanExportResult.FAILURE
+
+
+def test_postgres_span_exporter_ignora_span_sem_run_id_nos_atributos():
+    """Defensivo: um span fora da instrumentação desta change (sem `run_id`
+    nos atributos) é ignorado, não gera erro nem linha vazia."""
+    from opentelemetry.sdk.trace.export import SpanExportResult
+
+    tracer = trace.get_tracer("teste-sem-run-id")
+    span = tracer.start_span("span.alheio")
+    span.end()
+
+    exporter = telemetry._PostgresSpanExporter()
+    result = exporter.export([span])
+    assert result == SpanExportResult.SUCCESS
+
+
 def test_run_interrompida_encerra_span_raiz_sem_deixar_span_filho_aberto(editor, fake_workspace, finished_spans):
     queue = AgentQueue(_InterruptedToolHarness())
     system = create_system(editor, "Telemetria Interrompida", "telemetria-interrompida")
@@ -168,3 +229,63 @@ def test_run_interrompida_encerra_span_raiz_sem_deixar_span_filho_aberto(editor,
     # não deixado aberto (toda referência em open_tool_spans é descartada no fim)
     assert tool.attributes["outcome"] == "incomplete"
     assert tool.end_time is not None
+
+
+# --- retenção por TTL (tasks 4.1/4.2) -----------------------------------
+
+def test_cleanup_expired_spans_remove_antigos_e_preserva_recentes(editor, clean_db, monkeypatch):
+    monkeypatch.setenv("APPAIFORGE_OTEL_SPAN_RETENTION_DAYS", "30")
+    from appaiforge.config import get_settings
+
+    get_settings.cache_clear()
+
+    system = create_system(editor, "Retenção", "retencao-spans")
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.succeeded, prompt="oi",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+        from appaiforge.models import AgentTelemetrySpan
+
+        s.add_all([
+            AgentTelemetrySpan(
+                run_id=run_id, span_id="old1", parent_span_id=None, name="agent.run",
+                start_time=now - timedelta(days=40), end_time=now - timedelta(days=40),
+                attributes={},
+            ),
+            AgentTelemetrySpan(
+                run_id=run_id, span_id="new1", parent_span_id=None, name="agent.run",
+                start_time=now, end_time=now, attributes={},
+            ),
+        ])
+
+    removed = telemetry.cleanup_expired_spans()
+    assert removed == 1
+
+    from appaiforge.services import telemetry_query
+
+    spans = telemetry_query.fetch_run_trace(run_id)
+    assert spans is not None
+    assert [s["span_id"] for s in spans] == ["new1"]
+
+    get_settings.cache_clear()
+
+
+def test_start_span_cleanup_timer_usa_intervalo_de_horas_nao_segundos(monkeypatch):
+    import nicegui
+
+    calls = []
+    monkeypatch.setattr(
+        nicegui.app, "timer", lambda interval, callback, **kw: calls.append((interval, callback))
+    )
+
+    telemetry.start_span_cleanup_timer()
+
+    assert len(calls) == 1, "limpeza de spans deve ser registrada exatamente uma vez"
+    interval, callback = calls[0]
+    assert callback is telemetry.cleanup_expired_spans
+    assert interval >= 3600, "intervalo deve ser em horas, não em segundos"

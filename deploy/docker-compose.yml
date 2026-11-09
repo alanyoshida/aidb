@@ -69,14 +69,16 @@ services:
       APPAIFORGE_FAKE_DELAY: ${APPAIFORGE_FAKE_DELAY:-1.5}
       APPAIFORGE_MAX_SYSTEMS: ${APPAIFORGE_MAX_SYSTEMS:-50}
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
-      # Telemetria OTel (etapa 6, change agent-telemetry-otel): vazio por
-      # padrão — o SDK fica no-op. Só aponta para o stack do profile
-      # "observability" se as 3 variáveis forem definidas (nenhuma delas
-      # tem valor fixo aqui de propósito: subir o profile sem definir as
-      # variáveis não deve gerar nenhuma tentativa de exportação).
+      # Telemetria OTel (change agent-telemetry-otel / agent-telemetry-backend-agnostic):
+      # vazio por padrão — o SDK fica no-op. Aponta sempre para o Collector
+      # (nunca direto para um backend específico) - a escolha de Tempo/Loki
+      # vs. Elastic (ou outro) é configuração do Collector, nunca da
+      # aplicação (nenhuma das variáveis tem valor fixo aqui de propósito:
+      # subir um profile sem definir as variáveis não deve gerar nenhuma
+      # tentativa de exportação).
       APPAIFORGE_OTEL_TRACES_ENDPOINT: ${APPAIFORGE_OTEL_TRACES_ENDPOINT:-}
       APPAIFORGE_OTEL_LOGS_ENDPOINT: ${APPAIFORGE_OTEL_LOGS_ENDPOINT:-}
-      APPAIFORGE_OTEL_TRACES_QUERY_URL: ${APPAIFORGE_OTEL_TRACES_QUERY_URL:-}
+      APPAIFORGE_OTEL_SPAN_RETENTION_DAYS: ${APPAIFORGE_OTEL_SPAN_RETENTION_DAYS:-30}
     volumes:
       - ${APPAIFORGE_WORKSPACES_DIR:-/opt/appaiforge/workspaces}:/workspaces
       - ${APPAIFORGE_CONFIGS_DIR:-/opt/appaiforge/configs}:/configs
@@ -117,7 +119,7 @@ services:
       APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
       APPAIFORGE_INFERENCE_BROKER_ALLOWED_HOSTS: litellm
       APPAIFORGE_SECRET_KEY: ${APPAIFORGE_SECRET_KEY:-change-me-in-production}
-      # Mesmo toggle do portal (ver comentário lá) — vazio por padrão.
+      # Mesmo toggle do portal (ver comentário lá) — sempre o Collector, vazio por padrão.
       APPAIFORGE_OTEL_TRACES_ENDPOINT: ${APPAIFORGE_OTEL_TRACES_ENDPOINT:-}
     depends_on:
       - litellm
@@ -129,7 +131,40 @@ services:
       retries: 12
       start_period: 10s
 
-  # Stack de observabilidade opcional (etapa 6, change agent-telemetry-otel):
+  # OTel Collector: único endpoint fixo que portal/broker conhecem
+  # (APPAIFORGE_OTEL_TRACES_ENDPOINT/LOGS_ENDPOINT), independente de qual
+  # backend está por trás (change agent-telemetry-backend-agnostic). Os
+  # dois serviços abaixo compartilham o mesmo alias de rede `otel-collector`
+  # - só um dos dois profiles deve estar de pé por vez; qual exporta pra
+  # onde é definido pelo arquivo de config que cada um monta, não pela app.
+  otel-collector-tempo:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    profiles: ["observability"]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-tempo.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      default:
+        aliases:
+          - otel-collector
+    depends_on:
+      - tempo
+      - loki
+
+  otel-collector-elastic:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    profiles: ["observability-elastic"]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-elastic.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      default:
+        aliases:
+          - otel-collector
+    depends_on:
+      - apm-server
+
+  # Stack de observabilidade opcional (change agent-telemetry-otel):
   # nenhum destes 4 serviços sobe por padrão — só com `--profile
   # observability`. portal/broker/litellm nunca entram em nenhum profile,
   # continuam sempre ligados como hoje (ver proposal.md/design.md).
@@ -172,6 +207,49 @@ services:
       - tempo
       - loki
 
+  # Stack de exemplo Elastic (change agent-telemetry-backend-agnostic):
+  # segundo backend de observabilidade pronto, alimentado pelo mesmo
+  # Collector (otel-collector-elastic acima) - prova que troca de backend
+  # não exige mudança na aplicação. Opt-in via `--profile observability-elastic`,
+  # nunca sobe junto com o profile `observability` por padrão.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    profiles: ["observability-elastic"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearchdata:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.3
+    profiles: ["observability-elastic"]
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:8.15.3
+    profiles: ["observability-elastic"]
+    command:
+      - apm-server
+      - -e
+      - -E
+      - apm-server.host=0.0.0.0:8200
+      - -E
+      - output.elasticsearch.hosts=["elasticsearch:9200"]
+      - -E
+      - apm-server.kibana.enabled=true
+      - -E
+      - apm-server.kibana.host=http://kibana:5601
+    depends_on:
+      - elasticsearch
+      - kibana
+
 networks:
   default:
     name: appaiforge-net
@@ -184,3 +262,4 @@ volumes:
   tempodata:
   lokidata:
   grafanadata:
+  elasticsearchdata:

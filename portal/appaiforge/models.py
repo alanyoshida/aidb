@@ -335,6 +335,24 @@ class RunEventRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AgentTelemetrySpan(Base):
+    """Span de telemetria persistido para o Debug log do chat (capability
+    agent-telemetry, change agent-telemetry-backend-agnostic) — gravado por
+    um SpanProcessor próprio, em paralelo à exportação OTLP para o Collector;
+    não depende de nenhum backend de observabilidade externo para ser lido."""
+
+    __tablename__ = "agent_telemetry_spans"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    run_id: Mapped[str] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    span_id: Mapped[str] = mapped_column(String(32))
+    parent_span_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    name: Mapped[str] = mapped_column(String(80))
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default={})
+
+
 class ManagementAudit(Base):
     """Trilha de auditoria das ações de escrita da gestão (capability management-audit)."""
 

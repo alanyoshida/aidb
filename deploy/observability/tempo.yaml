@@ -1,6 +1,6 @@
-# Tempo em modo single-binary (etapa 6, change agent-telemetry-otel):
-# recebe os traços OTLP do portal/broker (APPAIFORGE_OTEL_TRACES_ENDPOINT)
-# e é consultado pelo Debug log do chat (APPAIFORGE_OTEL_TRACES_QUERY_URL).
+# Tempo em modo single-binary: recebe traços OTLP do Collector (change
+# agent-telemetry-backend-agnostic) — o Debug log do chat lê de uma tabela
+# Postgres própria, não consulta este Tempo diretamente.
 server:
   http_listen_port: 3200
 

@@ -51,6 +51,8 @@ def create_app() -> FastAPI:
 
     reconcile_orphaned_runs()
 
+    telemetry.start_span_cleanup_timer()
+
     @application.get("/api/health")
     def health() -> JSONResponse:
         return JSONResponse({"status": "ok", "version": __version__})

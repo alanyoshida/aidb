@@ -1,78 +1,55 @@
-"""Unitários de `services/telemetry_query.py` (task 6.1/6.2): sem
-`APPAIFORGE_OTEL_TRACES_QUERY_URL` configurada, sempre `None` (o Debug log
-cai no comportamento atual); configurada, consulta o Tempo e devolve a
-árvore de spans ordenada, ou `None` em qualquer falha (melhor esforço)."""
+"""Unitários de `services/telemetry_query.py` (change agent-telemetry-backend-agnostic):
+sem nenhum span persistido pra uma run, `fetch_run_trace` devolve `None` (o
+Debug log cai no comportamento atual); com spans persistidos, devolve a
+árvore ordenada; qualquer falha ao consultar devolve `None`, sem propagar."""
 
-import httpx
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from appaiforge.services import telemetry_query
 
 
 @pytest.fixture()
-def tempo_url(monkeypatch):
-    monkeypatch.setenv("APPAIFORGE_OTEL_TRACES_QUERY_URL", "http://tempo:3200")
-    from appaiforge.config import get_settings
+def run_with_spans(editor, clean_db):
+    """Cria um AgentRun real e dois `AgentTelemetrySpan` associados a ele
+    (raiz + filho), direto no banco - sem passar pela fila de execução real,
+    já que aqui o alvo é só o caminho de leitura."""
+    from appaiforge.db import session_scope
+    from appaiforge.models import AgentRun, AgentTelemetrySpan, RunStatus
+    from appaiforge.services.systems import create_system
 
-    get_settings.cache_clear()
-    yield "http://tempo:3200"
-    get_settings.cache_clear()
-
-
-def test_sem_endpoint_configurado_nunca_consulta_nada(monkeypatch):
-    from appaiforge.config import get_settings
-
-    get_settings.cache_clear()
-    assert telemetry_query.fetch_run_trace("run-1") is None
-    get_settings.cache_clear()
-
-
-_TRACE_PAYLOAD = {
-    "batches": [
-        {
-            "scopeSpans": [
-                {
-                    "spans": [
-                        {
-                            "name": "agent.run",
-                            "spanId": "root1",
-                            "parentSpanId": "",
-                            "startTimeUnixNano": "1000000000",
-                            "endTimeUnixNano": "5000000000",
-                            "attributes": [{"key": "run_id", "value": {"stringValue": "run-1"}}],
-                        },
-                        {
-                            "name": "db.query",
-                            "spanId": "child1",
-                            "parentSpanId": "root1",
-                            "startTimeUnixNano": "2000000000",
-                            "endTimeUnixNano": "2500000000",
-                            "attributes": [{"key": "classification", "value": {"stringValue": "normal"}}],
-                        },
-                    ]
-                }
-            ]
-        }
-    ]
-}
+    system = create_system(editor, "Telemetria Query", "telemetria-query")
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.succeeded, prompt="oi",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+        s.add_all([
+            AgentTelemetrySpan(
+                run_id=run_id, span_id="root1", parent_span_id=None, name="agent.run",
+                start_time=now, end_time=now + timedelta(seconds=5),
+                attributes={"run_id": run_id, "outcome": "ok"},
+            ),
+            AgentTelemetrySpan(
+                run_id=run_id, span_id="child1", parent_span_id="root1", name="db.query",
+                start_time=now + timedelta(seconds=1), end_time=now + timedelta(seconds=2),
+                attributes={"run_id": run_id, "classification": "normal"},
+            ),
+        ])
+    return run_id
 
 
-def _mock_handler(request: httpx.Request) -> httpx.Response:
-    if request.url.path == "/api/search":
-        return httpx.Response(200, json={"traces": [{"traceID": "abc123"}]})
-    if request.url.path == "/api/traces/abc123":
-        return httpx.Response(200, json=_TRACE_PAYLOAD)
-    return httpx.Response(404)
+def test_sem_spans_persistidos_devolve_none(editor, clean_db):
+    assert telemetry_query.fetch_run_trace("run-sem-spans") is None
 
 
-def test_consulta_o_tempo_e_devolve_a_arvore_de_spans_ordenada(tempo_url, monkeypatch):
-    real_client_cls = httpx.Client
-    monkeypatch.setattr(
-        telemetry_query.httpx, "Client",
-        lambda timeout=None: real_client_cls(transport=httpx.MockTransport(_mock_handler)),
-    )
-
-    spans = telemetry_query.fetch_run_trace("run-1")
+def test_consulta_retorna_arvore_ordenada(run_with_spans):
+    spans = telemetry_query.fetch_run_trace(run_with_spans)
 
     assert spans is not None
     assert [s["name"] for s in spans] == ["agent.run", "db.query"]
@@ -80,29 +57,12 @@ def test_consulta_o_tempo_e_devolve_a_arvore_de_spans_ordenada(tempo_url, monkey
     assert spans[1]["attributes"]["classification"] == "normal"
 
 
-def test_trace_nao_encontrado_devolve_none(tempo_url, monkeypatch):
-    real_client_cls = httpx.Client
+def test_falha_ao_consultar_devolve_none_sem_propagar(monkeypatch, run_with_spans):
+    import appaiforge.db as db_mod
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"traces": []})
+    def _boom():
+        raise RuntimeError("Postgres fora do ar")
 
-    monkeypatch.setattr(
-        telemetry_query.httpx, "Client",
-        lambda timeout=None: real_client_cls(transport=httpx.MockTransport(handler)),
-    )
+    monkeypatch.setattr(db_mod, "session_scope", _boom)
 
-    assert telemetry_query.fetch_run_trace("run-sem-trace") is None
-
-
-def test_falha_de_rede_devolve_none_sem_propagar_erro(tempo_url, monkeypatch):
-    real_client_cls = httpx.Client
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("tempo fora do ar")
-
-    monkeypatch.setattr(
-        telemetry_query.httpx, "Client",
-        lambda timeout=None: real_client_cls(transport=httpx.MockTransport(handler)),
-    )
-
-    assert telemetry_query.fetch_run_trace("run-1") is None
+    assert telemetry_query.fetch_run_trace(run_with_spans) is None
