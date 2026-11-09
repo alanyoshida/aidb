@@ -9,9 +9,12 @@ import threading
 
 from sqlalchemy import select
 
+from .. import telemetry
 from ..db import session_scope
 from ..models import AllowedDomain, System
 from ..provisioning import PACKAGE_REGISTRY_HOSTS, default_https_allowlist
+
+_log = telemetry.get_logger()
 
 
 class SystemNotFound(Exception):
@@ -70,16 +73,25 @@ def add_allowed_domain(system_id: str, domain: str, author_id: str | None = None
         s.flush()
         result = {"id": row.id, "domain": row.domain}
         s.expunge(row)
+    _log.info(
+        "domínio liberado adicionado",
+        extra={"system_id": system_id, "author_id": author_id, "domain": domain},
+    )
     _refresh_sidecar_async(system_id)
     return result
 
 
-def remove_allowed_domain(system_id: str, domain_id: str) -> bool:
+def remove_allowed_domain(system_id: str, domain_id: str, author_id: str | None = None) -> bool:
     with session_scope() as s:
         row = s.get(AllowedDomain, domain_id)
         if row is None or row.system_id != system_id:
             return False
+        domain = row.domain
         s.delete(row)
+    _log.info(
+        "domínio liberado removido",
+        extra={"system_id": system_id, "author_id": author_id, "domain": domain},
+    )
     _refresh_sidecar_async(system_id)
     return True
 
@@ -131,19 +143,27 @@ def _refresh_sidecar_async(system_id: str) -> None:
     threading.Thread(target=work, daemon=True, name=f"refresh-httpsproxy-{system_id}").start()
 
 
-def set_internet_enabled(system_id: str, enabled: bool) -> None:
+def set_internet_enabled(system_id: str, enabled: bool, author_id: str | None = None) -> None:
     with session_scope() as s:
         system = _get_system(s, system_id)
         system.internet_enabled = enabled
+    _log.info(
+        "acesso à internet alterado",
+        extra={"system_id": system_id, "author_id": author_id, "enabled": enabled},
+    )
     _refresh_sidecar_async(system_id)
 
 
-def set_restricted_network(system_id: str, restricted: bool) -> None:
+def set_restricted_network(system_id: str, restricted: bool, author_id: str | None = None) -> None:
     """Ligar o modo restrito pré-popula a lista na primeira vez (task 4.2) —
     desligar não mexe na lista, ela só fica sem efeito enquanto desligada."""
     with session_scope() as s:
         system = _get_system(s, system_id)
         system.restricted_network = restricted
+    _log.info(
+        "modo restrito de rede alterado",
+        extra={"system_id": system_id, "author_id": author_id, "restricted": restricted},
+    )
     if restricted:
         seed_default_domains_if_empty(system_id)
     _refresh_sidecar_async(system_id)

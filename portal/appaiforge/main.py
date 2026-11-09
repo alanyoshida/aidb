@@ -30,6 +30,10 @@ def _seed_demo_admin() -> None:
 
 
 def create_app() -> FastAPI:
+    from . import telemetry
+
+    telemetry.configure("appaiforge-portal")
+
     application = FastAPI(title="AIDB", version=__version__)
     get_engine()
     Base.metadata.create_all(get_engine())  # Alembic é o caminho normal; create_all garante dev/boot

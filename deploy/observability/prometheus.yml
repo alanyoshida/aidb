@@ -1,0 +1,11 @@
+# Observabilidade opcional (etapa 6, change agent-telemetry-otel). Esta
+# change não instrumenta métricas de aplicação própria — só garante que o
+# Prometheus sobe saudável como parte do stack; scrape de métricas do
+# portal/broker é trabalho futuro.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

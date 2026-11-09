@@ -146,7 +146,7 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
             ui.switch(
                 "Acesso à internet", value=system.internet_enabled,
                 on_change=lambda e: (
-                    network_policy.set_internet_enabled(system.id, e.value),
+                    network_policy.set_internet_enabled(system.id, e.value, author_id=user.id),
                     notify("Acesso à internet " + ("habilitado" if e.value else "desabilitado — só o broker de inferência continua alcançável") + ".", kind="positive"),
                 ),
             ).props("data-testid=toggle-internet-enabled")
@@ -158,7 +158,7 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
             ui.switch(
                 "Modo restrito", value=system.restricted_network,
                 on_change=lambda e: (
-                    network_policy.set_restricted_network(system.id, e.value),
+                    network_policy.set_restricted_network(system.id, e.value, author_id=user.id),
                     notify("Modo restrito " + ("ligado — só os domínios da aba \"Domínios\" são liberados." if e.value else "desligado — voltou a usar a allow-list padrão."), kind="positive"),
                 ),
             ).props("data-testid=toggle-restricted-network")
@@ -260,7 +260,7 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
             def archive() -> None:
                 from ..provisioning import archive_system
 
-                archive_system(system)
+                archive_system(system, actor_id=user.id, actor_email=user.email)
                 ui.navigate.to("/")
 
             ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
@@ -272,7 +272,7 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
                 def delete() -> None:
                     from ..provisioning import delete_system
 
-                    delete_system(system)
+                    delete_system(system, actor_id=user.id, actor_email=user.email)
                     ui.navigate.to("/")
 
                 ui.button("Excluir definitivamente", icon="delete_forever", on_click=delete).props("color=negative data-testid=delete-system")
@@ -551,7 +551,7 @@ def _render_network(system, user) -> None:
                         ).props("dense outline color=negative data-testid=domain-remove")
 
     def remove_domain(domain_id: str) -> None:
-        network_policy.remove_allowed_domain(system.id, domain_id)
+        network_policy.remove_allowed_domain(system.id, domain_id, author_id=user.id)
         refresh_domains()
 
     if manage:

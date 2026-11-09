@@ -15,6 +15,7 @@ import docker
 from afsupervisor.sandbox import landlock_abi
 from sqlalchemy import func, select, update
 
+from . import telemetry
 from .config import get_settings
 from .db import session_scope
 from .edge import publish_app, system_container_name, unpublish_app
@@ -23,6 +24,7 @@ from .security import decrypt_secret
 from .services.connections import connection_string, get_connection_secret
 
 log = logging.getLogger(__name__)
+_telemetry_log = telemetry.get_logger()
 
 # uid/gid do usuário não-root da imagem base (ADR 0018) — deve casar com o
 # `useradd --uid 1000 --gid agent` de base-image/Dockerfile. Só se aplica a
@@ -788,17 +790,25 @@ def publish_app_by_slug(slug: str) -> None:
         publish_app(system)
 
 
-def archive_system(system: System) -> None:
+def archive_system(system: System, actor_id: str | None = None, actor_email: str | None = None) -> None:
     """Arquiva: para o container, preserva workspace, remove rota (spec container-lifecycle)."""
     stop_and_remove(system)
     unpublish_app(system.slug)
     from .services.systems import set_status
 
     set_status(system.id, SystemStatus.archived, "")
+    _telemetry_log.info(
+        "sistema arquivado",
+        extra={"system_id": system.id, "slug": system.slug, "actor_id": actor_id, "actor_email": actor_email},
+    )
 
 
-def delete_system(system: System) -> None:
+def delete_system(system: System, actor_id: str | None = None, actor_email: str | None = None) -> None:
     """Exclusão definitiva (somente admin): container + workspace (spec)."""
+    _telemetry_log.info(
+        "sistema excluído definitivamente",
+        extra={"system_id": system.id, "slug": system.slug, "actor_id": actor_id, "actor_email": actor_email},
+    )
     stop_and_remove(system)
     unpublish_app(system.slug)
     workspace = os.path.join(get_settings().workspaces_dir, system.slug)

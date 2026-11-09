@@ -26,8 +26,11 @@ from .broker import (
     validate_token,
 )
 from .config import get_settings
+from . import telemetry
 
 log = logging.getLogger(__name__)
+
+telemetry.configure("appaiforge-broker")
 
 app = FastAPI(title="AIDB Inference Broker")
 
@@ -141,7 +144,12 @@ async def proxy_v1(path: str, request: Request) -> Response:
     if context.get("session_revoked"):
         return JSONResponse({"error": "inferência revogada para esta sessão"}, status_code=403)
 
-    return await _forward(request, f"v1/{path}", context)
+    run_id = context["run_id"]
+    span = telemetry.start_child_span(run_id, "llm.request", attributes={"system_id": system_id, "path": path})
+    try:
+        return await _forward(request, f"v1/{path}", context)
+    finally:
+        span.end()
 
 
 @app.post("/internal/cancel")

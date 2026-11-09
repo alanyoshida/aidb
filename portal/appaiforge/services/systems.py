@@ -5,7 +5,7 @@ import re
 
 from sqlalchemy import select
 
-from .. import inference_token
+from .. import inference_token, telemetry
 from ..db import session_scope
 from ..edge import publish_app, unpublish_app
 from ..models import AgentRun, ChatSession, RunStatus, System, SystemStatus, User
@@ -16,6 +16,7 @@ from ..config import get_settings
 from . import audit, network_policy
 
 log = logging.getLogger(__name__)
+_telemetry_log = telemetry.get_logger()
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
@@ -165,6 +166,10 @@ def set_status(system_id: str, status: SystemStatus, message: str = "") -> None:
         assert system is not None
         system.status = status
         system.status_message = message
+    _telemetry_log.info(
+        "status do sistema alterado",
+        extra={"system_id": system_id, "status": status.value, "status_message": message},
+    )
 
 
 def set_provider(system_id: str, provider: str, model: str, actor: User | None = None) -> None:

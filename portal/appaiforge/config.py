@@ -111,6 +111,15 @@ class Settings(BaseSettings):
     session_ttl_days: int = 7
     identity_token_ttl_seconds: int = 60
 
+    # Telemetria OTel (etapa 6, change agent-telemetry-otel). Vazio = SDK
+    # segue no-op (sem exporter configurado); nenhum código do portal/broker
+    # decide isto por `if`, só a presença do endpoint liga a exportação.
+    otel_traces_endpoint: str = ""
+    otel_logs_endpoint: str = ""
+    # Base da API de consulta do Tempo usada pelo Debug log do chat (ex.:
+    # http://tempo:3200); vazio mantém o Debug log no comportamento atual.
+    otel_traces_query_url: str = ""
+
     # Os horários são gravados em UTC; a UI os converte para este fuso.
     display_timezone: str = "America/Sao_Paulo"
 

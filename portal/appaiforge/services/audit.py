@@ -8,10 +8,12 @@ nome sugestivo são descartadas.
 
 from sqlalchemy import select
 
+from .. import telemetry
 from ..db import session_scope
 from ..models import ManagementAudit
 
 _SECRET_MARKERS = ("senha", "password", "secret", "token", "api_key", "apikey", "chave", "key")
+_log = telemetry.get_logger()
 
 
 def _is_secret_key(key: str) -> bool:
@@ -34,6 +36,7 @@ def record(
     actor_email: str | None = None,
 ) -> ManagementAudit:
     """Grava uma entrada de auditoria; descarta qualquer campo de segredo."""
+    sanitized = _sanitize(details)
     with session_scope() as s:
         row = ManagementAudit(
             actor_id=actor_id,
@@ -42,12 +45,27 @@ def record(
             resource_type=resource_type,
             resource_id=resource_id,
             system_id=system_id,
-            details=_sanitize(details),
+            details=sanitized,
         )
         s.add(row)
         s.flush()
         s.expunge(row)
-        return row
+    # Espelho em log centralizado (capability agent-telemetry) — mesmo
+    # conteúdo sanitizado já gravado em ManagementAudit; não substitui nem
+    # altera o registro em Postgres, que continua a fonte de verdade.
+    _log.info(
+        "ação administrativa registrada",
+        extra={
+            "actor_id": actor_id,
+            "actor_email": actor_email or "",
+            "action": action,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "system_id": system_id,
+            "details": sanitized,
+        },
+    )
+    return row
 
 
 def _to_dict(row: ManagementAudit) -> dict:

@@ -207,3 +207,28 @@ def test_record_shadow_decision_associa_ao_run_ativo_so_para_origem_agente(gate_
         }
     assert rows["DELETE FROM clientes"] == run_id  # origem agente: associa ao run ativo
     assert rows["DELETE FROM pedidos"] is None  # origem app: nunca associa run
+
+
+def test_record_shadow_decision_emite_span_db_query_so_quando_ha_run_ativo(gate_system, finished_spans):
+    """capability agent-telemetry: `db.query` correlacionado ao run_id em
+    curso quando há um, e nenhum span de execução quando não há (requisitos
+    "Consulta durante execução ativa" / "Consulta sem execução em curso")."""
+    from appaiforge import telemetry
+
+    editor = auth.create_user("sombra-span@t.local", "pw", UserType.editor.value)
+    with session_scope() as s:
+        run = AgentRun(
+            system_id=gate_system.id, user_id=editor.id, user_email=editor.email,
+            status=RunStatus.running, prompt="p",
+        )
+        s.add(run)
+        s.flush()
+        run_id = run.id
+
+    gate.record_shadow_decision(gate_system.id, "DELETE FROM clientes", origin="agente")
+    gate.record_shadow_decision(gate_system.id, "DELETE FROM pedidos", origin="app")
+
+    spans = [s for s in finished_spans.get_finished_spans() if s.name == "db.query"]
+    assert len(spans) == 1  # a de origem "app" (sem run ativo) não gera span
+    assert spans[0].context.trace_id == telemetry.run_trace_id(run_id)
+    assert spans[0].parent.span_id == telemetry.run_root_span_id(run_id)

@@ -173,6 +173,19 @@ def record_shadow_decision(
         system_id, sql, origin=origin, connection_name=connection_name,
         classification=gate_class, decision=decision, run_id=run_id,
     )
+    if run_id:
+        from . import telemetry
+
+        span = telemetry.start_child_span(
+            run_id, "db.query",
+            attributes={
+                "system_id": system_id,
+                "connection_name": connection_name,
+                "classification": gate_class.value,
+                "decision": decision,
+            },
+        )
+        span.end()
     if enforced and run_id:
         _notify_chat_blocked(run_id, sql, reason)
     return gate_class

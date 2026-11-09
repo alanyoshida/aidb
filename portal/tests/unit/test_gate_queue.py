@@ -56,6 +56,24 @@ def test_truncate_e_bloqueado_sem_intervencao(fake_env, clean_db):
     assert run.id not in queue.pending_gates
 
 
+def test_bloqueio_automatico_emite_span_policy_decision(fake_env, clean_db, finished_spans):
+    """capability agent-telemetry: toda decisão do gate de controle (bloqueada/
+    aprovada/confirmável decidida) emite um `policy.decision` filho do span
+    raiz daquela execução."""
+    from appaiforge import telemetry
+
+    editor = auth.create_user("g1b@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "G", "gate-trunc-span")
+    queue = _queue(fake_env)
+    run = queue.enqueue(system.id, editor.id, "por favor TRUNCATE a tabela")
+    _wait_status(queue, run.id, {RunStatus.succeeded, RunStatus.failed})
+
+    spans = [s for s in finished_spans.get_finished_spans() if s.name == "policy.decision"]
+    assert len(spans) == 1
+    assert spans[0].attributes["decision"] == "bloqueada"
+    assert spans[0].context.trace_id == telemetry.run_trace_id(run.id)
+
+
 def test_delete_em_massa_aguarda_e_e_aprovado_pelo_editor(fake_env, clean_db):
     editor = auth.create_user("g2@t.local", "pw", UserType.editor.value)
     system = create_system(editor, "G", "gate-aprov")

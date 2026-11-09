@@ -14,11 +14,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from nicegui import ui
 
+from .. import telemetry
 from ..agent_queue import get_queue
 from ..config import get_settings
 from ..models import AgentRun, ChatSession, RunStatus, System, User
 from ..rbac import can_chat, can_manage_system
 from . import theme as _theme
+
+_telemetry_log = telemetry.get_logger()
 
 def _stamp(dt: datetime | None) -> str:
     """Formata um horário UTC no fuso de exibição, como "dd/mm HH:MM"."""
@@ -521,7 +524,7 @@ def render_chat(
                 # "comando: ..." aparecendo duas vezes ao trocar pra uma
                 # sessão com run ativa).
                 if run_status not in (RunStatus.running, RunStatus.awaiting_approval):
-                    _load_run_events(run_id)
+                    _load_run_trace_or_events(run_id)
 
         _update_input_blocked()
         _load_sessions()
@@ -831,6 +834,10 @@ def render_chat(
             text = pending_prompt["text"]
             pending_prompt["text"] = None
             run = queue.enqueue(system.id, user.id, text, chat_session_id=active_session["id"])
+            _telemetry_log.info(
+                "prompt enviado no chat",
+                extra={"system_id": system.id, "chat_session_id": run.chat_session_id, "run_id": run.id, "prompt": text},
+            )
             # atualiza sessão ativa com a sessão criada/usada na run
             active_session["id"] = run.chat_session_id
             current_run["id"] = run.id
@@ -854,6 +861,29 @@ def render_chat(
         box = ui.column().classes("w-full gap-1 pl-4")
         for evt in events:
             render_event(box, evt)
+
+    def _load_run_trace_or_events(run_id: str) -> None:
+        """Com o stack de observabilidade disponível, mostra a árvore de
+        spans do Tempo; sem ele (ou sem trace encontrado), cai no
+        comportamento atual (`_load_run_events`) sem regressão."""
+        from ..services import telemetry_query
+
+        spans = telemetry_query.fetch_run_trace(run_id)
+        if not spans:
+            _load_run_events(run_id)
+            return
+        box = ui.column().classes("w-full gap-1 pl-4")
+        depth_by_span_id: dict[str, int] = {}
+        for span in spans:
+            depth = depth_by_span_id.get(span["parent_span_id"], -1) + 1
+            depth_by_span_id[span["span_id"]] = depth
+            duration_ms = max(0.0, (span["end_time_unix_nano"] - span["start_time_unix_nano"]) / 1_000_000)
+            attrs = ", ".join(f"{k}={v}" for k, v in span["attributes"].items() if k != "run_id")
+            label = f"{'  ' * depth}• {span['name']} ({duration_ms:.0f}ms)"
+            if attrs:
+                label += f" — {attrs}"
+            with box:
+                ui.label(label).classes("text-xs font-mono text-gray-600")
 
     def on_debug_change() -> None:
         debug["on"] = bool(debug_switch.value)

@@ -69,6 +69,14 @@ services:
       APPAIFORGE_FAKE_DELAY: ${APPAIFORGE_FAKE_DELAY:-1.5}
       APPAIFORGE_MAX_SYSTEMS: ${APPAIFORGE_MAX_SYSTEMS:-50}
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
+      # Telemetria OTel (etapa 6, change agent-telemetry-otel): vazio por
+      # padrão — o SDK fica no-op. Só aponta para o stack do profile
+      # "observability" se as 3 variáveis forem definidas (nenhuma delas
+      # tem valor fixo aqui de propósito: subir o profile sem definir as
+      # variáveis não deve gerar nenhuma tentativa de exportação).
+      APPAIFORGE_OTEL_TRACES_ENDPOINT: ${APPAIFORGE_OTEL_TRACES_ENDPOINT:-}
+      APPAIFORGE_OTEL_LOGS_ENDPOINT: ${APPAIFORGE_OTEL_LOGS_ENDPOINT:-}
+      APPAIFORGE_OTEL_TRACES_QUERY_URL: ${APPAIFORGE_OTEL_TRACES_QUERY_URL:-}
     volumes:
       - ${APPAIFORGE_WORKSPACES_DIR:-/opt/appaiforge/workspaces}:/workspaces
       - ${APPAIFORGE_CONFIGS_DIR:-/opt/appaiforge/configs}:/configs
@@ -109,6 +117,8 @@ services:
       APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
       APPAIFORGE_INFERENCE_BROKER_ALLOWED_HOSTS: litellm
       APPAIFORGE_SECRET_KEY: ${APPAIFORGE_SECRET_KEY:-change-me-in-production}
+      # Mesmo toggle do portal (ver comentário lá) — vazio por padrão.
+      APPAIFORGE_OTEL_TRACES_ENDPOINT: ${APPAIFORGE_OTEL_TRACES_ENDPOINT:-}
     depends_on:
       - litellm
       - portal
@@ -119,6 +129,49 @@ services:
       retries: 12
       start_period: 10s
 
+  # Stack de observabilidade opcional (etapa 6, change agent-telemetry-otel):
+  # nenhum destes 4 serviços sobe por padrão — só com `--profile
+  # observability`. portal/broker/litellm nunca entram em nenhum profile,
+  # continuam sempre ligados como hoje (ver proposal.md/design.md).
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    profiles: ["observability"]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/tempo
+
+  loki:
+    image: grafana/loki:3.2.1
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/loki
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    profiles: ["observability"]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafanadata:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+
 networks:
   default:
     name: appaiforge-net
@@ -127,3 +180,7 @@ volumes:
   pgdata:
   mysqldata:
   dynamic:
+  prometheusdata:
+  tempodata:
+  lokidata:
+  grafanadata:

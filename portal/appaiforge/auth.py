@@ -12,6 +12,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
+from . import telemetry
 from .config import get_settings
 from .db import session_scope
 from .models import Session as DbSession
@@ -19,6 +20,8 @@ from .models import User, UserType, utcnow
 from .security import hash_password, verify_password
 
 COOKIE_NAME = "appaiforge_session"
+
+_log = telemetry.get_logger()
 
 
 class LoginRejected(Exception):
@@ -35,9 +38,11 @@ def authenticate(email: str, password: str) -> str:
     Levanta LoginRejected com motivo único para e-mail inexistente, senha
     errada ou conta desativada (não revelar qual campo falhou).
     """
+    normalized_email = email.strip().lower()
     with session_scope() as s:
-        user = s.execute(select(User).where(User.email == email.strip().lower())).scalar_one_or_none()
+        user = s.execute(select(User).where(User.email == normalized_email)).scalar_one_or_none()
         if user is None or not user.active or not verify_password(password, user.password_hash):
+            _log.info("tentativa de login falhou", extra={"email": normalized_email, "result": "falha"})
             raise LoginRejected()
         token = secrets.token_urlsafe(32)
         sess = DbSession(
@@ -46,6 +51,7 @@ def authenticate(email: str, password: str) -> str:
             expires_at=utcnow() + timedelta(days=get_settings().session_ttl_days),
         )
         s.add(sess)
+        _log.info("login bem-sucedido", extra={"email": normalized_email, "user_id": user.id, "result": "sucesso"})
         return token
 
 

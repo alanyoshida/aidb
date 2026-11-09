@@ -12,6 +12,7 @@ from collections import deque
 
 from sqlalchemy import select
 
+from . import telemetry
 from .config import get_settings
 from .db import session_scope
 from .harness.base import HarnessPort, RunEvent, SessionExpiredError
@@ -20,6 +21,16 @@ from .harness.opencode import OpencodeHarness
 from .models import AgentRun, ChatSession, RunStatus, TokenUsage, System, User, utcnow
 
 log = logging.getLogger(__name__)
+
+
+def _policy_decision_span(run_id: str, classification: str, decision: str) -> None:
+    """Span curto (abre e encerra na hora) para uma decisão do gate de
+    destrutivas no controle do próprio portal — não leva o SQL (fica só em
+    `GateDecision`, com controle de acesso próprio; o span é mais aberto)."""
+    span = telemetry.start_child_span(
+        run_id, "policy.decision", attributes={"classification": classification, "decision": decision}
+    )
+    span.end()
 
 
 def reconcile_orphaned_runs() -> int:
@@ -108,11 +119,18 @@ class AgentQueue:
         self.buffers: dict[str, RunBuffer] = {}
         self.pending_gates: dict[str, dict] = {}  # run_id -> pedido de gate pendente
         self.pending_questions: dict[str, dict] = {}  # run_id -> pergunta do agente pendente (ferramenta question)
+        self.trace_contexts: dict[str, object] = {}  # run_id -> span raiz `agent.run` aberto (telemetry.py)
         self._workers: set[str] = set()
         self._lock = threading.Lock()
 
     def harness_for(self, system: System) -> HarnessPort:
         return self.harness
+
+    def _end_run_span(self, run_id: str, outcome: str) -> None:
+        span = self.trace_contexts.pop(run_id, None)
+        if span is not None:
+            span.set_attribute("outcome", outcome)
+            span.end()
 
     def enqueue(self, system_id: str, user_id: str, prompt: str, chat_session_id: str | None = None) -> AgentRun:
         with session_scope() as s:
@@ -227,6 +245,9 @@ class AgentQueue:
 
         buffer = RunBuffer()
         self.buffers[run_id] = buffer
+        self.trace_contexts[run_id] = telemetry.start_run_root_span(
+            run_id, {"run_id": run_id, "system_id": system_id, "chat_session_id": run.chat_session_id or ""}
+        )
 
         # Resolve sessão opencode: reutiliza existente salvo no ChatSession ou cria nova.
         with session_scope() as s:
@@ -256,6 +277,9 @@ class AgentQueue:
         # critique (mesmo "comando: ..." duplicado no log de debug, com um
         # evento invisível no meio quebrando a memória do dedup).
         last_dispatched: dict = {}
+        # call_id -> span `tool.*` aberto (ver bloco "status" em _dispatch);
+        # qualquer um que sobrar no fim da run é encerrado como "incomplete".
+        open_tool_spans: dict = {}
 
         def on_event(event: RunEvent) -> None:
             try:
@@ -292,6 +316,30 @@ class AgentQueue:
                 return
             last_dispatched[event.kind] = key
             buffer.push(event)
+            if event.kind in ("command_run", "file_edited", "tool_output"):
+                call_id = event.meta.get("call_id") or ""
+                if call_id:
+                    tool = event.meta.get("tool") or event.kind
+                    status = event.meta.get("status") or ""
+                    # valores reais observados do opencode: "running" (bash) e
+                    # "completed" — "pending" também é tratado como abertura
+                    # (achado ao vivo: a suposição inicial, baseada só no
+                    # comentário do harness, era "pending"/"completed"; o
+                    # opencode manda "running" de verdade).
+                    if status and status != "completed":
+                        if call_id not in open_tool_spans:
+                            open_tool_spans[call_id] = telemetry.start_child_span(
+                                run_id, f"tool.{tool}", attributes={"tool": tool, "call_id": call_id}
+                            )
+                    else:
+                        span = open_tool_spans.pop(call_id, None)
+                        if span is not None:
+                            if event.meta.get("command"):
+                                span.set_attribute("command", event.meta["command"])
+                            if event.meta.get("file"):
+                                span.set_attribute("file", event.meta["file"])
+                            span.set_attribute("status", status)
+                            span.end()
             if event.kind == "usage":
                 # nem todo provedor reporta modelo no evento; cai para o config do sistema
                 provider = event.meta.get("provider") or system_dict["provider"]
@@ -340,9 +388,15 @@ class AgentQueue:
                     final = event
                     break
 
+        for span in open_tool_spans.values():
+            span.set_attribute("outcome", "incomplete")
+            span.end()
+        open_tool_spans.clear()
+
         with session_scope() as s:
             run = s.get(AgentRun, run_id)
             if run is None:
+                self._end_run_span(run_id, "error")
                 return  # run apagada sob o worker (reset) — nada a persistir
             if final is not None and final.kind == "run_interrupted":
                 run.status = RunStatus.interrupted
@@ -366,6 +420,9 @@ class AgentQueue:
             run.finished_at = utcnow()
             succeeded = run.status == RunStatus.succeeded
             user_id = run.user_id
+            run_outcome = "interrupted" if run.status == RunStatus.interrupted else ("error" if run.status == RunStatus.failed else "ok")
+
+        self._end_run_span(run_id, run_outcome)
 
         # Persistir eventos para consulta futura (correção do chat ao fazer F5)
         self._persist_events(run_id, buffer)
@@ -444,6 +501,7 @@ class AgentQueue:
             gate.record_decision(system_id, sql or command, origin="agente",
                                  connection_name="", classification=classification,
                                  decision="bloqueada", run_id=run_id, author_id=user_id, author_email=user_email)
+            _policy_decision_span(run_id, classification.value, "bloqueada")
             buffer.push(RunEvent("gate_denied", text=f"bloqueada pelo gate: {reason}", meta={"request_id": request_id}))
             return
 
@@ -452,6 +510,7 @@ class AgentQueue:
             gate.record_decision(system_id, sql, origin="agente",
                                  connection_name="", classification=classification,
                                  decision="aprovada", run_id=run_id, author_id=user_id, author_email=user_email)
+            _policy_decision_span(run_id, classification.value, "aprovada")
             buffer.push(RunEvent("gate_approved", text=f"liberada pelo gate: {sql[:80]}", meta={"request_id": request_id}))
             return
 
@@ -516,6 +575,7 @@ class AgentQueue:
                 decision="aprovada" if approve else "recusada", run_id=run_id,
                 author_id=author.id if author else None, author_email=author.email if author else None,
             )
+            _policy_decision_span(run_id, gate.GateClass.CONFIRMABLE.value, "aprovada" if approve else "recusada")
         self.pending_gates.pop(run_id, None)
         buffer = self.buffers.get(run_id)
         if buffer:
