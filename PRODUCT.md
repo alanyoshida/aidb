@@ -30,7 +30,7 @@ Dois mecanismos juntos, nenhum sozinho é o argumento completo: (1) confinamento
 
 - Conexões: PostgreSQL, MySQL, BigQuery; cada uma com estado de saúde monitorado.
 - Gate de operações destrutivas (classificador canônico sqlglot): `normal` executa sem atrito; `confirmável` (DELETE/UPDATE sem WHERE restritivo) e `bloqueada` (DDL) são **sempre recusadas na hora** em modo enforce, sem pedir aprovação humana — achado ao vivo documentado no ADR 0023.
-- Confinamento de rede por sistema (etapa 5, em andamento nesta sessão): toggle de internet habilitada/desabilitada, modo restrito com allow-list de domínios editável (pré-semeada com registries de pacote comuns — PyPI, npm), proxy HTTP(S) de saída obrigatório.
+- Confinamento de rede por sistema (etapa 5, concluída em 2026-11-08): toggle de internet habilitada/desabilitada, modo restrito com allow-list de domínios editável (pré-semeada com registries de pacote comuns — PyPI, npm), proxy HTTP(S) de saída obrigatório.
 - Checkpoints: qualquer ponto do código gerado pode ser restaurado; a app reinicia no estado restaurado.
 - Painel "Editor": árvore de arquivos do workspace gerado, somente leitura, ao lado do chat.
 - Aparência: 3 modos (Light/Dark/Pastel) × 4 cores de destaque, 12 combinações, todas com contraste WCAG AA — tokens centralizados em `portal/appaiforge/ui/theme.py`.

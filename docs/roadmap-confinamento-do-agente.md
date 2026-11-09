@@ -1,7 +1,7 @@
 # Roadmap — confinamento e política do agente
 
-> **Status**: plano aceito; etapas 1–2 concluídas, etapa 3 implementada (verificação real pendente).
-> **Última revisão**: 2026-11-04.
+> **Status**: plano aceito; etapas 1–5 concluídas.
+> **Última revisão**: 2026-11-08.
 > Documento de trabalho de longa duração: uma change OpenSpec por etapa, na ordem abaixo.
 > Ao concluir uma etapa, marque na tabela e registre o ADR correspondente em
 > [`docs/adr/`](adr/README.md).
@@ -13,8 +13,8 @@
 | 1 | Higiene do container + `AgentProfile` | container não-root, perfil declarativo | ✅ concluída (change `agent-runtime-profile-and-hardening`, ADR 0018) |
 | 2 | seccomp + Landlock no `afsupervisor` | agente confinado a `/workspace` | ✅ concluída (change `agent-sandbox-seccomp-landlock`, capability `agent-sandbox`) |
 | 3 | Broker de inferência | nenhuma credencial de LLM no container | ✅ concluída (change `inference-broker`, ADR 0020) |
-| 4 | Proxy de banco + gate no data plane | gate independente do agente | ⬜ não iniciada |
-| 5 | Perímetro de egress | proxies inescapáveis | ⬜ não iniciada |
+| 4 | Proxy de banco + gate no data plane | gate independente do agente | ✅ concluída (change `db-proxy-gate-data-plane`, ADR 0021, ADR 0023) |
+| 5 | Perímetro de egress | proxies inescapáveis | ✅ concluída (changes `agent-network-perimeter` + `agent-https-forward-proxy`, ADR 0022, ADR 0024 — segunda metade fechada em 2026-11-08) |
 | 6 | Telemetria OTel | um trace por execução | ⬜ não iniciada |
 | 7 | Segundo agente | validação da arquitetura | ⬜ não iniciada |
 | 8 | Kubernetes | pod por sistema | ⬜ não iniciada |
