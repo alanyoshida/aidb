@@ -165,9 +165,13 @@ def _groups_panel(user: User) -> None:
                     ui.label(f"membros: {', '.join(emails) or '—'}").classes("text-sm text-gray-600")
                     ui.label(f"sistemas: {', '.join(slugs) or '—'}").classes("text-sm text-gray-600")
                     with ui.row().classes("gap-2"):
+                        # Remover membro/Desvincular também levam color=negative: são
+                        # ações de "tirar algo" como Excluir, e sem a cor ficavam
+                        # indistinguíveis de Renomear (achado do critique — mesmo
+                        # padrão de "remover X" usado em Conexões/Provedores).
                         ui.button("Renomear", icon="edit", on_click=lambda n=name: open_rename(n)).props("dense outline data-testid=group-rename")
-                        ui.button("Remover membro", icon="person_remove", on_click=lambda n=name, e=emails: open_remove_member(n, e)).props("dense outline data-testid=group-remove-member")
-                        ui.button("Desvincular sistema", icon="link_off", on_click=lambda n=name, s=slugs: open_unlink(n, s)).props("dense outline data-testid=group-unlink")
+                        ui.button("Remover membro", icon="person_remove", on_click=lambda n=name, e=emails: open_remove_member(n, e)).props("dense outline color=negative data-testid=group-remove-member")
+                        ui.button("Desvincular sistema", icon="link_off", on_click=lambda n=name, s=slugs: open_unlink(n, s)).props("dense outline color=negative data-testid=group-unlink")
                         ui.button("Excluir", icon="delete", on_click=lambda n=name: open_delete(n)).props("dense outline color=negative data-testid=group-delete")
 
     def _simple_dialog(action, testid, label, icon):
@@ -264,7 +268,7 @@ def _groups_panel(user: User) -> None:
 
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button("Cancelar", on_click=rmember_dialog.close).props("flat")
-            ui.button("Remover", icon="person_remove", on_click=confirm_remove_member).props("data-testid=confirm-group-remove-member")
+            ui.button("Remover", icon="person_remove", color="negative", on_click=confirm_remove_member).props("data-testid=confirm-group-remove-member")
 
     def open_remove_member(name: str, emails: list[str]) -> None:
         rmember_target["name"] = name
@@ -283,7 +287,7 @@ def _groups_panel(user: User) -> None:
 
         with ui.row().classes("w-full justify-end gap-2"):
             ui.button("Cancelar", on_click=unlink_dialog.close).props("flat")
-            ui.button("Desvincular", icon="link_off", on_click=confirm_unlink).props("data-testid=confirm-group-unlink")
+            ui.button("Desvincular", icon="link_off", color="negative", on_click=confirm_unlink).props("data-testid=confirm-group-unlink")
 
     def open_unlink(name: str, slugs: list[str]) -> None:
         unlink_target["name"] = name
@@ -338,12 +342,18 @@ def _llm_keys_panel(user: User) -> None:
                     if definition.get("base_url"):
                         ui.label(definition["base_url"]).classes("text-xs text-gray-500")
                     ui.label(f"modelos: {', '.join(models) or '—'}").classes("text-xs text-gray-500")
+                    # Mesmo peso (dense outline) pros 5-6 botões, "Remover" logo
+                    # depois do botão mais clicado: destrutivo não se destacava
+                    # de ações seguras (achado do critique). Ações seguras/info
+                    # (Testar, Buscar modelos, Editar) viram flat — outline fica
+                    # só pra risco médio/alto (DESIGN.md), e as duas ações de
+                    # remover vão pro fim da fileira.
                     with ui.row().classes("gap-2"):
                         ui.button("Cadastrar/Trocar", icon="key", on_click=lambda p=provider: open_key_dialog(p)).props("dense outline data-testid=key-set")
+                        ui.button("Testar", icon="science", on_click=lambda p=provider: do_test(p)).props("dense flat data-testid=key-test")
+                        ui.button("Buscar modelos", icon="sync", on_click=lambda p=provider: do_discover(p)).props("dense flat data-testid=provider-models")
+                        ui.button("Editar", icon="edit", on_click=lambda p=provider: open_edit_provider(p)).props("dense flat data-testid=provider-edit")
                         ui.button("Remover", icon="delete", on_click=lambda p=provider: ask_remove_key(p)).props("dense outline color=negative data-testid=key-remove")
-                        ui.button("Testar", icon="science", on_click=lambda p=provider: do_test(p)).props("dense outline data-testid=key-test")
-                        ui.button("Buscar modelos", icon="sync", on_click=lambda p=provider: do_discover(p)).props("dense outline data-testid=provider-models")
-                        ui.button("Editar", icon="edit", on_click=lambda p=provider: open_edit_provider(p)).props("dense outline data-testid=provider-edit")
                         if not definition.get("is_preset"):
                             ui.button("Excluir provedor", icon="delete_forever", on_click=lambda p=provider: ask_remove_provider(p)).props("dense outline color=negative data-testid=provider-remove")
 

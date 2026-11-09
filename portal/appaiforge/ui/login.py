@@ -4,12 +4,14 @@ from nicegui import app, ui
 
 from .. import auth
 from ..config import get_settings
-from .common import SET_COOKIE_JS
+from . import theme
+from .common import SET_COOKIE_JS, render_theme_css
 
 
 def register() -> None:
     @ui.page("/login")
     def login_page() -> None:
+        render_theme_css(theme.DEFAULT_THEME)
         with ui.card().classes("w-96 mx-auto mt-24"):
             ui.label("AIDB").classes("text-2xl font-bold")
             ui.label("Entre para acessar o portal").classes("text-sm text-gray-500")

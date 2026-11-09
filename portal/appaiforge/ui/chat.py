@@ -213,9 +213,14 @@ def render_chat(
                     'aria-label="Abrir lista de sessões"'
                 ).classes("af-chat-sidebar-toggle")
                 session_title_label = ui.label("").classes("text-sm font-medium text-gray-700 grow")
+                # desabilitado até uma sessão existir: antes ficava clicável
+                # sem nenhum efeito (_start_rename só retornava cedo), sem
+                # nada avisando que não tinha nada pra renomear ainda
+                # (achado do critique)
                 rename_btn = ui.button(icon="edit", on_click=lambda: _start_rename()).props(
                     'flat dense round aria-label="Renomear esta sessão"'
                 ).tooltip("Renomear esta sessão")
+                rename_btn.disable()
             # Botões de ícone (check/×) em vez de texto "OK"/"×": o "×" cru não
             # tinha aria-label nenhum (achado do critique — único ícone sem
             # nome acessível nesta tela) e os botões de texto, largos, ficavam
@@ -434,11 +439,19 @@ def render_chat(
                         # pros dois ficava sobrecarregado, só funcionava pelo contexto)
                         ui.icon("block").classes("text-xs text-red-500").tooltip("Inferência revogada")
                     else:
+                        # color=negative: sem isto, o mesmo bug de sempre do
+                        # NiceGUI (color='primary' por padrão) pintava o ícone
+                        # de revogar — uma ação destrutiva — na cor de destaque,
+                        # não na vermelha usada em todo outro lugar pra essa
+                        # mesma ação (diálogo de confirmação, revogar em nível
+                        # de sistema). size=sm também deixava o alvo de toque
+                        # menor (24px) que o resto dos ícones da sidebar (achado
+                        # do critique).
                         ui.button(
-                            icon="do_not_disturb_on",
+                            icon="do_not_disturb_on", color="negative",
                             on_click=lambda sid=sess_id: _open_revoke_dialog(sid),
                         ).props(
-                            'flat dense round size=sm aria-label="Revogar inferência desta sessão"'
+                            'flat dense round aria-label="Revogar inferência desta sessão"'
                         ).tooltip("Revogar inferência desta sessão")
 
     def _revoke_session_inference(sess_id: str) -> None:
@@ -466,6 +479,7 @@ def render_chat(
             return
         active_session["id"] = sess_id
         _sync_url()
+        rename_btn.enable()
         current_run["id"] = None
         current_run["shown"] = 0
         log_box.clear()

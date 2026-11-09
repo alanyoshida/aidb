@@ -164,7 +164,7 @@ Curvas discretas e consistentes, nunca cantos retos nem círculos em excesso —
 ## Components
 
 ### Buttons
-- **Shape:** 6px (padrão Quasar), nunca reto.
+- **Shape:** 3px (padrão real do Quasar, confirmado ao vivo em 15+ botões — a entrada anterior deste documento dizia 6px por engano), nunca reto.
 - **Primary:** fundo `{colors.accent}` (a cor de destaque ativa), texto no par "on-accent" calculado por modo (nunca branco fixo). Usado em ação de confirmação (enviar mensagem, salvar).
 - **Ghost/Flat:** sem fundo, texto na cor secundária (`--ap-muted`); vira cor de destaque quando ativo (aba selecionada, ação em progresso).
 - **Outline semântico:** borda + texto na cor semântica (`color=negative outline`, `color=warning outline`) — ações de risco médio (arquivar, revogar) que precisam de atenção sem o peso visual de um botão sólido.

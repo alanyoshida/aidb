@@ -170,6 +170,19 @@ body, .nicegui-content, .q-layout, .q-page-container, .q-page {
 .q-card { border: 1px solid var(--ap-border); box-shadow: var(--ap-shadow) !important; }
 .q-separator { background: var(--ap-border) !important; }
 
+/* Grade de cards da lista de sistemas: 3 colunas fixas espremiam cada card
+   (nome + slug, o link de navegação principal da tela) a ~115px no mobile,
+   quebrando o texto em 2-3 linhas (achado do critique). Classe própria em
+   vez do kwarg columns= do ui.grid — ele vira style inline, que uma media
+   query não venceria sem !important. */
+.af-systems-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1000px) {
+  .af-systems-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .af-systems-grid { grid-template-columns: 1fr; }
+}
+
 /* Tabs: inativa usa o tom secundário, ativa o destaque. O Quasar aplica
    opacity:0.85 na aba inativa por cima da cor — suficiente pra derrubar
    --ap-muted (escolhido pra ficar >=5:1 em opacidade cheia) pra 3.7:1 no modo

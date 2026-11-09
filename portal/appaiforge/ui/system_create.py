@@ -42,4 +42,8 @@ def register() -> None:
                 notify("Sistema criado; provisionando container...", "info")
                 ui.navigate.to(f"/systems/{system.id}")
 
-            ui.button("Criar sistema", icon="add", on_click=create).props("data-testid=create-system")
+            # alinhado à direita, como todo diálogo de confirmação do
+            # portal (justify-end) — era o único botão de "enviar formulário"
+            # que ficava à esquerda, sem seguir o padrão (achado do critique)
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Criar sistema", icon="add", on_click=create).props("data-testid=create-system")

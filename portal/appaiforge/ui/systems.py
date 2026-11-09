@@ -34,7 +34,13 @@ def render_systems_area(user: User) -> None:
         ui.label("Nenhum sistema acessível.").classes("text-gray-500")
         return
 
-    with ui.grid(columns=3).classes("w-full gap-4"):
+    # sem columns=3 (vira style inline de alta especificidade, que a media
+    # query do tema não conseguiria vencer sem !important) — a largura das
+    # colunas mora em CSS (theme.py), que já reduz pra 1-2 colunas em telas
+    # estreitas. 3 colunas fixas espremiam cada card/link de navegação a
+    # ~115px no mobile, forçando o nome a quebrar em 2-3 linhas (achado do
+    # critique).
+    with ui.grid().classes("w-full gap-4 af-systems-grid"):
         for system_id, slug, name, status, status_message in rows:
             with ui.card().on("click", lambda sid=system_id: ui.navigate.to(f"/systems/{sid}")):
                 with ui.row().classes("items-center gap-2"):

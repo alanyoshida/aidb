@@ -102,13 +102,16 @@ def render_theme_menu(user: User) -> None:
         panel()
 
 
-def render_header(user: User) -> None:
-    """Header comum a todas as páginas autenticadas (navegação + menu do usuário)."""
-    def do_logout() -> None:
-        auth.logout(current_token())
-        ui.run_javascript(CLEAR_COOKIE_JS + "; window.location = '/login'")
+def render_theme_css(theme_key: str) -> None:
+    """Injeta a paleta do tema (cores do Quasar + CSS do head) sem o header em si.
 
-    tokens = theme.tokens(*theme.parse_key(user.theme))
+    Usado por toda página autenticada via render_header, e também pelo login
+    (achado do critique: login_page nunca chamava nada disto, então o botão
+    "Entrar" renderizava no azul padrão do Quasar em vez do accent do
+    portal — a primeira impressão do produto saía fora da marca). O login
+    não tem usuário ainda, então recebe o tema default, não um escolhido.
+    """
+    tokens = theme.tokens(*theme.parse_key(theme_key))
     # O NiceGUI injeta a paleta do Quasar depois do nosso head, e preenche com os
     # defaults dele toda cor que não for passada — por isso todas vão aqui, senão
     # positive/negative/warning voltam ao padrão e ignoram o tema.
@@ -123,7 +126,16 @@ def render_header(user: User) -> None:
         neutral=tokens["--ap-surface-2"],
         neutraltext=tokens["--ap-muted"],
     )
-    ui.add_head_html(theme.head_html(user.theme))
+    ui.add_head_html(theme.head_html(theme_key))
+
+
+def render_header(user: User) -> None:
+    """Header comum a todas as páginas autenticadas (navegação + menu do usuário)."""
+    def do_logout() -> None:
+        auth.logout(current_token())
+        ui.run_javascript(CLEAR_COOKIE_JS + "; window.location = '/login'")
+
+    render_theme_css(user.theme)
 
     with ui.header().classes("items-center justify-between"):
         ui.label("AIDB").classes("text-xl font-bold cursor-pointer ap-brand").on("click", lambda: ui.navigate.to("/"))

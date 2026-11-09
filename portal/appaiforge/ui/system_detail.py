@@ -65,8 +65,12 @@ def register() -> None:
             ui.link("Sistemas", "/").classes("text-gray-500")
             ui.icon("chevron_right").classes("text-gray-500 text-sm")
             breadcrumb_label = ui.label(system.name).classes("text-gray-300")
-        # identidade à esquerda, ação principal à direita na mesma faixa
-        with ui.row().classes("mx-4 mt-1 w-full items-center justify-between no-wrap"):
+        # identidade à esquerda, ação principal à direita na mesma faixa — sem
+        # no-wrap: em telas estreitas o título já quebra em duas linhas, e o
+        # botão (size=lg, rótulo de duas palavras) virava um bloco alto e
+        # espremido do lado do título quebrado (achado do critique). Sem
+        # no-wrap, o botão desce pra própria linha quando não cabe ao lado.
+        with ui.row().classes("mx-4 mt-1 w-full items-center justify-between gap-2"):
             with ui.column().classes("gap-1"):
                 name_label = ui.label(system.name).classes("text-2xl font-bold")
                 provider_label = None
@@ -93,7 +97,11 @@ def register() -> None:
         if not can_manage_system(user, system):
             return
 
-        with ui.tabs().classes("mx-4 w-full") as tabs:
+        # outside-arrows/mobile-arrows: em telas estreitas as 7 abas não cabem
+        # e 3 delas (Checkpoints/Configurações/Auditoria) ficavam fora da
+        # viewport sem nenhuma pista de que existiam mais abas — só rolagem
+        # horizontal não-descoberta (achado do critique).
+        with ui.tabs().classes("mx-4 w-full").props("outside-arrows mobile-arrows") as tabs:
             chat_tab = ui.tab("chat", label="Chat", icon="chat")
             editor_tab = ui.tab("editor", label="Editor", icon="code").props("data-testid=tab-editor")
             conn_tab = ui.tab("conn", label="Conexões", icon="storage")
@@ -239,28 +247,35 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
         revoke_feedback.set_text("")
         revoke_dialog.open()
 
-    # ciclo de vida: arquivar (dono) e excluir definitivamente (admin, arquivado)
-    with ui.row().classes("mt-4"):
+    # ciclo de vida: arquivar (dono) e excluir definitivamente (admin, arquivado).
+    # Moldura própria com rótulo: antes era só "mt-4" separando da edição de
+    # nome/provedor acima — sem borda nem label, Arquivar e Revogar liam como
+    # um par, mesmo agindo sobre coisas diferentes (sistema inteiro vs. só o
+    # token de inferência desta sessão) — achado do critique. gap-4 (em vez
+    # do gap-2 padrão) também distancia visualmente as duas ações entre si.
+    with ui.card().classes("w-full mt-4").props("flat bordered"):
+        ui.label("Zona de risco").classes("text-xs font-semibold text-gray-500")
+        with ui.row().classes("gap-4 items-center"):
 
-        def archive() -> None:
-            from ..provisioning import archive_system
+            def archive() -> None:
+                from ..provisioning import archive_system
 
-            archive_system(system)
-            ui.navigate.to("/")
-
-        ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
-
-        ui.button("Revogar acesso de inferência", icon="key_off", on_click=open_revoke_dialog).props("color=negative outline data-testid=revoke-access")
-
-        if user.is_admin and system.status.value == "archived":
-
-            def delete() -> None:
-                from ..provisioning import delete_system
-
-                delete_system(system)
+                archive_system(system)
                 ui.navigate.to("/")
 
-            ui.button("Excluir definitivamente", icon="delete_forever", on_click=delete).props("color=negative data-testid=delete-system")
+            ui.button("Arquivar sistema", icon="archive", on_click=archive).props("color=warning outline data-testid=archive-system")
+
+            ui.button("Revogar acesso de inferência", icon="key_off", on_click=open_revoke_dialog).props("color=negative outline data-testid=revoke-access")
+
+            if user.is_admin and system.status.value == "archived":
+
+                def delete() -> None:
+                    from ..provisioning import delete_system
+
+                    delete_system(system)
+                    ui.navigate.to("/")
+
+                ui.button("Excluir definitivamente", icon="delete_forever", on_click=delete).props("color=negative data-testid=delete-system")
 
 
 def _render_connections(system, user) -> None:
@@ -527,9 +542,13 @@ def _render_network(system, user) -> None:
                 with ui.row().classes("items-center gap-2"):
                     ui.label(d["domain"]).classes("font-mono text-sm").props("data-testid=domain-item")
                     if manage:
+                        # outline, não flat: todo outro "remover item da lista"
+                        # do portal (Conexões, chaves de provedor, grupos) usa
+                        # outline — aqui era a única exceção, um ícone vermelho
+                        # solto sem moldura de botão nenhuma (achado do critique).
                         ui.button(
                             icon="delete", on_click=lambda d=d: remove_domain(d["id"])
-                        ).props("dense flat color=negative data-testid=domain-remove")
+                        ).props("dense outline color=negative data-testid=domain-remove")
 
     def remove_domain(domain_id: str) -> None:
         network_policy.remove_allowed_domain(system.id, domain_id)
@@ -650,7 +669,10 @@ def _render_checkpoints(system, user) -> None:
         notify(f"Checkpoint {cp.git_sha[:8]} criado.", "positive")
         refresh_cps()
 
-    ui.button("Criar checkpoint agora", icon="add", on_click=create_checkpoint).props("outline dense")
+    # mesmo peso de "Nova conexão"/"Adicionar" (as outras duas ações
+    # primárias de "criar algo nesta aba") — "outline dense" ficava bem
+    # mais quieto que as duas, três abas antes/depois (achado do critique).
+    ui.button("Criar checkpoint agora", icon="add", on_click=create_checkpoint)
     timeline_container = ui.column().classes("w-full max-w-3xl mt-2")
 
     delete_target: dict = {"id": None}
