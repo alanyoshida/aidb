@@ -70,7 +70,7 @@ O confinamento do agente SHALL operar inteiramente dentro do container do sistem
 - **THEN** o fluxo de geração de apps e os pedidos de aprovação do gate se comportam exatamente como em um sistema sem o confinamento
 
 ### Requirement: Confinamento de rede por porta TCP
-O supervisor do container SHALL instalar, para o agente confinado em modo `sandboxed`, regras de rede que permitem conexão TCP de saída apenas às portas calculadas para o sistema, negando por padrão qualquer outra porta.
+O supervisor do container SHALL instalar, para o agente confinado em modo `sandboxed`, regras de rede que permitem conexão TCP de saída apenas às portas calculadas para o sistema, negando por padrão qualquer outra porta — incluindo 443 e 80, cuja saída direta deixa de estar entre as portas calculadas por padrão.
 
 #### Scenario: Conexão a uma porta liberada funciona normalmente
 - **WHEN** o agente confinado, ou um processo filho seu, abre uma conexão TCP de saída para uma porta que está na lista calculada para o sistema
@@ -95,3 +95,11 @@ O supervisor do container SHALL instalar, para o agente confinado em modo `sandb
 #### Scenario: Sistemas fora do modo sandboxed não são afetados
 - **WHEN** um sistema está em modo `legacy` ou `reduced`
 - **THEN** nenhuma regra de rede é instalada, e o comportamento de rede do container permanece o mesmo de antes desta mudança
+
+#### Scenario: 443 e 80 não entram mais na lista liberada por padrão
+- **WHEN** a lista de portas liberadas de um sistema em modo `sandboxed` é calculada
+- **THEN** 443 e 80 não aparecem nela, a menos que coincidam com a porta calculada de algum proxy do próprio sistema (banco, broker ou o novo proxy HTTP(S)) — a saída HTTP(S) direta, fora de um proxy, deixa de estar disponível
+
+#### Scenario: Porta do proxy HTTP(S) liberada como as demais
+- **WHEN** um sistema em modo `sandboxed` é provisionado com o proxy HTTP(S) de saída (capability `https-forward-proxy`)
+- **THEN** a porta desse proxy entra na lista de portas liberadas do agente, calculada junto das demais
