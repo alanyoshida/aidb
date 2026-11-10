@@ -359,6 +359,46 @@ def test_provision_system_passa_aidb_agent_profile_no_env(editor, tmp_path, monk
     assert "ANTHROPIC_API_KEY" not in captured["environment"]  # sem chave real injetada à toa
 
 
+def test_provision_system_falha_explicita_em_config_format_desconhecido(editor, tmp_path, monkeypatch):
+    """change generalize-agent-runtime-plumbing: um config_format sem writer
+    registrado é falha explícita no provisionamento, nunca um fallback
+    silencioso (mesmo princípio do perfil ausente no supervisor, ADR 0018)."""
+    import docker
+
+    from appaiforge.agent_profiles import PROFILES, UnknownProfile
+    from appaiforge.provisioning import provision_system
+
+    monkeypatch.setitem(PROFILES, "sem-writer", {**PROFILES["opencode"], "config_format": "formato-desconhecido"})
+    system = create_system(editor, "SemWriter", "prov-sem-writer", agent_profile="sem-writer")
+
+    class FakeContainers:
+        def get(self, name):
+            raise docker.errors.NotFound("not found")
+
+    class FakeNetworks:
+        def get(self, name):
+            raise docker.errors.NotFound("not found")
+
+        def create(self, name, driver=None):
+            pass
+
+    class FakeClient:
+        containers = FakeContainers()
+        networks = FakeNetworks()
+
+    monkeypatch.setattr("appaiforge.provisioning._docker", lambda: FakeClient())
+    monkeypatch.setenv("APPAIFORGE_WORKSPACES_DIR", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("APPAIFORGE_HOST_WORKSPACES_DIR", str(tmp_path / "host-workspaces"))
+    monkeypatch.setenv("APPAIFORGE_CONFIGS_DIR", str(tmp_path / "configs"))
+    monkeypatch.setenv("APPAIFORGE_HOST_CONFIG_DIR", str(tmp_path / "host-configs"))
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(UnknownProfile):
+            provision_system(system)
+    finally:
+        get_settings.cache_clear()
+
+
 def _provision_with_fake_docker(system, tmp_path, monkeypatch):
     """Monta um provision_system() que não toca o daemon Docker; devolve os
     kwargs que seriam passados a client.containers.run()."""

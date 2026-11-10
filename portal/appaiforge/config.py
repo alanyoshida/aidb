@@ -75,7 +75,6 @@ class Settings(BaseSettings):
 
     # "opencode" (real, via rede Docker) ou "fake" (E2E determinístico, ADR 0016)
     harness_mode: str = "opencode"
-    opencode_port: int = 4096
 
     # Broker de inferência (etapa 3, ADR 0020). Desligado por padrão: o
     # provisionamento continua injetando a chave real até o rollout.

@@ -23,6 +23,8 @@ def test_provisiona_container_com_limites_labels_e_workspace(system):
     from appaiforge.edge import system_container_name
     from appaiforge.provisioning import provision_system
 
+    from appaiforge.agent_profiles import get_profile
+
     provision_system(system)
 
     container = _client().containers.get(system_container_name(system.slug))
@@ -34,7 +36,16 @@ def test_provisiona_container_com_limites_labels_e_workspace(system):
     assert attrs["HostConfig"]["NanoCpus"] == expected_cpu
     assert attrs["HostConfig"]["Memory"] == settings.container_mem_mb * 1024 * 1024
     assert attrs["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
-    # config com opencode.json, bind montado em /opencode-config (ro)
+    # imagem e mount do config dir vêm do perfil do sistema (change
+    # generalize-agent-runtime-plumbing) - para o perfil opencode, idênticos
+    # ao que settings.base_image e o literal "/opencode-config" produziam antes
+    profile = get_profile(system.agent_profile)
+    assert attrs["Config"]["Image"] == profile["image"]
+    mounts = {m["Destination"]: m for m in attrs["Mounts"]}
+    assert profile["config_mount_path"] in mounts
+    assert mounts[profile["config_mount_path"]]["RW"] is False
+    assert f"AIDB_AGENT_PROFILE={profile['config_mount_path']}/agent-profile.json" in attrs["Config"]["Env"]
+    # config com opencode.json, bind montado no diretório de config do perfil (ro)
     assert (docker_sdk.__name__) or True
     config_dir = os.path.join(get_settings().configs_dir, system.slug)
     assert os.path.isfile(os.path.join(config_dir, "opencode.json"))

@@ -133,6 +133,11 @@ class System(Base):
         Enum(ExecutionMode, name="execution_mode"), default=ExecutionMode.reduced
     )
     identity_secret: Mapped[str] = mapped_column(String(64))
+    # Perfil de runtime do agente (capability agent-runtime, change
+    # generalize-agent-runtime-plumbing). Determinado no provisionamento,
+    # nunca re-resolvido depois; string livre (não Enum) porque o conjunto
+    # de perfis é extensível (agent_profiles.PROFILES).
+    agent_profile: Mapped[str] = mapped_column(String(60), default="opencode", server_default="opencode")
     # Versão do token opaco de inferência (etapa 3, ADR 0020). Revogar o acesso
     # de um sistema = incrementar esta versão; o token antigo deixa de validar.
     inference_token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

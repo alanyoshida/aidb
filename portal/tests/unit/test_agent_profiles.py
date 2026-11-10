@@ -16,6 +16,29 @@ def test_perfil_padrao_resolvido_pelo_nome():
     assert "/opencode-config" in profile["readable_paths"]
 
 
+def test_perfil_declara_imagem_mount_path_e_protocolo_de_harness():
+    """change generalize-agent-runtime-plumbing: estes três campos substituem
+    settings.base_image, o literal "/opencode-config" e settings.opencode_port
+    (removido) que o provisionamento usava fixo antes desta mudança."""
+    profile = get_profile("opencode")
+    assert profile["image"] == "appaiforge/base:0.1.0"
+    assert profile["config_mount_path"] == "/opencode-config"
+    assert profile["harness_protocol"] == "opencode-http"
+
+
+def test_perfil_opencode_e_bit_a_bit_igual_aos_literais_que_substituiu():
+    """Regressão dedicada (design.md - "zero mudança de comportamento para
+    sistemas existentes"): a imagem do perfil padrão tem que continuar igual
+    a settings.base_image - só os sidecars (dbgate/httpsproxy) ainda leem
+    esse setting direto; o container do agente passa a usar o perfil."""
+    from appaiforge.config import get_settings
+
+    profile = get_profile("opencode")
+    assert profile["image"] == get_settings().base_image
+    assert profile["config_mount_path"] == "/opencode-config"
+    assert profile["harness_port"] == 4096
+
+
 def test_connect_tcp_ports_estaticas_so_tem_dns():
     """443/80 saíram da lista estática (change agent-https-forward-proxy):
     toda saída HTTP(S) do agente passa a depender do proxy de saída, cuja
@@ -117,3 +140,38 @@ def test_resolve_credential_env_literal_nao_delega(presets):
     """Perfil com credential_env literal (ex.: futuro agente claude-code) não consulta o catálogo."""
     profile = {"credential_env": "ANTHROPIC_API_KEY"}
     assert resolve_credential_env(profile, "qualquer-coisa") == "ANTHROPIC_API_KEY"
+
+
+def test_create_system_persiste_perfil_padrao_quando_omitido(clean_db):
+    """change generalize-agent-runtime-plumbing, spec agent-runtime -
+    "Perfil de runtime por sistema": determinado no provisionamento (aqui,
+    na criação), nunca mais re-resolvido depois."""
+    from appaiforge import auth
+    from appaiforge.models import UserType
+    from appaiforge.services.systems import create_system
+
+    editor = auth.create_user("profile1@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "Sistema", "sistema-perfil-padrao")
+    assert system.agent_profile == "opencode"
+
+
+def test_create_system_persiste_perfil_informado_explicitamente(clean_db):
+    from appaiforge import auth
+    from appaiforge.models import UserType
+    from appaiforge.services.systems import create_system
+
+    editor = auth.create_user("profile2@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "Sistema", "sistema-perfil-explicito", agent_profile="opencode")
+    assert system.agent_profile == "opencode"
+
+
+def test_create_system_recusa_perfil_desconhecido(clean_db):
+    """Falha explícita na criação - nunca persiste um perfil que `get_profile`
+    não conseguiria resolver depois, no provisionamento."""
+    from appaiforge import auth
+    from appaiforge.models import UserType
+    from appaiforge.services.systems import create_system
+
+    editor = auth.create_user("profile3@t.local", "pw", UserType.editor.value)
+    with pytest.raises(UnknownProfile):
+        create_system(editor, "Sistema", "sistema-perfil-invalido", agent_profile="agente-inexistente")

@@ -20,10 +20,22 @@ PROFILES: dict[str, dict] = {
         "agent": "opencode",
         "command": ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"],
         "cwd": "/opencode-config",
+        # Imagem de container do agente (change generalize-agent-runtime-plumbing)
+        # — valor igual ao `settings.base_image` que o provisionamento usava
+        # fixo antes desta mudança; zero mudança de comportamento.
+        "image": "appaiforge/base:0.1.0",
+        # Caminho, dentro do container, onde o portal monta (read-only, fora
+        # do workspace) o diretório de config deste agente — igual ao
+        # literal `/opencode-config` que o provisionamento usava fixo antes.
+        "config_mount_path": "/opencode-config",
         "config_path": "/opencode-config/opencode.json",
         "config_format": "opencode-json",
         "credential_env": FROM_PROVIDER,
         "harness_port": 4096,
+        # Protocolo que o HarnessPort do portal usa para falar com este
+        # agente (agent_queue.HARNESS_IMPLEMENTATIONS) — igual ao único
+        # protocolo que existia antes desta mudança.
+        "harness_protocol": "opencode-http",
         # /proc: achado da verificação real da etapa 2 (task 7) — sem leitura
         # de /proc, o runtime Bun do opencode (provavelmente /proc/self/maps,
         # usado pelo JIT do JSC) aborta com SIGABRT ~12s depois de subir, sob

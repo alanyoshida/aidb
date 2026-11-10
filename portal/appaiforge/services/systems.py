@@ -6,6 +6,7 @@ import re
 from sqlalchemy import select
 
 from .. import inference_token, telemetry
+from ..agent_profiles import DEFAULT_PROFILE, get_profile
 from ..db import session_scope
 from ..edge import publish_app, unpublish_app
 from ..models import AgentRun, ChatSession, RunStatus, System, SystemStatus, User
@@ -33,13 +34,28 @@ class NotPermitted(Exception):
     pass
 
 
-def create_system(user: User, name: str, slug: str, provider: str | None = None, model: str | None = None) -> System:
-    """Cria o sistema; criador vira dono (spec: somente editor/admin)."""
+def create_system(
+    user: User,
+    name: str,
+    slug: str,
+    provider: str | None = None,
+    model: str | None = None,
+    agent_profile: str | None = None,
+) -> System:
+    """Cria o sistema; criador vira dono (spec: somente editor/admin).
+
+    `agent_profile` é determinado agora, nunca mais re-resolvido depois
+    (spec agent-runtime - "Perfil de runtime por sistema"); perfil
+    desconhecido levanta `UnknownProfile` antes de qualquer gravação, em
+    vez de persistir um perfil que `get_profile` não consegue resolver
+    depois."""
     if not can_create_systems(user):
         raise NotPermitted("somente editores podem criar sistemas")
     slug = slug.strip().lower()
     if not _SLUG_RE.match(slug):
         raise InvalidSlug("slug deve ser kebab-case: letras minúsculas, dígitos e hífen")
+    agent_profile = agent_profile or DEFAULT_PROFILE
+    get_profile(agent_profile)  # levanta UnknownProfile se o nome não existir
     settings = get_settings()
     # Decidido aqui, não em provision_system: o modo de execução é fixado na
     # criação do sistema e fica imutável depois (spec container-lifecycle).
@@ -60,6 +76,7 @@ def create_system(user: User, name: str, slug: str, provider: str | None = None,
             status_message=sandbox_warning,
             execution_mode=execution_mode,
             identity_secret=generate_secret(),
+            agent_profile=agent_profile,
         )
         s.add(system)
         s.flush()

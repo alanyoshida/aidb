@@ -122,9 +122,40 @@ class AgentQueue:
         self.trace_contexts: dict[str, object] = {}  # run_id -> span raiz `agent.run` aberto (telemetry.py)
         self._workers: set[str] = set()
         self._lock = threading.Lock()
+        self._harness_cache: dict[str, HarnessPort] = {}
+        self._harness_cache_lock = threading.Lock()
 
-    def harness_for(self, system: System) -> HarnessPort:
-        return self.harness
+    def harness_for(self, system) -> HarnessPort:
+        """`HarnessPort` para este sistema, pelo `harness_protocol` do seu
+        perfil (change generalize-agent-runtime-plumbing, spec agent-runtime
+        - "Driver do portal dirigido pelo perfil"). `system` aceita tanto um
+        `System` do ORM quanto um dict com `agent_profile` (ex.:
+        `system_dict`) - nenhuma implementação de harness guarda estado por
+        sistema, então uma instância por protocolo (não por sistema) já
+        atende qualquer número de sistemas concorrentes.
+
+        O harness injetado no construtor (`self.harness`) é o fallback para
+        o protocolo do perfil padrão da plataforma - cobre tanto o modo
+        `fake` (E2E determinístico) quanto qualquer harness de teste
+        injetado diretamente, já que todo sistema sem perfil explícito usa
+        o perfil padrão. Só um perfil com um protocolo DIFERENTE do padrão
+        passa a ser resolvido via `HARNESS_IMPLEMENTATIONS`."""
+        from .agent_profiles import get_profile
+
+        name = system.get("agent_profile") if isinstance(system, dict) else getattr(system, "agent_profile", None)
+        protocol = get_profile(name)["harness_protocol"]
+        if protocol == get_profile(None)["harness_protocol"]:
+            return self.harness
+        with self._harness_cache_lock:
+            instance = self._harness_cache.get(protocol)
+            if instance is None:
+                try:
+                    factory = HARNESS_IMPLEMENTATIONS[protocol]
+                except KeyError:
+                    raise UnknownHarnessProtocol(f"protocolo de harness '{protocol}' sem implementação registrada")
+                instance = factory()
+                self._harness_cache[protocol] = instance
+            return instance
 
     def _end_run_span(self, run_id: str, outcome: str) -> None:
         span = self.trace_contexts.pop(run_id, None)
@@ -234,7 +265,10 @@ class AgentQueue:
             system = s.get(System, system_id)
             run.status = RunStatus.running
             run.started_at = utcnow()
-            system_dict = {"system_id": system.id, "slug": system.slug, "provider": system.provider, "model": system.model}
+            system_dict = {
+                "system_id": system.id, "slug": system.slug, "provider": system.provider, "model": system.model,
+                "agent_profile": system.agent_profile,
+            }
             # sem expunge aqui: expurgar antes do commit descartaria o UPDATE de status
 
         # guidelines vigentes entram no workspace antes da execução (spec agent-harness)
@@ -259,7 +293,7 @@ class AgentQueue:
         if needs_reset or not existing_session_id:
             if needs_reset:
                 buffer.push(RunEvent("session_context_reset", text="Contexto do agente reiniciado (container recriado)"))
-            session_id = self.harness.create_session(system_dict)
+            session_id = self.harness_for(system_dict).create_session(system_dict)
         else:
             session_id = existing_session_id
 
@@ -356,14 +390,15 @@ class AgentQueue:
                         output_tokens=event.meta.get("output_tokens", 0),
                     ))
 
+        harness = self.harness_for(system_dict)
         final: RunEvent | None = None
         try:
-            self.harness.run(system_dict, session_id, run.prompt, on_event)
+            harness.run(system_dict, session_id, run.prompt, on_event)
         except SessionExpiredError:
             # sessão morta detectada ao enviar: reinicia com nova sessão e reexecuta
             log.warning("sessão opencode expirada na run %s; criando nova sessão", run_id)
             buffer.push(RunEvent("session_context_reset", text="Contexto do agente reiniciado (sessão expirada)"))
-            session_id = self.harness.create_session(system_dict)
+            session_id = harness.create_session(system_dict)
             with session_scope() as s:
                 ar = s.get(AgentRun, run_id)
                 cs = s.get(ChatSession, ar.chat_session_id) if ar and ar.chat_session_id else None
@@ -371,7 +406,7 @@ class AgentQueue:
                     cs.harness_session_id = session_id
                     cs.context_reset = False
             try:
-                self.harness.run(system_dict, session_id, run.prompt, on_event)
+                harness.run(system_dict, session_id, run.prompt, on_event)
             except Exception as exc:
                 log.exception("run %s falhou após reinício de sessão", run_id)
                 buffer.push(RunEvent("run_error", text=str(exc)))
@@ -480,6 +515,7 @@ class AgentQueue:
                 "reason": "",
                 "system_id": system_id,
                 "system_slug": system_dict["slug"],
+                "agent_profile": system_dict.get("agent_profile"),
             }
             with session_scope() as s:
                 run = s.get(AgentRun, run_id)
@@ -497,7 +533,7 @@ class AgentQueue:
             classification, reason = gate.classify_sql(sql)
 
         if classification is gate.GateClass.BLOCKED:
-            self.harness.reply_gate(system_dict, session_id, request_id, approve=False)
+            self.harness_for(system_dict).reply_gate(system_dict, session_id, request_id, approve=False)
             gate.record_decision(system_id, sql or command, origin="agente",
                                  connection_name="", classification=classification,
                                  decision="bloqueada", run_id=run_id, author_id=user_id, author_email=user_email)
@@ -506,7 +542,7 @@ class AgentQueue:
             return
 
         if classification is gate.GateClass.NORMAL:
-            self.harness.reply_gate(system_dict, session_id, request_id, approve=True)
+            self.harness_for(system_dict).reply_gate(system_dict, session_id, request_id, approve=True)
             gate.record_decision(system_id, sql, origin="agente",
                                  connection_name="", classification=classification,
                                  decision="aprovada", run_id=run_id, author_id=user_id, author_email=user_email)
@@ -523,6 +559,7 @@ class AgentQueue:
             "reason": reason,
             "system_id": system_id,
             "system_slug": system_dict["slug"],
+            "agent_profile": system_dict.get("agent_profile"),
         }
         with session_scope() as s:
             run = s.get(AgentRun, run_id)
@@ -542,6 +579,7 @@ class AgentQueue:
             "request_id": request_id,
             "session_id": session_id,
             "system_slug": system_dict["slug"],
+            "agent_profile": system_dict.get("agent_profile"),
             "header": event.meta.get("header", ""),
             "question": event.text,
             "options": event.meta.get("options", []),
@@ -564,7 +602,8 @@ class AgentQueue:
             author = s.get(UserM, user.id) if user is not None else None
             if author is not None:
                 s.expunge(author)
-        self.harness.reply_gate({"slug": info["system_slug"]}, info["session_id"], request_id, approve)
+        harness_system = {"slug": info["system_slug"], "agent_profile": info.get("agent_profile")}
+        self.harness_for(harness_system).reply_gate(harness_system, info["session_id"], request_id, approve)
         # pendências sem SQL (permissão fora do domínio do gate, ex.: acesso a
         # diretório) não entram no histórico de decisões de banco — gravar ali
         # seria uma decisão de SQL inventada, sem statement nenhuma por trás
@@ -594,7 +633,8 @@ class AgentQueue:
         info = self.pending_questions.get(run_id)
         if info is None or info["request_id"] != request_id:
             return False
-        self.harness.reply_question({"slug": info["system_slug"]}, info["session_id"], request_id, label)
+        harness_system = {"slug": info["system_slug"], "agent_profile": info.get("agent_profile")}
+        self.harness_for(harness_system).reply_question(harness_system, info["session_id"], request_id, label)
         self.pending_questions.pop(run_id, None)
         buffer = self.buffers.get(run_id)
         if buffer:
@@ -606,12 +646,14 @@ class AgentQueue:
         return True
 
     def interrupt(self, run_id: str, system: System) -> None:
+        harness_system = {"slug": system.slug, "agent_profile": system.agent_profile}
+        harness = self.harness_for(system)
         # pedido pendente é recusado quando a run é interrompida
         pending = self.pending_gates.pop(run_id, None)
         if pending is not None:
             from . import gate
 
-            self.harness.reply_gate({"slug": system.slug}, pending["session_id"], pending["request_id"], approve=False)
+            harness.reply_gate(harness_system, pending["session_id"], pending["request_id"], approve=False)
             if pending["sql"] is not None:
                 gate.record_decision(
                     system.id, pending["sql"], origin="agente", connection_name=pending["connection_name"],
@@ -623,8 +665,8 @@ class AgentQueue:
                 buffer.push(RunEvent("gate_resolved", text="recusada: execução interrompida"))
         pending_question = self.pending_questions.pop(run_id, None)
         if pending_question is not None:
-            self.harness.reject_question(
-                {"slug": system.slug}, pending_question["session_id"], pending_question["request_id"]
+            harness.reject_question(
+                harness_system, pending_question["session_id"], pending_question["request_id"]
             )
             buffer = self.buffers.get(run_id)
             if buffer:
@@ -636,7 +678,7 @@ class AgentQueue:
                 cs = s.get(ChatSession, run.chat_session_id)
                 session_id = cs.harness_session_id if cs else None
         if session_id:
-            self.harness.interrupt({"slug": system.slug}, session_id)
+            harness.interrupt(harness_system, session_id)
         from . import broker
 
         broker.cancel_inference(run_id)
@@ -662,11 +704,26 @@ class AgentQueue:
 _queue: AgentQueue | None = None
 
 
+class UnknownHarnessProtocol(Exception):
+    pass
+
+
 def _harness_url(system: dict) -> str:
-    from .config import get_settings
+    from .agent_profiles import get_profile
     from .edge import system_container_name
 
-    return f"http://{system_container_name(system['slug'])}:{get_settings().opencode_port}"
+    port = get_profile(system.get("agent_profile"))["harness_port"]
+    return f"http://{system_container_name(system['slug'])}:{port}"
+
+
+# Despacho de HarnessPort por `profile["harness_protocol"]` (change
+# generalize-agent-runtime-plumbing) - hoje só "opencode-http" está
+# registrado; cada fábrica constrói sua instância uma vez (AgentQueue a
+# guarda em cache por protocolo, nunca por sistema: nenhuma implementação
+# de harness guarda estado por sistema, ver harness_for).
+HARNESS_IMPLEMENTATIONS = {
+    "opencode-http": lambda: OpencodeHarness(_harness_url),
+}
 
 
 def get_queue() -> AgentQueue:

@@ -270,6 +270,50 @@ def test_pergunta_do_agente_fica_pendente_ate_decisao_e_nao_gera_gate_decision(q
     assert gate_service.list_decisions(system.id) == []
 
 
+class _OtherHarness(HarnessPort):
+    def create_session(self, system: dict) -> str:
+        return "ses_other"
+
+    def interrupt(self, system: dict, session_id: str) -> None:
+        pass
+
+    def reply_gate(self, system: dict, session_id: str, request_id: str, approve: bool) -> None:
+        pass
+
+    def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
+        pass
+
+
+def test_harness_for_usa_injetado_no_construtor_para_o_protocolo_padrao():
+    """change generalize-agent-runtime-plumbing: harness_for não deve
+    ignorar o harness injetado no construtor (é assim que esta suíte toda
+    injeta harnesses de teste) para o protocolo do perfil padrão."""
+    harness = ScriptedHarness()
+    queue = AgentQueue(harness)
+    assert queue.harness_for({"agent_profile": "opencode"}) is harness
+    assert queue.harness_for({}) is harness  # sem perfil -> perfil padrão
+
+
+def test_harness_for_despacha_protocolo_diferente_via_registro(monkeypatch):
+    """Um perfil com harness_protocol diferente do padrão é resolvido via
+    HARNESS_IMPLEMENTATIONS, não pelo harness injetado no construtor -
+    o ponto de extensão que a etapa 7 do roadmap vai usar."""
+    import appaiforge.agent_queue as agent_queue_module
+    from appaiforge.agent_profiles import PROFILES
+
+    monkeypatch.setitem(PROFILES, "outro-agente", {**PROFILES["opencode"], "harness_protocol": "outro-protocolo"})
+    other = _OtherHarness()
+    monkeypatch.setitem(agent_queue_module.HARNESS_IMPLEMENTATIONS, "outro-protocolo", lambda: other)
+
+    harness = ScriptedHarness()
+    queue = AgentQueue(harness)
+    resolved = queue.harness_for({"agent_profile": "outro-agente"})
+    assert resolved is other
+    assert resolved is not harness
+    # chamada repetida devolve a mesma instância (cache por protocolo)
+    assert queue.harness_for({"agent_profile": "outro-agente"}) is other
+
+
 def test_interromper_run_com_pergunta_pendente_rejeita_sem_resposta(question_editor, fake_workspace):
     harness = QuestionHarness()
     queue = AgentQueue(harness)

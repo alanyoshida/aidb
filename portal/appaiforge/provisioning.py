@@ -120,7 +120,7 @@ def _broker_credential_env(system: System) -> dict[str, str]:
     from . import inference_token
     from .agent_profiles import get_profile, resolve_credential_env
 
-    env_name = resolve_credential_env(get_profile(), system.provider)
+    env_name = resolve_credential_env(get_profile(system.agent_profile), system.provider)
     return {env_name: inference_token.token_for_system(system)}
 
 
@@ -339,6 +339,19 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
         json.dump(config, f, indent=2)
 
 
+def _config_writers() -> dict:
+    """Despacho do writer de config do agente por `profile["config_format"]`
+    (change generalize-agent-runtime-plumbing) — hoje só "opencode-json"
+    está registrado; um `config_format` sem entrada aqui é falha explícita
+    no provisionamento, nunca um fallback silencioso pra este writer.
+
+    Resolvida a cada chamada (não num dict de módulo): testes substituem
+    `provisioning.write_opencode_config` via monkeypatch, e um dict de
+    módulo guardaria a função original capturada na importação, imune a
+    esse monkeypatch."""
+    return {"opencode-json": write_opencode_config}
+
+
 def write_agent_profile(system: System, config_dir: str, manifest: list[dict]) -> dict:
     """Serializa o perfil de runtime do agente (capability agent-runtime) como
     JSON em config_dir, ao lado do config do agente. Contém só o NOME da env
@@ -355,7 +368,7 @@ def write_agent_profile(system: System, config_dir: str, manifest: list[dict]) -
     change agent-network-perimeter)."""
     from .agent_profiles import get_profile, resolve_credential_env
 
-    profile = get_profile()
+    profile = get_profile(system.agent_profile)
     connect_tcp_ports = (
         list(profile.get("connect_tcp_ports", []))
         + [m["agent_port"] for m in manifest]
@@ -395,7 +408,10 @@ def provision_system(system: System) -> str:
     Workspace é bind-mounted do host (host_workspaces_dir/<slug>); o portal
     cria o diretório dentro do seu próprio mount workspaces_dir.
     """
+    from .agent_profiles import UnknownProfile, get_profile
+
     settings = get_settings()
+    profile = get_profile(system.agent_profile)
     _check_capacity(system.id)
     ensure_network()
 
@@ -430,7 +446,11 @@ def provision_system(system: System) -> str:
     host_config_slug = os.path.join(settings.host_config_dir, system.slug)
     portal_config_dir = os.path.join(settings.configs_dir, system.slug)
     manifest = db_connections_manifest(system.id)
-    write_opencode_config(system, portal_config_dir, manifest)
+    try:
+        config_writer = _config_writers()[profile["config_format"]]
+    except KeyError:
+        raise UnknownProfile(f"config_format '{profile['config_format']}' sem writer registrado")
+    config_writer(system, portal_config_dir, manifest)
     write_agent_profile(system, portal_config_dir, manifest)
 
     env = {
@@ -441,7 +461,9 @@ def provision_system(system: System) -> str:
         # Único ponto de entrada fixo do supervisor (ADR 0018, D2): todo o resto
         # do runtime do agente (comando, cwd, porta, credencial) vem de dentro
         # do arquivo que esta env aponta, não de constante nenhuma no supervisor.
-        "AIDB_AGENT_PROFILE": "/opencode-config/agent-profile.json",
+        # O diretório em si vem do perfil (profile["config_mount_path"]), não
+        # de um literal fixo (change generalize-agent-runtime-plumbing).
+        "AIDB_AGENT_PROFILE": f"{profile['config_mount_path']}/agent-profile.json",
         # Diz ao supervisor se ele deve instalar seccomp/Landlock antes do
         # exec do agente (capability agent-sandbox, etapa 2). O modo já está
         # fixado desde a criação do sistema; o supervisor só confia nele.
@@ -469,14 +491,18 @@ def provision_system(system: System) -> str:
     storage_opt = {"size": f"{settings.container_disk_gb}g"}
 
     kwargs = {
-        "image": settings.base_image,
+        # Imagem do agente vem do perfil (etapa 7 do roadmap já previa "uma
+        # imagem por agente"); settings.base_image continua sendo a imagem
+        # dos sidecars da própria plataforma (dbgate/httpsproxy), que não
+        # são o agente e não variam por perfil.
+        "image": profile["image"],
         "name": container_name,
         "hostname": container_name,
         "network": settings.docker_network,
         "environment": env,
         "volumes": {
             host_dir: {"bind": "/workspace", "mode": "rw"},
-            host_config_slug: {"bind": "/opencode-config", "mode": "ro"},
+            host_config_slug: {"bind": profile["config_mount_path"], "mode": "ro"},
         },
         "labels": {
             "appaiforge.system_id": system.id,
