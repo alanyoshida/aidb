@@ -314,6 +314,20 @@ def test_harness_for_despacha_protocolo_diferente_via_registro(monkeypatch):
     assert queue.harness_for({"agent_profile": "outro-agente"}) is other
 
 
+def test_harness_for_devolve_claude_code_harness_para_perfil_real(monkeypatch):
+    """change add-claude-code-agent-profile (etapa 7): o perfil real
+    registrado em PROFILES, não um fake de teste - prova que o registro em
+    HARNESS_IMPLEMENTATIONS funciona de ponta a ponta."""
+    from appaiforge.harness.claude_code import ClaudeCodeHarness
+
+    harness = ScriptedHarness()
+    queue = AgentQueue(harness)
+    resolved = queue.harness_for({"agent_profile": "claude-code"})
+    assert isinstance(resolved, ClaudeCodeHarness)
+    assert resolved is not harness
+    assert queue.harness_for({"agent_profile": "claude-code"}) is resolved  # cache por protocolo
+
+
 def test_interromper_run_com_pergunta_pendente_rejeita_sem_resposta(question_editor, fake_workspace):
     harness = QuestionHarness()
     queue = AgentQueue(harness)

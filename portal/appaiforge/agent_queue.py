@@ -16,6 +16,7 @@ from . import telemetry
 from .config import get_settings
 from .db import session_scope
 from .harness.base import HarnessPort, RunEvent, SessionExpiredError
+from .harness.claude_code import ClaudeCodeHarness
 from .harness.fake import FakeHarness
 from .harness.opencode import OpencodeHarness
 from .models import AgentRun, ChatSession, RunStatus, TokenUsage, System, User, utcnow
@@ -717,12 +718,15 @@ def _harness_url(system: dict) -> str:
 
 
 # Despacho de HarnessPort por `profile["harness_protocol"]` (change
-# generalize-agent-runtime-plumbing) - hoje só "opencode-http" está
-# registrado; cada fábrica constrói sua instância uma vez (AgentQueue a
-# guarda em cache por protocolo, nunca por sistema: nenhuma implementação
-# de harness guarda estado por sistema, ver harness_for).
+# generalize-agent-runtime-plumbing) - cada fábrica constrói sua instância
+# uma vez (AgentQueue a guarda em cache por protocolo, nunca por sistema:
+# nenhuma implementação de harness guarda estado por sistema, ver
+# harness_for). "claude-code-headless" (change add-claude-code-agent-profile,
+# etapa 7) é o segundo protocolo registrado — critério de sucesso negativo
+# do roadmap: zero mudança neste dispatch alem desta linha nova.
 HARNESS_IMPLEMENTATIONS = {
     "opencode-http": lambda: OpencodeHarness(_harness_url),
+    "claude-code-headless": lambda: ClaudeCodeHarness(_harness_url),
 }
 
 

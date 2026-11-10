@@ -91,6 +91,57 @@ PROFILES: dict[str, dict] = {
         # broker, que já eram calculadas ali.
         "connect_tcp_ports": [53],
     },
+    "claude-code": {
+        "agent": "claude-code",
+        # O supervisor sobe o shim (processo de vida longa, D1 do design da
+        # change add-claude-code-agent-profile) — a CLI `claude` em si é
+        # invocada por prompt, como subprocesso curto, de dentro do shim.
+        "command": ["python3", "/opt/claude-code-shim/shim.py"],
+        "cwd": "/workspace",
+        "image": "appaiforge/claude-code:0.1.0",
+        # Diretório montado só-leitura, fora do workspace (spec agent-runtime,
+        # "Perfil entregue ao container sem segredo") — guarda settings.json
+        # (D3) e, quando o sistema tem alguma DbConnection, mcp-servers.json
+        # (D6). "config_path" aponta pro primeiro; o shim resolve o segundo
+        # pela mesma convenção de diretório (claude_code_shim.MCP_CONFIG_PATH).
+        "config_mount_path": "/claude-code-config",
+        "config_path": "/claude-code-config/settings.json",
+        "config_format": "claude-code-settings",
+        # Achado real (spike, task 1.3): a CLI aceita ANTHROPIC_API_KEY
+        # (header x-api-key) e ANTHROPIC_AUTH_TOKEN (Authorization: Bearer)
+        # igualmente, sem validar formato de chave em nenhum dos dois — mas
+        # o broker já sabe trocar x-api-key pro dialeto anthropic (é o que
+        # o perfil opencode usa, catalog.py PRESETS); ANTHROPIC_AUTH_TOKEN
+        # introduziria uma segunda convenção de header sem necessidade.
+        "credential_env": "ANTHROPIC_API_KEY",
+        "harness_port": 8091,
+        "harness_protocol": "claude-code-headless",
+        # Achado real (strace -f, task 1.4): além de ~/.claude/** (sessões,
+        # config, plugins, transcritos) e ~/.claude.json (config global,
+        # escrita atômica via .tmp.*), a CLI também usa ~/.config/anthropic/
+        # — uma segunda árvore de config que não estava prevista.
+        "readable_paths": [
+            "/claude-code-config", "/usr", "/lib", "/opt", "/proc", "/dev",
+            "/etc/resolv.conf", "/etc/hosts", "/etc/host.conf", "/etc/nsswitch.conf",
+            "/etc/netsvc.conf", "/etc/svc.conf", "/etc/localtime",
+            "/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/claude-code",
+            "/etc/ssl/certs", "/etc/ssl/cert.pem", "/etc/ssl/ca-bundle.pem",
+            "/etc/openssl/certs", "/etc/pki",
+        ],
+        "writable_paths": [
+            "/workspace",
+            "/home/agent/.claude",
+            "/home/agent/.claude.json",
+            "/home/agent/.config/anthropic",
+            "/home/agent/.config/git",
+            "/home/agent/.npm",
+            "/home/agent/.local",
+            "/home/agent/.bashrc", "/home/agent/.bash_profile", "/home/agent/.bash_login",
+            "/home/agent/.profile", "/home/agent/.gitconfig",
+            "/tmp",
+        ],
+        "connect_tcp_ports": [53],
+    },
 }
 
 DEFAULT_PROFILE = "opencode"

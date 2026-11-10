@@ -175,3 +175,67 @@ def test_create_system_recusa_perfil_desconhecido(clean_db):
     editor = auth.create_user("profile3@t.local", "pw", UserType.editor.value)
     with pytest.raises(UnknownProfile):
         create_system(editor, "Sistema", "sistema-perfil-invalido", agent_profile="agente-inexistente")
+
+
+# --- change add-claude-code-agent-profile (etapa 7 do roadmap) ---
+
+
+def test_perfil_claude_code_resolvido_pelo_nome():
+    profile = get_profile("claude-code")
+    assert profile["agent"] == "claude-code"
+    assert profile["cwd"] == "/workspace"
+    assert profile["harness_port"] == 8091
+    assert "/workspace" in profile["writable_paths"]
+
+
+def test_perfil_claude_code_declara_imagem_mount_path_e_protocolo_de_harness():
+    profile = get_profile("claude-code")
+    assert profile["image"] == "appaiforge/claude-code:0.1.0"
+    assert profile["config_mount_path"] == "/claude-code-config"
+    assert profile["config_path"] == "/claude-code-config/settings.json"
+    assert profile["config_format"] == "claude-code-settings"
+    assert profile["harness_protocol"] == "claude-code-headless"
+
+
+def test_perfil_claude_code_credential_env_e_literal_api_key():
+    """Achado real do spike (task 1.3): ANTHROPIC_API_KEY (x-api-key), não
+    ANTHROPIC_AUTH_TOKEN - é o header que o broker já sabe trocar pro
+    dialeto anthropic (mesmo do perfil opencode)."""
+    profile = get_profile("claude-code")
+    assert profile["credential_env"] == "ANTHROPIC_API_KEY"
+
+
+def test_resolve_credential_env_claude_code_nao_delega_ao_catalogo(presets):
+    profile = get_profile("claude-code")
+    assert resolve_credential_env(profile, "qualquer-coisa") == "ANTHROPIC_API_KEY"
+
+
+def test_perfil_claude_code_writable_paths_inclui_achados_reais_do_strace():
+    """Task 1.4: além de ~/.claude/**, a CLI também usa ~/.claude.json
+    (config global) e ~/.config/anthropic (achado novo, não previsto no
+    design original)."""
+    profile = get_profile("claude-code")
+    for caminho in (
+        "/home/agent/.claude",
+        "/home/agent/.claude.json",
+        "/home/agent/.config/anthropic",
+    ):
+        assert caminho in profile["writable_paths"]
+
+
+def test_perfil_claude_code_connect_tcp_ports_so_tem_dns():
+    profile = get_profile("claude-code")
+    assert profile["connect_tcp_ports"] == [53]
+
+
+def test_create_system_persiste_perfil_claude_code(clean_db):
+    """Spec agent-runtime, "Conjunto de perfis extensível" - registrar um
+    perfil novo habilita o agente correspondente sem mudança em
+    create_system/UnknownProfile (já genérico desde a change anterior)."""
+    from appaiforge import auth
+    from appaiforge.models import UserType
+    from appaiforge.services.systems import create_system
+
+    editor = auth.create_user("profile4@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "Sistema", "sistema-perfil-claude-code", agent_profile="claude-code")
+    assert system.agent_profile == "claude-code"

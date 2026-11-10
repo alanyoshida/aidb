@@ -1,0 +1,65 @@
+# Imagem do agente claude-code (etapa 7 do roadmap de confinamento, change
+# add-claude-code-agent-profile). Dedicada e menor que a imagem opencode
+# (D5 do design) — só a CLI `claude`, o shim e o `gated-mcp` (D6: único
+# jeito do agente ler o banco do sistema, agnóstico de agente, igual ao
+# que a imagem opencode já carrega).
+FROM python:3.12-slim
+
+ARG CLAUDE_CODE_VERSION=2.1.322
+ENV NODE_VERSION=22.14.0
+
+# node é necessário pra CLI claude (pacote npm) e pro servidor MCP do
+# gated-mcp não precisa de node, mas libseccomp é pro pyseccomp do
+# supervisor (etapa 2 do confinamento, mesma razão da imagem opencode).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl xz-utils ca-certificates git bash procps \
+        default-libmysqlclient-dev pkg-config gcc \
+        libseccomp2 libseccomp-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+        | tar -xJ -C /usr/local --strip-components=1
+
+# CLI claude em versão pinada (mesmo espírito do ADR 0004 do opencode).
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+# uv para rodar a app gerada com deps próprias
+RUN pip install --no-cache-dir uv==0.13.7
+
+# pyseccomp para o filtro de syscalls do supervisor (etapa 2 do confinamento)
+RUN pip install --no-cache-dir pyseccomp==0.1.2
+
+# MCP server de leitura do AIDB (D6) + deps, nas mesmas versões pinadas do
+# base-image/Dockerfile principal (mesmo gated-mcp, mesmo risco de version
+# drift): "mcp==1.30.0" fixado deliberadamente — mcp 2.x renomeou FastMCP
+# pra MCPServer (confirmado por spike real), e o Dockerfile principal
+# resolveu exatamente essa 2.x antes de ser corrigido junto com este.
+COPY gated-mcp /opt/gated-mcp
+RUN pip install --no-cache-dir \
+        mcp==1.30.0 \
+        sqlglot==30.30.0 \
+        asyncpg==0.32.0 \
+        aiomysql==0.3.2 \
+        mysqlclient==2.3.0 \
+        google-cloud-bigquery==3.47.0 \
+        sqlalchemy-bigquery==1.17.3
+
+# Shim HTTP de vida longa (D1) — processo que o supervisor sobe como
+# profile["command"]; invoca a CLI claude por prompt (ver shim.py).
+COPY claude-code-shim /opt/claude-code-shim
+
+# supervisor como PID 1 — igual à imagem opencode, agnóstico de agente
+COPY afsupervisor /opt/afsupervisor/afsupervisor
+ENV PYTHONPATH=/opt/afsupervisor
+ENV APP_PORT=8080
+
+# Usuário não-root padrão (ADR 0018) — mesmo uid/gid da imagem opencode,
+# pra não introduzir uma segunda convenção de identidade de execução.
+RUN groupadd --gid 1000 agent \
+    && useradd --uid 1000 --gid agent --home-dir /home/agent --create-home --shell /bin/bash agent \
+    && chown -R agent:agent /home/agent
+ENV HOME=/home/agent
+USER agent
+
+# workspaces ficam em /workspace (bind do portal); entrypoint é o supervisor
+WORKDIR /workspace
+CMD ["python", "-m", "afsupervisor"]

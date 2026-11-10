@@ -339,17 +339,67 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
         json.dump(config, f, indent=2)
 
 
+def write_claude_code_config(system: System, config_dir: str, manifest: list[dict]) -> None:
+    """Gera settings.json (D3) e, quando o sistema tem alguma DbConnection,
+    mcp-servers.json (D6) do sistema claude-code.
+
+    settings.json: só `{"env": {"ANTHROPIC_BASE_URL": ...}}` — a credencial
+    vai pela env do container (ANTHROPIC_API_KEY), nunca neste arquivo
+    (spec agent-runtime, "Perfil não carrega segredo"). A CLI `claude` só
+    fala o dialeto anthropic (sem modo OpenAI-compatible, ao contrário do
+    opencode) — a baseURL é sempre a do broker nesse dialeto, independente
+    de `system.provider`; sem broker, omite a chave e a CLI usa o endpoint
+    padrão dela (api.anthropic.com).
+
+    mcp-servers.json: achado da implementação (design.md D6) — sem isto o
+    claude-code não teria nenhum jeito de ler o banco do sistema. Mesmo
+    `gated-mcp` que `write_opencode_config` já usa (agnóstico de agente),
+    uma entrada por conexão. Sistemas sem conexão nenhuma não ganham o
+    arquivo — o shim só passa `--mcp-config` quando ele existe (task 2.4),
+    pra não ligar `--strict-mcp-config` à toa num sistema sem ferramenta
+    MCP nenhuma pra oferecer."""
+    os.makedirs(config_dir, exist_ok=True)
+
+    settings_payload: dict = {"env": {}}
+    if get_settings().inference_broker_enabled:
+        settings_payload["env"]["ANTHROPIC_BASE_URL"] = _broker_base("anthropic")
+    with open(os.path.join(config_dir, "settings.json"), "w") as f:
+        json.dump(settings_payload, f, indent=2)
+
+    manifest_by_name = {m["name"]: m for m in manifest}
+    with session_scope() as s:
+        conns = s.execute(select(DbConnection).where(DbConnection.system_id == system.id)).scalars().all()
+        conn_data = [(c.id, c.name) for c in conns]
+    if not conn_data:
+        return
+
+    mcp_servers: dict = {}
+    for conn_id, conn_name in conn_data:
+        conn, secret = get_connection_secret(conn_id)
+        entry = manifest_by_name.get(conn_name)
+        url = _loopback_dsn(conn.kind, entry["agent_port"], conn.database) if entry is not None else connection_string(conn, secret)
+        mcp_servers[conn_name] = {
+            "command": "python",
+            "args": ["/opt/gated-mcp/mcp_server.py", url, conn.kind, conn.access_mode],
+        }
+    with open(os.path.join(config_dir, "mcp-servers.json"), "w") as f:
+        json.dump({"mcpServers": mcp_servers}, f, indent=2)
+
+
 def _config_writers() -> dict:
     """Despacho do writer de config do agente por `profile["config_format"]`
-    (change generalize-agent-runtime-plumbing) — hoje só "opencode-json"
-    está registrado; um `config_format` sem entrada aqui é falha explícita
-    no provisionamento, nunca um fallback silencioso pra este writer.
+    (change generalize-agent-runtime-plumbing) — um `config_format` sem
+    entrada aqui é falha explícita no provisionamento, nunca um fallback
+    silencioso pra outro writer.
 
     Resolvida a cada chamada (não num dict de módulo): testes substituem
-    `provisioning.write_opencode_config` via monkeypatch, e um dict de
-    módulo guardaria a função original capturada na importação, imune a
-    esse monkeypatch."""
-    return {"opencode-json": write_opencode_config}
+    `provisioning.write_opencode_config`/`write_claude_code_config` via
+    monkeypatch, e um dict de módulo guardaria a função original capturada
+    na importação, imune a esse monkeypatch."""
+    return {
+        "opencode-json": write_opencode_config,
+        "claude-code-settings": write_claude_code_config,
+    }
 
 
 def write_agent_profile(system: System, config_dir: str, manifest: list[dict]) -> dict:
