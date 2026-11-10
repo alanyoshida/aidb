@@ -94,7 +94,7 @@ O portal SHALL permitir que cada editor mantenha múltiplas sessões de conversa
 - **THEN** o histórico daquela sessão é carregado e os próximos pedidos são enviados nela
 
 ### Requirement: Continuidade de contexto do agente dentro da sessão
-O portal SHALL manter o mesmo identificador de sessão do harness (opencode) ao longo de múltiplos pedidos dentro da mesma sessão de conversa, de forma que o agente retenha o contexto das mensagens anteriores.
+O portal SHALL manter o mesmo identificador de sessão do harness em uso ao longo de múltiplos pedidos dentro da mesma sessão de conversa, de forma que o agente retenha o contexto das mensagens anteriores, qualquer que seja o harness do perfil do sistema.
 
 #### Scenario: Agente lembra pedido anterior na mesma sessão
 - **WHEN** o editor envia um segundo pedido na mesma sessão de conversa
