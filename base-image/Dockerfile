@@ -25,20 +25,32 @@ RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "${OPENCODE_VE
     && ln -sf /opt/opencode/bin/opencode /usr/local/bin/opencode
 
 # uv para rodar a app gerada com deps próprias
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir uv==0.13.7
 
 # pyseccomp para o filtro de syscalls do supervisor (etapa 2 do confinamento)
-RUN pip install --no-cache-dir pyseccomp
+RUN pip install --no-cache-dir pyseccomp==0.1.2
 
-# MCP server de leitura do AIDB + deps (mcp/sqlglot/asyncpg no python do sistema)
+# MCP server de leitura do AIDB + deps (mcp/sqlglot/asyncpg no python do sistema).
+# Versões pinadas (achado real: "mcp" sem teto resolveu pra 2.x numa imagem já
+# publicada, que renomeou FastMCP->MCPServer e quebra o import do gated-mcp em
+# runtime — ver base-image/claude-code-shim e design.md da change
+# add-claude-code-agent-profile). As demais ficam pinadas pela mesma razão:
+# build determinístico, sem resolver uma versão nova e não validada a cada build.
 COPY gated-mcp /opt/gated-mcp
-RUN pip install --no-cache-dir "mcp>=1.0" sqlglot asyncpg aiomysql mysqlclient google-cloud-bigquery sqlalchemy-bigquery
+RUN pip install --no-cache-dir \
+        mcp==1.30.0 \
+        sqlglot==30.30.0 \
+        asyncpg==0.32.0 \
+        aiomysql==0.3.2 \
+        mysqlclient==2.3.0 \
+        google-cloud-bigquery==3.47.0 \
+        sqlalchemy-bigquery==1.17.3
 
 # Proxy de gate de banco no data plane (etapa 4 do confinamento, change
 # db-proxy-gate-data-plane): sqlglot/asyncpg/aiomysql já vêm da linha acima;
 # httpx é só para o pedido de aprovação ao portal (task 2.3/4.1).
 COPY dbproxy /opt/dbproxy
-RUN pip install --no-cache-dir httpx
+RUN pip install --no-cache-dir httpx==0.28.1
 
 # Proxy HTTP(S) de saída (change agent-https-forward-proxy, etapa 5): só
 # stdlib (asyncio), nenhuma dependência nova.
