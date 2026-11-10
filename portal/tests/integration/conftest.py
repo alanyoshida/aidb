@@ -23,6 +23,27 @@ def docker_env(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def remove_system_containers(slug: str) -> None:
+    """Remove o container do sistema e seus sidecars (dbgate/httpsproxy), se existirem.
+
+    Sem isto, cada teste de integração que chama `provision_system` deixa um
+    container órfão no host ao terminar — já acumulou 166 containers numa
+    sessão e travou a máquina do usuário. Sidecars primeiro (dependem do
+    netns do container principal via `network_mode: container:<id>`), mesma
+    ordem que `provisioning.provision_system` usa ao recriar."""
+    import docker as docker_sdk
+
+    from appaiforge.edge import system_container_name
+    from appaiforge.provisioning import dbgate_sidecar_name, httpsproxy_sidecar_name
+
+    client = docker_sdk.from_env()
+    for name in (httpsproxy_sidecar_name(slug), dbgate_sidecar_name(slug), system_container_name(slug)):
+        try:
+            client.containers.get(name).remove(force=True)
+        except docker_sdk.errors.NotFound:
+            pass
+
+
 @pytest.fixture()
 def system(docker_env, clean_db):
     from appaiforge import auth
@@ -35,4 +56,6 @@ def system(docker_env, clean_db):
     # (ver `editor` em test_llm_provisioning.py)
     catalog.ensure_presets()
     editor = auth.create_user("prov@t.local", "pw", UserType.editor.value)
-    return create_system(editor, "Sistema Prov", f"prov-{os.urandom(3).hex()}")
+    sys = create_system(editor, "Sistema Prov", f"prov-{os.urandom(3).hex()}")
+    yield sys
+    remove_system_containers(sys.slug)

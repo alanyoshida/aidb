@@ -81,6 +81,20 @@ Não há config de lint/format (ruff/black) no repositório — não invente uma
   Se isso já aconteceu: o workspace (bind do host) e a linha no banco sobrevivem ao `docker rm`;
   `provisioning.reconcile()` (chamado de dentro do container do portal) recria o container a partir
   deles sem perda — mas o objetivo é nunca precisar disso.
+- **`tests/integration` e `tests/e2e` não têm teardown de container**: cada teste que usa a fixture
+  `system` (ou cria sistema direto, ex. o teste de capacidade em `test_provisioning.py`) sobe um
+  container de sistema (+ sidecars `dbgate`/`httpsproxy`) com slug aleatório (`prov-*`, `cap-um-*`) e
+  nunca remove. Isso já travou a máquina do usuário numa sessão: rodar a suíte de integração várias
+  vezes seguidas (inclusive em background, sem olhar o resultado antes de rodar de novo) acumulou
+  **166 containers** até o host ficar sem recurso e até a stack de dev real (`appaiforge-*-1`) cair.
+  **Regra**: depois de rodar `tests/integration`/`tests/e2e`, sempre limpe os containers de teste
+  antes de rodar de novo — nunca enfileire várias rodadas completas sem limpar entre elas. Liste e
+  confirme antes de remover (mesma regra mecânica acima, nunca um pipe direto pra `rm`/`xargs`):
+  `docker ps -a --format '{{.Names}}' | grep -E '^appaiforge-sys-(prov-|cap-um-)'` — confirme que
+  nenhum nome bate em `homolog-crm|pets|projetos|chat-a0a915bd`, aí sim `docker rm -f` com os nomes
+  exatos da lista revisada. Se for rodar a suíte de integração repetidamente (ex.: investigando uma
+  falha), prefira isolar o teste específico (`pytest tests/integration/arquivo.py::teste`) em vez da
+  suíte inteira, e limpe entre as rodadas.
 
 ## Fluxo OpenSpec
 

@@ -140,6 +140,7 @@ def test_teto_de_sistemas_e_respeitado(docker_env, clean_db, monkeypatch):
     from appaiforge.config import get_settings
 
     get_settings.cache_clear()
+    s1 = None
     try:
         from appaiforge import auth
         from appaiforge.models import UserType
@@ -154,6 +155,10 @@ def test_teto_de_sistemas_e_respeitado(docker_env, clean_db, monkeypatch):
             provision_system(s2)
     finally:
         get_settings.cache_clear()
+        if s1 is not None:
+            from tests.integration.conftest import remove_system_containers
+
+            remove_system_containers(s1.slug)  # s2 nunca chegou a subir container (CapacityReached antes)
 
 
 def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
