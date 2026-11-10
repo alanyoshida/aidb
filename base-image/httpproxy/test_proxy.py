@@ -167,6 +167,81 @@ def test_requisicao_http_absoluta_permitida_e_repassada():
     assert b"ECO:GET /path HTTP/1.1" in bytes(client_writer.buf)
 
 
+def test_requisicao_http_absoluta_repassa_headers_e_corpo():
+    """Achado real (design.md): o relay descartava headers (exceto Host) e
+    nunca repassava o corpo. Um servidor de eco devolve exatamente o que
+    chegou, então o corpo e o header customizado têm que aparecer intactos
+    do outro lado."""
+    client_writer = _MemoryWriter()
+
+    async def go():
+        server, port = await _start_echo_server()
+        async with server:
+            allow = AllowList.from_pairs([("127.0.0.1", port)])
+            body = b'{"hello":"world"}'
+            reader = _reader_with(
+                f"POST http://127.0.0.1:{port}/v1/messages HTTP/1.1\r\n"
+                f"Host: 127.0.0.1\r\n"
+                f"x-api-key: sk-test-123\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                f"\r\n".encode() + body
+            )
+            await handle_client(reader, client_writer, allow, log=lambda *a: None)
+
+    _run(go())
+    buf = bytes(client_writer.buf)
+    assert b"x-api-key: sk-test-123" in buf
+    assert b"Content-Type: application/json" in buf
+    assert buf.endswith(b'{"hello":"world"}')
+
+
+def test_requisicao_http_absoluta_repassa_corpo_chunked():
+    client_writer = _MemoryWriter()
+    chunked_body = b"5\r\nhello\r\n0\r\n\r\n"
+
+    async def go():
+        server, port = await _start_echo_server()
+        async with server:
+            allow = AllowList.from_pairs([("127.0.0.1", port)])
+            reader = _reader_with(
+                f"POST http://127.0.0.1:{port}/path HTTP/1.1\r\n"
+                f"Host: 127.0.0.1\r\n"
+                f"Transfer-Encoding: chunked\r\n"
+                f"\r\n".encode() + chunked_body
+            )
+            await handle_client(reader, client_writer, allow, log=lambda *a: None)
+
+    _run(go())
+    buf = bytes(client_writer.buf)
+    assert buf.endswith(chunked_body)
+
+
+def test_requisicao_http_absoluta_nao_repassa_headers_hop_by_hop():
+    client_writer = _MemoryWriter()
+
+    async def go():
+        server, port = await _start_echo_server()
+        async with server:
+            allow = AllowList.from_pairs([("127.0.0.1", port)])
+            reader = _reader_with(
+                f"GET http://127.0.0.1:{port}/path HTTP/1.1\r\n"
+                f"Host: evil.example.com\r\n"
+                f"Proxy-Authorization: Basic xxx\r\n"
+                f"Connection: keep-alive\r\n"
+                f"\r\n".encode()
+            )
+            await handle_client(reader, client_writer, allow, log=lambda *a: None)
+
+    _run(go())
+    buf = bytes(client_writer.buf)
+    assert b"Proxy-Authorization" not in buf
+    assert b"evil.example.com" not in buf
+    assert buf.count(b"Host:") == 1
+    assert buf.count(b"Connection:") == 1
+    assert b"Connection: close" in buf
+
+
 def test_requisicao_http_absoluta_fora_da_allow_list_e_recusada():
     client_writer = _MemoryWriter()
 

@@ -79,11 +79,57 @@ def _parse_absolute_target(target: str) -> tuple[str, int, str]:
     return parsed.hostname, parsed.port or 80, path
 
 
-async def _consume_headers(reader: asyncio.StreamReader) -> None:
+async def _read_headers(reader: asyncio.StreamReader) -> list[bytes]:
+    """Lê as linhas de cabeçalho até a linha em branco que termina a seção,
+    preservando cada uma como veio do cliente (sem a quebra final) — o
+    caminho HTTP absoluto repassa essas linhas pro destino (menos as
+    hop-by-hop que o próprio proxy controla); o caminho `CONNECT` só
+    precisa descartá-las, então ignora o retorno."""
+    headers: list[bytes] = []
     while True:
         line = await reader.readline()
         if line in (b"\r\n", b"\n", b""):
-            return
+            return headers
+        headers.append(line.rstrip(b"\r\n"))
+
+
+_HOP_BY_HOP_HEADERS = frozenset({b"host", b"connection", b"proxy-connection", b"proxy-authorization"})
+
+
+def _header_value(headers: list[bytes], name: bytes) -> bytes | None:
+    prefix = name.lower() + b":"
+    for raw in headers:
+        if raw.lower().startswith(prefix):
+            return raw[len(prefix):].strip()
+    return None
+
+
+async def _forward_request_body(client_reader: asyncio.StreamReader, up_writer: asyncio.StreamWriter,
+                                 headers: list[bytes]) -> None:
+    """Repassa o corpo da requisição HTTP absoluta pro upstream, pelo
+    tamanho que os próprios headers do cliente declaram (`Content-Length`
+    ou `Transfer-Encoding: chunked`) — sem isso o destino nunca recebe o
+    corpo (achado real documentado em design.md: todo `POST`/`PUT` chegava
+    vazio, quebrando qualquer cliente que dependa do corpo da requisição,
+    como o `tool_result` do `claude` CLI)."""
+    transfer_encoding = _header_value(headers, b"transfer-encoding")
+    if transfer_encoding is not None and transfer_encoding.lower() == b"chunked":
+        while True:
+            chunk_line = await client_reader.readline()
+            up_writer.write(chunk_line)
+            size = int(chunk_line.split(b";", 1)[0].strip(), 16)
+            if size == 0:
+                trailer = await client_reader.readline()
+                up_writer.write(trailer)
+                break
+            up_writer.write(await client_reader.readexactly(size + 2))  # + CRLF do fim do chunk
+        await up_writer.drain()
+        return
+
+    content_length = _header_value(headers, b"content-length")
+    if content_length is not None and int(content_length) > 0:
+        up_writer.write(await client_reader.readexactly(int(content_length)))
+        await up_writer.drain()
 
 
 async def _pump(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
@@ -142,7 +188,7 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
             client_writer.close()
             return
         method, target = _parse_request_line(line)
-        await _consume_headers(client_reader)
+        headers = await _read_headers(client_reader)
 
         if method == "CONNECT":
             host, port = _parse_connect_target(target)
@@ -169,8 +215,14 @@ async def handle_client(client_reader: asyncio.StreamReader, client_writer: asyn
             return
         up_writer.write(f"{method} {path} HTTP/1.1\r\n".encode())
         up_writer.write(f"Host: {host}\r\n".encode())
+        for raw in headers:
+            name = raw.split(b":", 1)[0].strip().lower()
+            if name in _HOP_BY_HOP_HEADERS:
+                continue
+            up_writer.write(raw + b"\r\n")
         up_writer.write(b"Connection: close\r\n\r\n")
         await up_writer.drain()
+        await _forward_request_body(client_reader, up_writer, headers)
         await _pump(up_reader, client_writer)
     except ProtocolError as exc:
         log("protocolo invalido:", exc)
