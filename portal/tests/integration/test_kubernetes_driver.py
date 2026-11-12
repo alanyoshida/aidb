@@ -295,6 +295,39 @@ def test_publish_app_roteia_pelo_ingress_externo(system):
     assert last_code in ("200", "403"), f"último código: {last_code!r}"
 
 
+def test_harness_alcancavel_pelo_service_interno(system):
+    """Requirement 'Portal alcança o harness de cada sistema pela rede interna do cluster'
+    (change `deploy-portal-in-cluster`) — o `Service` que `publish()` cria para `/apps/{slug}`
+    também expõe `harness_port`, resolvível pelo DNS do próprio `Service` de dentro do cluster.
+    Conecta via `kubectl exec` no container do agente (mesmo papel de cliente "de dentro do
+    cluster" que `test_sidecar_alcanca_agente_por_loopback` usa), mas pelo nome do Service em vez
+    do loopback do Pod — prova que a rota é por `Service`, não coincidência de rede do Pod."""
+    import subprocess
+
+    from appaiforge.agent_profiles import get_profile
+    from appaiforge.provisioning import provision_system
+    from appaiforge.edge import publish_app, system_container_name
+
+    provision_system(system)
+    pod_name = system_container_name(system.slug)
+    _wait_pod_running(pod_name)
+    publish_app(system)
+
+    harness_port = get_profile(system.agent_profile)["harness_port"]
+    result = subprocess.run(
+        [
+            "kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test",
+            "exec", pod_name, "-c", "agent", "--",
+            "python3", "-c",
+            f"import socket; s = socket.create_connection(('{pod_name}', {harness_port}), timeout=5); "
+            "s.close(); print('ok')",
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert "ok" in result.stdout
+
+
 def test_harness_e_sidecars_nao_alcancaveis_de_fora_do_cluster(system):
     """Requirement 'Harness e sidecars não alcançáveis de fora do cluster' — nenhum Service
     externo é criado pra essas portas, e o IP do Pod (rede do CNI) não é roteável a partir do

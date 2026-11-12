@@ -630,6 +630,15 @@ geração real de app via agente, checkpoint real, acesso real a `/apps/{slug}` 
 pela porta que o `kind` expõe no host). `test_driver_parity.py` prova a paridade observável
 exercitando os dois drivers só através da interface comum, nunca de SDK específico.
 
+**Lacuna real achada depois de arquivada, corrigida em change separada**: `_harness_url`
+(`agent_queue.py:712`) monta o endereço do harness pelo DNS da rede Docker — nunca funcionou de
+verdade sob o driver Kubernetes com o portal rodando fora do cluster (arquitetura desta etapa). O
+E2E da task 8.3 passava só por monkeypatch dessa função, nunca exercitando o caminho real; a
+lacuna só foi achada numa sessão de teste manual, depois desta etapa já arquivada. Corrigida pela
+change `deploy-portal-in-cluster`: o portal passa a rodar dentro do cluster (só quando o driver
+ativo é Kubernetes), alcançando o harness via uma porta nova no `Service` que o driver já cria
+por sistema — sem protocolo novo, sem exposição externa adicional.
+
 **Não entregue nesta etapa (corte de escopo, não lacuna esquecida)**: `iptables REDIRECT` via
 initContainer pro gate de rede (o texto original desta seção, abaixo) — o driver Kubernetes desta
 etapa mantém o Landlock de rede do agente como está hoje, sem reescrever a interceptação do

@@ -1,0 +1,62 @@
+# Postgres do próprio portal dentro do cluster (task 4.1, change `deploy-portal-in-cluster`) —
+# StatefulSet + PVC pra persistência (decisão do usuário, D4 do design.md), Service headless
+# (`ClusterIP: None`) pra identidade de DNS estável do único Pod (replicas: 1, sem necessidade de
+# balanceamento — Non-Goals do design.md). Só usado quando o driver ativo é Kubernetes; o
+# Postgres do `docker-compose` de produção (driver Docker) não tem nenhuma relação com isto.
+apiVersion: v1
+kind: Service
+metadata:
+  name: appaiforge-portal-postgres
+  namespace: appaiforge
+spec:
+  clusterIP: None
+  selector:
+    app: appaiforge-portal-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: appaiforge-portal-postgres
+  namespace: appaiforge
+spec:
+  serviceName: appaiforge-portal-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: appaiforge-portal-postgres
+  template:
+    metadata:
+      labels:
+        app: appaiforge-portal-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: appaiforge
+            - name: POSTGRES_PASSWORD
+              value: appaiforge
+            - name: POSTGRES_DB
+              value: appaiforge
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "appaiforge"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

@@ -29,19 +29,36 @@ log = logging.getLogger(__name__)
 AGENT_UID = 1000
 AGENT_GID = 1000
 
+_auth_mode_logged = False
 
-def _api() -> k8s.CoreV1Api:
-    """Carrega o kubeconfig do ambiente (cluster `kind` local nesta etapa — ver README do
-    change) uma vez por chamada, mesmo padrão de `_docker()` no driver Docker: nada de cliente
-    cacheado em variável de módulo, pra não guardar configuração obsoleta entre testes.
 
-    Sempre com `context` explícito (nunca o `current-context` implícito do kubeconfig) — achado
-    real durante a validação: o `current-context` deste host mudou entre dois passos manuais
-    desta mesma etapa sem nenhuma ação deste driver, o que faria qualquer chamada sem contexto
-    explícito falar com o cluster errado silenciosamente."""
+def _load_kube_config() -> None:
+    """Autentica com a API do cluster uma vez por chamada (mesmo padrão de `_docker()` no driver
+    Docker: nada de cliente cacheado em variável de módulo, pra não guardar configuração obsoleta
+    entre testes). Tenta a identidade do próprio Pod primeiro (`ServiceAccount`, quando o portal
+    roda dentro do cluster — change `deploy-portal-in-cluster`); cai pro kubeconfig com `context`
+    explícito só se isso falhar, preservando sem nenhuma mudança o fluxo de teste manual de fora
+    do cluster (host, `k8s_kubeconfig_context`) já validado na etapa anterior.
+
+    Nunca o `current-context` implícito do kubeconfig — achado real durante a etapa anterior: o
+    `current-context` deste host mudou entre dois passos manuais sem nenhuma ação deste driver, o
+    que faria qualquer chamada sem contexto explícito falar com o cluster errado silenciosamente."""
+    global _auth_mode_logged
     from .. import provisioning as _p
 
-    k8s_config.load_kube_config(context=_p.get_settings().k8s_kubeconfig_context)
+    try:
+        k8s_config.load_incluster_config()
+        mode = "in-cluster (ServiceAccount do Pod)"
+    except k8s_config.ConfigException:
+        k8s_config.load_kube_config(context=_p.get_settings().k8s_kubeconfig_context)
+        mode = "kubeconfig (contexto explícito)"
+    if not _auth_mode_logged:
+        log.info("driver Kubernetes autenticado via %s", mode)
+        _auth_mode_logged = True
+
+
+def _api() -> k8s.CoreV1Api:
+    _load_kube_config()
     return k8s.CoreV1Api()
 
 
@@ -161,20 +178,32 @@ class KubernetesProvisioningDriver:
         """Garante Service + Middleware (stripPrefix) + IngressRoute pra `/apps/{slug}` —
         equivalente ao `apps-<slug>.yml` que o driver Docker escreve pro file provider do
         Traefik, só que como objetos nativos do cluster (Traefik roda dentro dele, D4 do
-        design), lidos via CRD (`providers.kubernetesCRD`) em vez de arquivo compartilhado."""
+        design), lidos via CRD (`providers.kubernetesCRD`) em vez de arquivo compartilhado.
+
+        O `Service` também expõe `harness_port` (change `deploy-portal-in-cluster`) — o portal,
+        rodando dentro do cluster, alcança o harness do agente pelo DNS deste mesmo `Service`
+        (`name`, igual ao hostname que `_harness_url` já monta). Tipo `ClusterIP` (padrão, sem
+        `type=`) não é roteável de fora do cluster — só a porta da app é publicada no
+        `IngressRoute` abaixo, então a requirement "harness inacessível de fora do cluster"
+        continua valendo sem nenhuma mudança adicional."""
         from .. import provisioning as _p
+        from ..agent_profiles import get_profile
 
         settings = _p.get_settings()
         namespace = settings.k8s_namespace
         name = _p.system_container_name(system.slug)
         slug = system.slug
+        harness_port = get_profile(system.agent_profile)["harness_port"]
         api = _api()
 
         service = k8s.V1Service(
             metadata=k8s.V1ObjectMeta(name=name),
             spec=k8s.V1ServiceSpec(
                 selector={"appaiforge.slug": slug},
-                ports=[k8s.V1ServicePort(port=settings.app_port, target_port=settings.app_port)],
+                ports=[
+                    k8s.V1ServicePort(name="app", port=settings.app_port, target_port=settings.app_port),
+                    k8s.V1ServicePort(name="harness", port=harness_port, target_port=harness_port),
+                ],
             ),
         )
         try:
@@ -268,9 +297,7 @@ class KubernetesProvisioningDriver:
 
 
 def _custom_api() -> k8s.CustomObjectsApi:
-    from .. import provisioning as _p
-
-    k8s_config.load_kube_config(context=_p.get_settings().k8s_kubeconfig_context)
+    _load_kube_config()
     return k8s.CustomObjectsApi()
 
 

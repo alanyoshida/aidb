@@ -8,7 +8,15 @@ o que estiver dentro do cluster (capability `container-driver-kubernetes`).
 
 Diferença real em relação à etapa 7: o processo de teste roda no HOST, fora do cluster, e a
 porta do harness não é alcançável de fora por design (task 5.2 desta mesma change) — por isso
-usa `kubectl port-forward` em vez de conectar direto no IP do Pod."""
+usa `kubectl port-forward` em vez de conectar direto no IP do Pod.
+
+`test_sistema_k8s_ponta_a_ponta_com_portal_dentro_do_cluster` (change `deploy-portal-in-cluster`,
+task 5.1) cobre o caminho real sem esse port-forward: exercita o MESMO roteiro, mas com o código
+executando de dentro do Pod real do portal (`appaiforge-portal`, namespace `appaiforge`,
+manifesto `openspec/changes/deploy-portal-in-cluster/portal-deployment.yaml`) — `_harness_url`
+sem nenhum monkeypatch, resolvendo pelo DNS do `Service` que `publish()` já cria. Pula se esse
+Deployment real não estiver aplicado (é infraestrutura de sessão de validação, não algo que a
+suíte sobe por si)."""
 
 import os
 import subprocess
@@ -283,3 +291,212 @@ def test_sistema_k8s_ponta_a_ponta_com_checkpoint(k8s_e2e_system, monkeypatch):
     finally:
         port_forward.terminate()
         port_forward.wait(timeout=10)
+
+
+PORTAL_NAMESPACE = "appaiforge"
+
+_PORTAL_REAL_SCRIPT = '''
+import os
+import time
+
+os.environ["APPAIFORGE_INFERENCE_BROKER_ENABLED"] = "true"
+os.environ["APPAIFORGE_INFERENCE_BROKER_URL"] = os.environ["FAKE_ANTHROPIC_URL"]
+
+from appaiforge.config import get_settings
+get_settings.cache_clear()
+
+from appaiforge import auth
+from appaiforge.agent_queue import get_queue
+from appaiforge.checkpoints import list_checkpoints
+from appaiforge.db import session_scope
+from appaiforge.edge import publish_app, system_container_name
+from appaiforge.models import AgentRun, RunStatus, UserType
+from appaiforge.provisioning import provision_system
+from appaiforge.services import catalog
+from appaiforge.services.systems import create_system
+from kubernetes import client as k8s
+
+catalog.ensure_presets()
+editor = auth.create_user(f"e2e-incluster-{os.urandom(3).hex()}@t.local", "pw", UserType.editor.value)
+system = create_system(
+    editor, "E2E portal em cluster", f"e2e-incluster-{os.urandom(3).hex()}",
+    agent_profile="claude-code", provider="anthropic",
+)
+print("SLUG:" + system.slug)
+
+provision_system(system)
+publish_app(system)
+pod_name = system_container_name(system.slug)
+
+api = k8s.CoreV1Api()
+for _ in range(60):
+    pod = api.read_namespaced_pod(pod_name, os.environ["APPAIFORGE_K8S_NAMESPACE"])
+    if pod.status.phase == "Running" and pod.status.container_statuses and all(
+        cs.ready for cs in pod.status.container_statuses
+    ):
+        break
+    time.sleep(1)
+else:
+    raise SystemExit("Pod do sistema nao ficou Running/Ready a tempo")
+
+# SEM monkeypatch de _harness_url -- get_queue() usa o `_harness_url` real
+# (agent_queue.py:712), que resolve pelo DNS do Service criado em publish().
+queue = get_queue()
+run = queue.enqueue(system.id, editor.id, "registre que terminamos o teste", chat_session_id=None)
+
+deadline = time.time() + 90
+status = None
+while time.time() < deadline:
+    with session_scope() as s:
+        row = s.get(AgentRun, run.id)
+        if row and row.status not in (RunStatus.queued, RunStatus.running, RunStatus.awaiting_approval):
+            status = row.status
+            break
+    time.sleep(0.5)
+assert status == RunStatus.succeeded, f"run nao terminou com sucesso: {status}"
+
+checkpoints = []
+for _ in range(20):
+    checkpoints = list_checkpoints(system)
+    if checkpoints:
+        break
+    time.sleep(1)
+assert len(checkpoints) == 1, f"esperava 1 checkpoint, achei {len(checkpoints)}"
+assert checkpoints[0]["git_sha"]
+
+# Nao apaga a linha do sistema/usuario do Postgres real: `delete_system()` em produção
+# (provisioning.py) tambem nunca apaga -- so para/remove o container/workspace, retendo
+# systems/checkpoints/runs para auditoria por design. O teste segue a mesma convencao; só os
+# objetos do cluster (Pod/PVC/ConfigMap/Service/IngressRoute) sao limpos, abaixo.
+print("OK")
+'''
+
+
+@pytest.fixture()
+def _portal_real_disponivel():
+    """`appaiforge-portal` (Deployment real dentro do cluster, change `deploy-portal-in-cluster`,
+    tasks 3.2/4.1-4.2) é infraestrutura de sessão de validação, aplicada manualmente seguindo o
+    README do change — esta suíte nunca sobe isso por si (ao contrário do cluster `kind` em si,
+    que `_KIND_AVAILABLE` já cobre)."""
+    try:
+        pod = _k8s_api().list_namespaced_pod(PORTAL_NAMESPACE, label_selector="app=appaiforge-portal").items
+    except Exception:
+        pod = []
+    if not pod or pod[0].status.phase != "Running":
+        pytest.skip("Deployment real appaiforge-portal não está aplicado neste cluster (ver README do change)")
+    return pod[0].metadata.name
+
+
+def test_sistema_k8s_ponta_a_ponta_com_portal_dentro_do_cluster(_portal_real_disponivel):
+    """Requirement 'Portal alcança o harness de cada sistema pela rede interna do cluster' +
+    'Chat com o agente funciona igual nos dois drivers' (change `deploy-portal-in-cluster`) — o
+    MESMO roteiro de `test_sistema_k8s_ponta_a_ponta_com_checkpoint`, mas executado de dentro do
+    Pod real do portal, sem `kubectl port-forward` e sem nenhum monkeypatch de `_harness_url`."""
+    import tempfile
+
+    from kubernetes import client as k8s
+    from kubernetes.client.rest import ApiException
+
+    portal_pod = _portal_real_disponivel
+    api = _k8s_api()
+    stub_name = f"fake-anthropic-incluster-{os.urandom(4).hex()}"
+
+    with open(os.path.join(FIXTURES_DIR, "fake_anthropic.js")) as f:
+        stub_script = f.read()
+
+    api.create_namespaced_config_map(
+        PORTAL_NAMESPACE, k8s.V1ConfigMap(metadata=k8s.V1ObjectMeta(name=stub_name), data={"fake_anthropic.js": stub_script})
+    )
+    api.create_namespaced_pod(
+        PORTAL_NAMESPACE,
+        k8s.V1Pod(
+            metadata=k8s.V1ObjectMeta(name=stub_name, labels={"app": stub_name}),
+            spec=k8s.V1PodSpec(
+                restart_policy="Never",
+                containers=[
+                    k8s.V1Container(
+                        name="stub", image="node:22-slim",
+                        command=["node", "/fixtures/fake_anthropic.js", str(STUB_PORT)],
+                        env=[k8s.V1EnvVar(name="SPIKE_BASH_COMMAND", value="echo e2e-ok > e2e_marker.txt")],
+                        volume_mounts=[k8s.V1VolumeMount(name="fixtures", mount_path="/fixtures")],
+                    )
+                ],
+                volumes=[k8s.V1Volume(name="fixtures", config_map=k8s.V1ConfigMapVolumeSource(name=stub_name))],
+            ),
+        ),
+    )
+    api.create_namespaced_service(
+        PORTAL_NAMESPACE,
+        k8s.V1Service(
+            metadata=k8s.V1ObjectMeta(name=stub_name),
+            spec=k8s.V1ServiceSpec(selector={"app": stub_name}, ports=[k8s.V1ServicePort(port=STUB_PORT, target_port=STUB_PORT)]),
+        ),
+    )
+
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        p = api.read_namespaced_pod(stub_name, PORTAL_NAMESPACE)
+        if p.status.phase == "Running" and p.status.container_statuses and p.status.container_statuses[0].ready:
+            break
+        time.sleep(1)
+    else:
+        pytest.fail("stub fake_anthropic não ficou Running a tempo")
+
+    slug = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as f:
+            f.write(_PORTAL_REAL_SCRIPT)
+            script_path = f.name
+        try:
+            subprocess.run(
+                ["kubectl", "--context", "kind-appaiforge-dev", "-n", PORTAL_NAMESPACE,
+                 "cp", script_path, f"{portal_pod}:/tmp/_e2e_incluster.py"],
+                capture_output=True, text=True, timeout=30, check=True,
+            )
+        finally:
+            os.unlink(script_path)
+
+        result = subprocess.run(
+            ["kubectl", "--context", "kind-appaiforge-dev", "-n", PORTAL_NAMESPACE, "exec", portal_pod, "--",
+             "env", f"FAKE_ANTHROPIC_URL=http://{stub_name}:{STUB_PORT}",
+             "python", "/tmp/_e2e_incluster.py"],
+            capture_output=True, text=True, timeout=150,
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("SLUG:"):
+                slug = line[len("SLUG:"):]
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        assert "OK" in result.stdout
+    finally:
+        for delete, resource in (
+            (lambda n: api.delete_namespaced_pod(n, PORTAL_NAMESPACE, grace_period_seconds=0), stub_name),
+            (lambda n: api.delete_namespaced_service(n, PORTAL_NAMESPACE), stub_name),
+            (lambda n: api.delete_namespaced_config_map(n, PORTAL_NAMESPACE), stub_name),
+        ):
+            try:
+                delete(resource)
+            except ApiException as exc:
+                if exc.status != 404:
+                    raise
+        if slug:
+            sys_name = f"appaiforge-sys-{slug}"
+            from appaiforge.drivers.kubernetes_driver import _config_map_name, _workspace_pvc_name
+
+            for delete, resource in (
+                (lambda n: api.delete_namespaced_pod(n, PORTAL_NAMESPACE, grace_period_seconds=0), sys_name),
+                (lambda n: api.delete_namespaced_config_map(n, PORTAL_NAMESPACE), _config_map_name(slug)),
+                (lambda n: api.delete_namespaced_persistent_volume_claim(n, PORTAL_NAMESPACE), _workspace_pvc_name(slug)),
+                (lambda n: api.delete_namespaced_service(n, PORTAL_NAMESPACE), sys_name),
+            ):
+                try:
+                    delete(resource)
+                except ApiException as exc:
+                    if exc.status != 404:
+                        raise
+            custom = k8s.CustomObjectsApi()
+            for plural, obj_name in (("ingressroutes", sys_name), ("middlewares", f"{sys_name}-strip")):
+                try:
+                    custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", PORTAL_NAMESPACE, plural, obj_name)
+                except ApiException as exc:
+                    if exc.status != 404:
+                        raise
