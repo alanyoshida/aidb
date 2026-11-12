@@ -23,10 +23,15 @@ class GitError(Exception):
 
 
 def workspace_dir(system: System) -> str:
+    """Caminho do workspace visível ao PRÓPRIO processo do portal — só existe de verdade sob o
+    driver Docker (bind mount compartilhado). Não usar para montar comandos sob o driver
+    Kubernetes; `_git` já trata isso internamente (change `add-kubernetes-driver`, task 8.3)."""
     return os.path.join(get_settings().workspaces_dir, system.slug)
 
 
 def _git(system: System, *args: str) -> str:
+    if get_settings().provisioning_driver == "kubernetes":
+        return _git_via_exec(system, args)
     cwd = workspace_dir(system)
     result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
@@ -34,8 +39,49 @@ def _git(system: System, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _git_via_exec(system: System, args: tuple[str, ...]) -> str:
+    """Roda `git` DENTRO do container do agente via exec da API do Kubernetes — achado real
+    (task 8.3): o PVC do workspace só é visível de dentro do cluster, nunca do processo do
+    portal, ao contrário do bind mount que o driver Docker compartilha com ele. O uid de quem
+    exec-uta é o mesmo do container (`runAsUser` do Pod), que já é o dono do volume via
+    `fsGroup` — sem o problema de "dubious ownership" que o driver Docker tem."""
+    from kubernetes.stream import stream
+
+    from .drivers.kubernetes_driver import _api
+    from .edge import system_container_name
+
+    settings = get_settings()
+    pod_name = system_container_name(system.slug)
+    resp = stream(
+        _api().connect_get_namespaced_pod_exec,
+        pod_name,
+        settings.k8s_namespace,
+        container="agent",
+        command=["git", "-C", "/workspace", *args],
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+    resp.run_forever(timeout=60)
+    stdout = (resp.read_stdout() or "").strip()
+    stderr = (resp.read_stderr() or "").strip()
+    returncode = resp.returncode
+    if returncode not in (0, None):
+        raise GitError(f"git {' '.join(args[:2])}: {stderr}")
+    return stdout
+
+
 def ensure_repo(system: System) -> None:
     """git init idempotente + user do commit configurado."""
+    if get_settings().provisioning_driver == "kubernetes":
+        _git(system, "config", "--global", "--replace-all", "safe.directory", "*")
+        _git(system, "init", "-q", "-b", "main")
+        _git(system, "config", "user.email", "appaiforge@portal")
+        _git(system, "config", "user.name", "AIDB")
+        return
+
     ensure = workspace_dir(system)
     os.makedirs(ensure, exist_ok=True)
     # git recusa operar num diretório cujo dono não é o uid que roda o comando

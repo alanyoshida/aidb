@@ -12,6 +12,7 @@ from afsupervisor import sandbox
 FAKE_PROFILE = {
     "readable_paths": ["/usr", "/opt"],
     "writable_paths": ["/workspace"],
+    "writable_files": ["/home/agent/.gitconfig"],
 }
 
 
@@ -44,9 +45,10 @@ def test_apply_sandbox_chama_seccomp_e_landlock_com_os_caminhos_do_perfil(monkey
 
         return FakeFilter()
 
-    def fake_apply_landlock(readable_paths, writable_paths):
+    def fake_apply_landlock(readable_paths, writable_paths, writable_files=None):
         chamadas["readable_paths"] = readable_paths
         chamadas["writable_paths"] = writable_paths
+        chamadas["writable_files"] = writable_files
 
     def fake_apply_landlock_net(connect_tcp_ports, bind_tcp_ports):
         chamadas["connect_tcp_ports"] = connect_tcp_ports
@@ -66,6 +68,7 @@ def test_apply_sandbox_chama_seccomp_e_landlock_com_os_caminhos_do_perfil(monkey
     assert chamadas["deny_syscalls"] == ["ptrace"]
     assert chamadas["readable_paths"] == FAKE_PROFILE["readable_paths"]
     assert chamadas["writable_paths"] == FAKE_PROFILE["writable_paths"]
+    assert chamadas["writable_files"] == FAKE_PROFILE["writable_files"]
     assert chamadas["connect_tcp_ports"] == [15400]
     assert chamadas["bind_tcp_ports"] == [4096]
 
@@ -182,6 +185,48 @@ def test_apply_landlock_real_confina_escrita_a_caminhos_declarados(tmp_path):
     assert resultado["escreveu_fora"] is False
     assert resultado["escreveu_no_readable"] is False
     assert resultado["leu_preexistente"] is True
+
+
+@pytest.mark.sandbox
+def test_apply_landlock_writable_file_ausente_e_criado_como_arquivo(tmp_path):
+    """Achado real (change `add-kubernetes-driver`, task 8.3): um `writable_path` ausente que
+    deveria ser ARQUIVO (ex.: `~/.gitconfig` do perfil claude-code) virava diretório vazio por
+    `os.makedirs` — quebrando qualquer escrita real nele depois. `writable_files` é o caminho
+    correto pra esse caso: cria um arquivo vazio, não diretório, antes de declarar a regra."""
+    if sandbox.landlock_abi() <= 0:
+        pytest.skip("host sem suporte a Landlock")
+
+    arquivo_ausente = tmp_path / "config" / ".gitconfig"  # pai também não existe ainda
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        resultado = {}
+        try:
+            sandbox.apply_landlock(readable_paths=[], writable_paths=[], writable_files=[str(arquivo_ausente)])
+            resultado["e_arquivo"] = arquivo_ausente.is_file()
+            arquivo_ausente.write_text("[user]\n\tname = teste\n")
+            resultado["escreveu"] = arquivo_ausente.read_text() == "[user]\n\tname = teste\n"
+        except Exception as exc:
+            resultado["erro"] = str(exc)
+        os.write(write_fd, repr(resultado).encode())
+        os._exit(0)
+    else:
+        os.close(write_fd)
+        saida = b""
+        while True:
+            chunk = os.read(read_fd, 4096)
+            if not chunk:
+                break
+            saida += chunk
+        os.close(read_fd)
+        os.waitpid(pid, 0)
+        resultado = eval(saida.decode())
+
+    assert resultado.get("erro") is None, resultado
+    assert resultado["e_arquivo"] is True
+    assert resultado["escreveu"] is True
 
 
 @pytest.mark.sandbox

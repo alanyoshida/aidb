@@ -1,12 +1,16 @@
 """Roteador de apps no edge (ADR 0002): única dona das rotas do Traefik.
 
-O portal escreve a configuração dinâmica (file provider) no diretório
-compartilhado com o Traefik:
-- portal.yml — rota raiz -> serviço do portal (escrito no startup);
-- apps-<slug>.yml — rota /apps/<slug> -> container do sistema (publicada ao
-  provisionar, removida ao arquivar/excluir).
+A rota raiz do próprio portal (portal.yml) é sempre file-provider, escrita no startup — o portal
+nunca é um Pod por sistema, não depende do driver de provisionamento ativo.
 
-Trocar path por subdomínio no futuro = mudar só este módulo.
+A rota por sistema (`/apps/{slug}`) é que muda por driver (change `add-kubernetes-driver`,
+capability `container-driver-kubernetes`): `publish_app`/`unpublish_app` delegam ao driver
+ativo. No driver Docker, isso continua sendo o file provider (`apps-<slug>.yml`, mesmo mecanismo
+de sempre). No driver Kubernetes, o Traefik roda DENTRO do cluster como Ingress controller — o
+driver cria/remove um Service + Ingress por sistema, não um arquivo.
+
+Trocar path por subdomínio no futuro = mudar só este módulo (e o `publish`/`unpublish` de cada
+driver).
 """
 
 import logging
@@ -66,7 +70,23 @@ def write_portal_router() -> None:
 
 
 def publish_app(system: System) -> None:
-    """Publica /apps/<slug> -> container do sistema (WebSocket passa direto)."""
+    """Publica /apps/<slug> -> unidade de execução do sistema. Delega ao driver ativo (change
+    `add-kubernetes-driver`) — chamado sempre depois de `provision_system` ter sucesso."""
+    from .drivers import get_driver
+
+    get_driver().publish(system)
+
+
+def unpublish_app(slug: str) -> None:
+    """Remove a rota de /apps/<slug>. Delega ao driver ativo."""
+    from .drivers import get_driver
+
+    get_driver().unpublish(slug)
+
+
+def publish_app_docker(system: System) -> None:
+    """Implementação Docker de `publish_app` (WebSocket passa direto pelo file provider) —
+    chamada por `DockerProvisioningDriver.publish`, nunca direto."""
     slug = system.slug
     _write(
         f"apps-{slug}.yml",
@@ -94,7 +114,9 @@ def publish_app(system: System) -> None:
     )
 
 
-def unpublish_app(slug: str) -> None:
+def unpublish_app_docker(slug: str) -> None:
+    """Implementação Docker de `unpublish_app` — chamada por `DockerProvisioningDriver.unpublish`,
+    nunca direto."""
     path = os.path.join(get_settings().dynamic_config_dir, f"apps-{slug}.yml")
     if os.path.exists(path):
         os.remove(path)
