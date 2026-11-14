@@ -1,15 +1,18 @@
-"""Provisionamento via Docker API (ADR 0012/0013; specs container-lifecycle, db-connections).
+"""Provisionamento de sistemas, agnóstico de driver (ADR 0012/0013; specs container-lifecycle,
+db-connections; change `add-kubernetes-driver` para a extração do driver).
 
-Um container por sistema: bind do workspace, rede interna, env com credenciais,
-limites de recursos, restart policy e labels para reconciliação. Também gera o
-opencode.json com provedor/modelo e um MCP server por conexão (task 5.4).
+Uma unidade de execução por sistema (container Docker ou Pod Kubernetes, a depender do driver
+ativo — `appaiforge.drivers.get_driver()`): workspace e config persistentes, env com credenciais,
+limites de recursos, política de reinício e reconciliação. Este módulo cuida só da parte
+agnóstica (env, config, manifesto de conexões); a criação/remoção/reconciliação da unidade de
+execução em si fica no driver. Também gera o opencode.json com provedor/modelo e um MCP server
+por conexão (task 5.4).
 """
 
 import json
 import logging
 import os
 import re
-import time
 
 import docker
 from afsupervisor.sandbox import landlock_abi
@@ -25,12 +28,6 @@ from .services.connections import connection_string, get_connection_secret
 
 log = logging.getLogger(__name__)
 _telemetry_log = telemetry.get_logger()
-
-# uid/gid do usuário não-root da imagem base (ADR 0018) — deve casar com o
-# `useradd --uid 1000 --gid agent` de base-image/Dockerfile. Só se aplica a
-# sistemas em ExecutionMode.reduced; o modo legacy sobe como root explícito.
-AGENT_UID = 1000
-AGENT_GID = 1000
 
 # Faixa de portas de loopback do sidecar de gate de banco (etapa 4 do
 # confinamento, change db-proxy-gate-data-plane) — cada sistema tem seu
@@ -86,12 +83,11 @@ def _docker() -> docker.DockerClient:
 
 
 def ensure_network() -> None:
-    client = _docker()
-    name = get_settings().docker_network
-    try:
-        client.networks.get(name)
-    except docker.errors.NotFound:
-        client.networks.create(name, driver="bridge")
+    """Delega ao driver ativo (change `add-kubernetes-driver`, task 1.2) — pro driver Docker,
+    garante a rede bridge compartilhada; outro driver garante o que precisar (ex.: namespace)."""
+    from .drivers import get_driver
+
+    get_driver().ensure_ready()
 
 
 def _provider_env(provider: str) -> dict[str, str]:
@@ -436,6 +432,7 @@ def write_agent_profile(system: System, config_dir: str, manifest: list[dict]) -
         "harness_port": profile["harness_port"],
         "readable_paths": profile["readable_paths"],
         "writable_paths": profile["writable_paths"],
+        "writable_files": profile.get("writable_files", []),
         "connect_tcp_ports": connect_tcp_ports,
         "bind_tcp_ports": [profile["harness_port"]],
     }
@@ -453,17 +450,21 @@ def refresh_connections(system: System) -> None:
 
 
 def provision_system(system: System) -> str:
-    """Cria o container do sistema; devolve o container id.
+    """Cria a unidade de execução do sistema (container ou Pod, a depender do driver ativo —
+    change `add-kubernetes-driver`); devolve o identificador opaco a persistir.
 
-    Workspace é bind-mounted do host (host_workspaces_dir/<slug>); o portal
-    cria o diretório dentro do seu próprio mount workspaces_dir.
+    Config e manifesto de conexões são agnósticos de driver: o portal escreve os arquivos no seu
+    próprio diretório de config (settings.configs_dir/<slug>); como esse diretório chega até a
+    unidade de execução (bind mount, PVC etc.) é responsabilidade do driver.
     """
     from .agent_profiles import UnknownProfile, get_profile
+    from .drivers import get_driver
 
     settings = get_settings()
     profile = get_profile(system.agent_profile)
     _check_capacity(system.id)
     ensure_network()
+    driver = get_driver()
 
     # invalida sessões opencode abertas antes de recriar o container
     with session_scope() as s:
@@ -473,27 +474,6 @@ def provision_system(system: System) -> str:
             .values(context_reset=True, harness_session_id=None)
         )
 
-    client = _docker()
-    container_name = system_container_name(system.slug)
-    # os sidecars dependem do netns do sistema (`network_mode: container:<id>`,
-    # D1) — remover primeiro evita um sidecar órfão apontando pra um
-    # container que já não existe mais (achado ao recriar via reconciliação)
-    _remove_container_if_exists(client, dbgate_sidecar_name(system.slug))
-    _remove_container_if_exists(client, httpsproxy_sidecar_name(system.slug))
-    # container antigo com mesma identidade é substituído
-    _remove_container_if_exists(client, container_name)
-
-    host_dir = os.path.join(settings.host_workspaces_dir, system.slug)
-    portal_dir = os.path.join(settings.workspaces_dir, system.slug)
-    os.makedirs(portal_dir, exist_ok=True)
-    if system.execution_mode in (ExecutionMode.reduced, ExecutionMode.sandboxed):
-        # dono do usuário do agente (ADR 0018): sem isto, o workspace criado
-        # pelo portal (root) não seria gravável pelo container não-root, que
-        # tanto reduced quanto sandboxed usam. Sistemas legacy não passam por
-        # aqui — workspace existente intacto.
-        os.chown(portal_dir, AGENT_UID, AGENT_GID)
-
-    host_config_slug = os.path.join(settings.host_config_dir, system.slug)
     portal_config_dir = os.path.join(settings.configs_dir, system.slug)
     manifest = db_connections_manifest(system.id)
     try:
@@ -533,144 +513,17 @@ def provision_system(system: System) -> str:
         **_connection_env(system.id, manifest),
     }
 
-    limits = {
-        "nano_cpus": int(settings.container_cpus * 1e9),
-        "mem_limit": f"{settings.container_mem_mb}m",
-        "pids_limit": settings.container_pids_limit,
-    }
-    storage_opt = {"size": f"{settings.container_disk_gb}g"}
-
-    kwargs = {
-        # Imagem do agente vem do perfil (etapa 7 do roadmap já previa "uma
-        # imagem por agente"); settings.base_image continua sendo a imagem
-        # dos sidecars da própria plataforma (dbgate/httpsproxy), que não
-        # são o agente e não variam por perfil.
-        "image": profile["image"],
-        "name": container_name,
-        "hostname": container_name,
-        "network": settings.docker_network,
-        "environment": env,
-        "volumes": {
-            host_dir: {"bind": "/workspace", "mode": "rw"},
-            host_config_slug: {"bind": profile["config_mount_path"], "mode": "ro"},
-        },
-        "labels": {
-            "appaiforge.system_id": system.id,
-            "appaiforge.slug": system.slug,
-            "appaiforge.managed": "true",
-        },
-        "restart_policy": {"Name": "unless-stopped"},
-        **limits,
-        **_execution_identity(system.execution_mode),
-    }
-    try:
-        container = client.containers.run(detach=True, **kwargs, storage_opt=storage_opt)
-    except docker.errors.APIError as exc:
-        if "storage-opt" in str(exc) or "size" in str(exc):
-            # driver de arquivos do host não suporta quota de disco — segue sem ela
-            log.warning("limite de disco não suportado pelo storage driver; container sem quota: %s", exc)
-            container = client.containers.run(detach=True, **kwargs)
-            set_status_message(system.id, "ativo sem quota de disco (driver do host não suporta storage-opt)")
-        else:
-            raise
-
-    _provision_dbgate_sidecar(system, container.id, manifest)
-    _provision_httpsproxy_sidecar(system, container.id)
-    set_container(system.id, container.id)
-    return container.id
+    container_id = driver.provision(system, env=env, manifest=manifest)
+    set_container(system.id, container_id)
+    return container_id
 
 
 def dbgate_sidecar_name(slug: str) -> str:
     return f"{system_container_name(slug)}-dbgate"
 
 
-def _remove_container_if_exists(client: docker.DockerClient, name: str) -> None:
-    """Remoção retry-ável (corridas entre provisionamento, refresh de
-    conexões e reconciliação — mesmo padrão do container do sistema)."""
-    for _ in range(5):
-        try:
-            client.containers.get(name).remove(force=True)
-            break
-        except docker.errors.NotFound:
-            break
-        except docker.errors.APIError:
-            time.sleep(1)
-
-
-def _provision_dbgate_sidecar(system: System, system_container_id: str, manifest: list[dict]) -> None:
-    """Sidecar de gate de banco (D1): container próprio, `network_mode:
-    container:<id>` do sistema — enxerga o mesmo loopback, mas tem ciclo de
-    vida independente e é o único a guardar as credenciais reais das
-    conexões (task 5.1/5.2). Sem conexão Postgres/MySQL, não sobe nenhum
-    (nada a segurar; BigQuery não passa por aqui)."""
-    client = _docker()
-    name = dbgate_sidecar_name(system.slug)
-    _remove_container_if_exists(client, name)
-    if not manifest:
-        return
-
-    settings = get_settings()
-    env = {
-        "SYSTEM_ID": system.id,
-        "APPAIFORGE_DB_CONNECTIONS": json.dumps(manifest),
-        "APPAIFORGE_PORTAL_INTERNAL_URL": settings.portal_internal_url,
-        "APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN": settings.db_gate_proxy_service_token,
-        "APPAIFORGE_DB_GATE_MODE": settings.db_gate_mode,
-    }
-    client.containers.run(
-        detach=True,
-        image=settings.base_image,
-        name=name,
-        command=["python", "/opt/dbproxy/sidecar.py"],
-        network_mode=f"container:{system_container_id}",
-        environment=env,
-        labels={
-            "appaiforge.system_id": system.id,
-            "appaiforge.slug": system.slug,
-            "appaiforge.managed": "true",
-            "appaiforge.role": "dbgate-sidecar",
-        },
-        restart_policy={"Name": "unless-stopped"},
-    )
-
-
 def httpsproxy_sidecar_name(slug: str) -> str:
     return f"{system_container_name(slug)}-httpsproxy"
-
-
-def _provision_httpsproxy_sidecar(system: System, system_container_id: str) -> None:
-    """Proxy HTTP(S) de saída (change `agent-https-forward-proxy`, D1):
-    container próprio, `network_mode: container:<id>` do sistema — mesmo
-    padrão do sidecar de gate de banco. Ao contrário dele, sobe sempre
-    (toda saída HTTP(S) do agente passa a depender deste proxy, não só
-    sistemas com conexão de banco cadastrada)."""
-    client = _docker()
-    name = httpsproxy_sidecar_name(system.slug)
-    _remove_container_if_exists(client, name)
-
-    from .services.network_policy import final_https_allowlist
-
-    settings = get_settings()
-    allow = final_https_allowlist(system)
-    env = {
-        "LISTEN_PORT": str(HTTPS_PROXY_PORT),
-        "ALLOWED_HOSTS": json.dumps(allow),
-    }
-    client.containers.run(
-        detach=True,
-        image=settings.base_image,
-        name=name,
-        command=["python", "/opt/httpproxy/sidecar.py"],
-        network_mode=f"container:{system_container_id}",
-        environment=env,
-        labels={
-            "appaiforge.system_id": system.id,
-            "appaiforge.slug": system.slug,
-            "appaiforge.managed": "true",
-            "appaiforge.role": "httpsproxy-sidecar",
-        },
-        restart_policy={"Name": "unless-stopped"},
-    )
 
 
 def refresh_https_allowlist(system: System) -> None:
@@ -679,31 +532,14 @@ def refresh_https_allowlist(system: System) -> None:
     — bem mais leve que `refresh_connections` (que recria o container do
     sistema inteiro, interrompendo sessões): internet habilitada, modo
     restrito e a lista de domínios não mudam nenhuma env do container do
-    agente, só a allow-list que o sidecar aplica."""
+    agente, só a allow-list que o sidecar aplica.
+
+    Delega ao driver ativo (change `add-kubernetes-driver`, task 1.2)."""
     if not system.container_id:
         return
-    _provision_httpsproxy_sidecar(system, system.container_id)
+    from .drivers import get_driver
 
-
-def _execution_identity(mode: ExecutionMode) -> dict:
-    """kwargs de identidade de execução do container (ADR 0018, spec container-lifecycle).
-
-    reduced e sandboxed: usuário não-root da imagem, sem capabilities, sem
-    escalada de privilégio — sandboxed ganha a camada adicional de
-    seccomp/Landlock dentro do container, instalada pelo supervisor (etapa 2,
-    capability agent-sandbox), mas a identidade no `docker.containers.run()`
-    é a mesma. legacy: `user="root"` explícito — a imagem passou a ter
-    usuário não-root como padrão (base-image/Dockerfile), então sistemas
-    criados antes desta mudança exigem a sobrescrita para continuar
-    acessando o workspace existente (dono root) sem migração.
-    """
-    if mode in (ExecutionMode.reduced, ExecutionMode.sandboxed):
-        return {
-            "user": f"{AGENT_UID}:{AGENT_GID}",
-            "cap_drop": ["ALL"],
-            "security_opt": ["no-new-privileges"],
-        }
-    return {"user": "root"}
+    get_driver().refresh_https_allowlist(system)
 
 
 def _check_capacity(system_id: str) -> None:
@@ -732,23 +568,18 @@ def set_container(system_id: str, container_id: str) -> None:
 
 
 def healthcheck_url(system: System) -> str:
-    return f"http://{system_container_name(system.slug)}:{get_settings().app_port}/"
+    """Delega ao driver ativo (change `add-kubernetes-driver`, task 1.2) — a URL interna pra
+    alcançar a app varia por driver (DNS do bridge Docker vs. Service DNS do cluster)."""
+    from .drivers import get_driver
+
+    return get_driver().healthcheck_url(system)
 
 
 def stop_and_remove(system: System) -> None:
-    client = _docker()
-    try:
-        client.containers.get(dbgate_sidecar_name(system.slug)).remove(force=True)
-    except docker.errors.NotFound:
-        pass
-    try:
-        client.containers.get(httpsproxy_sidecar_name(system.slug)).remove(force=True)
-    except docker.errors.NotFound:
-        pass
-    try:
-        client.containers.get(system_container_name(system.slug)).remove(force=True)
-    except docker.errors.NotFound:
-        pass
+    """Delega ao driver ativo (change `add-kubernetes-driver`, task 1.2)."""
+    from .drivers import get_driver
+
+    get_driver().remove(system)
 
 
 def start_provisioning_thread(system_id: str) -> None:
@@ -773,8 +604,11 @@ def start_provisioning_thread(system_id: str) -> None:
 
 
 def reconcile() -> None:
-    """Concilia estado real dos containers com o registrado (boot/periódico)."""
-    client = _docker()
+    """Concilia estado real das unidades de execução (container ou Pod, a depender do driver
+    ativo — change `add-kubernetes-driver`) com o registrado (boot/periódico)."""
+    from .drivers import ComputeUnitNotFound, get_driver
+
+    driver = get_driver()
     with session_scope() as s:
         systems = [
             (sys.id, sys.slug, sys.status, sys.container_id)
@@ -784,12 +618,10 @@ def reconcile() -> None:
         if status in (SystemStatus.archived, SystemStatus.provisioning):
             continue
         try:
-            system_container = client.containers.get(system_container_name(slug))
+            driver.reconcile_one(system_id, slug)
             publish_app_by_slug(slug)
-            _reconcile_dbgate_sidecar(system_id, slug, system_container.id)
-            _reconcile_httpsproxy_sidecar(system_id, slug, system_container.id)
-        except docker.errors.NotFound:
-            log.warning("reconciliação: container ausente para %s; recriando", slug)
+        except ComputeUnitNotFound:
+            log.warning("reconciliação: unidade de execução ausente para %s; recriando", slug)
             from .services.systems import get_system
 
             system = get_system(system_id)
@@ -802,45 +634,6 @@ def reconcile() -> None:
 
                     set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
         _check_connections_health(system_id)
-
-
-def _reconcile_dbgate_sidecar(system_id: str, slug: str, system_container_id: str) -> None:
-    """Sistema presente, mas o sidecar sumiu sozinho (removido manualmente,
-    OOM-killed sem restart etc.) — recria só ele, sem derrubar sessões do
-    agente nem o container do sistema (task 5.4)."""
-    manifest = db_connections_manifest(system_id)
-    if not manifest:
-        return
-    client = _docker()
-    try:
-        client.containers.get(dbgate_sidecar_name(slug))
-        return
-    except docker.errors.NotFound:
-        pass
-    log.warning("reconciliação: sidecar de gate de banco ausente para %s; recriando", slug)
-    from .services.systems import get_system
-
-    system = get_system(system_id)
-    if system is not None:
-        _provision_dbgate_sidecar(system, system_container_id, manifest)
-
-
-def _reconcile_httpsproxy_sidecar(system_id: str, slug: str, system_container_id: str) -> None:
-    """Mesmo racional do `_reconcile_dbgate_sidecar`, pro proxy HTTP(S) de
-    saída — esse sobe sempre (nunca condicional a manifesto), então não há
-    `if not manifest: return` aqui."""
-    client = _docker()
-    try:
-        client.containers.get(httpsproxy_sidecar_name(slug))
-        return
-    except docker.errors.NotFound:
-        pass
-    log.warning("reconciliação: sidecar do proxy HTTP(S) ausente para %s; recriando", slug)
-    from .services.systems import get_system
-
-    system = get_system(system_id)
-    if system is not None:
-        _provision_httpsproxy_sidecar(system, system_container_id)
 
 
 def _check_connections_health(system_id: str) -> None:
@@ -887,6 +680,13 @@ def delete_system(system: System, actor_id: str | None = None, actor_email: str 
     )
     stop_and_remove(system)
     unpublish_app(system.slug)
+    if get_settings().provisioning_driver == "kubernetes":
+        # workspace real é a PVC, não `workspaces_dir` local (change
+        # `fix-k8s-workspace-materialize-delete`) — só aqui, nunca em `stop_and_remove`/
+        # `driver.remove()`, que preserva a PVC para arquivamento/reprovisionamento.
+        from .drivers.kubernetes_driver import delete_workspace_pvc
+
+        delete_workspace_pvc(system.slug)
     workspace = os.path.join(get_settings().workspaces_dir, system.slug)
     if os.path.isdir(workspace):
         import shutil

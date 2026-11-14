@@ -1,0 +1,94 @@
+# Deployment + Service do próprio portal dentro do cluster (task 3.2, change
+# `deploy-portal-in-cluster`) — só usado quando o driver de provisionamento ativo é Kubernetes;
+# o `docker-compose` de produção (driver Docker) continua intocado e sem relação com isto.
+#
+# Pré-requisitos antes de aplicar: namespace `appaiforge` criado, `portal-rbac.yaml` aplicado,
+# Postgres do portal (`portal-postgres.yaml`, task 4.1) já no ar, imagem construída e carregada
+# no cluster:
+#
+#   docker build -f deploy/portal.Dockerfile -t appaiforge/portal:0.1.0 ..
+#   kind load docker-image appaiforge/portal:0.1.0 --name appaiforge-dev
+#
+# `APPAIFORGE_DATABASE_URL` já aponta pro Service do Postgres criado em `portal-postgres.yaml`
+# (nome `appaiforge-portal-postgres`) — essa é a parte "apontar" da task 4.2; o resto da task 4.2
+# é só verificação, depois que este Deployment e aquele Postgres existem os dois.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appaiforge-portal
+  namespace: appaiforge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: appaiforge-portal
+  template:
+    metadata:
+      labels:
+        app: appaiforge-portal
+    spec:
+      serviceAccountName: appaiforge-portal
+      containers:
+        - name: portal
+          image: appaiforge/portal:0.1.0
+          ports:
+            - containerPort: 8080
+          env:
+            - name: APPAIFORGE_DATABASE_URL
+              value: postgresql+psycopg://appaiforge:appaiforge@appaiforge-portal-postgres:5432/appaiforge
+            - name: APPAIFORGE_SECRET_KEY
+              value: change-me-in-production
+            - name: APPAIFORGE_PROVISIONING_DRIVER
+              value: kubernetes
+            - name: APPAIFORGE_K8S_NAMESPACE
+              value: appaiforge
+            # Nenhum APPAIFORGE_K8S_KUBECONFIG_CONTEXT aqui de propósito: rodando dentro do
+            # cluster, `_load_kube_config()` usa a identidade do próprio Pod
+            # (`load_incluster_config()`) antes de qualquer kubeconfig (task 2.1).
+            - name: APPAIFORGE_HARNESS_MODE
+              value: fake  # mesmo default do docker-compose; task 5.1 usa "opencode" só pra validar o chat real
+            - name: APPAIFORGE_CONFIGS_DIR
+              value: /configs  # staging local antes do ConfigMap (_upsert_config_map) — emptyDir, efêmero de propósito
+            - name: APPAIFORGE_INFERENCE_BROKER_ENABLED
+              value: "false"
+            - name: APPAIFORGE_DB_GATE_MODE
+              value: enforce
+            - name: APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN
+              value: troque-este-token
+            # DNS do Service do próprio portal (abaixo) — usado pelos sidecars `dbgate` de cada
+            # sistema pra chamar de volta o portal; default de `settings.portal_internal_url`
+            # ("http://portal:8080") é o hostname da rede Docker, não resolve aqui.
+            - name: APPAIFORGE_PORTAL_INTERNAL_URL
+              value: http://appaiforge-portal:8080
+            - name: APPAIFORGE_SEED_DEMO_ADMIN
+              value: "1"
+          volumeMounts:
+            - name: configs-scratch
+              mountPath: /configs
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: configs-scratch
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: appaiforge-portal
+  namespace: appaiforge
+spec:
+  selector:
+    app: appaiforge-portal
+  ports:
+    - port: 8080
+      targetPort: 8080

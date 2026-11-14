@@ -13,6 +13,7 @@ dependencies = [
     "cryptography>=44",
     "httpx>=0.28",
     "docker>=7.1",
+    "kubernetes>=31.0",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
     "sqlglot>=25.0",

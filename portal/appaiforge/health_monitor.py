@@ -3,6 +3,11 @@
 Sonda periodicamente a app de cada sistema ativo; falhas consecutivas marcam
 o sistema como erro (visível na página), recuperação volta a ativo sem
 intervenção. O reinício em si é do supervisor do container (ADR 0003).
+
+A sonda em si é responsabilidade do driver ativo (`ProvisioningDriver.is_healthy`,
+change `add-kubernetes-driver`) — o driver Docker sonda HTTP direto, igual sempre;
+o driver Kubernetes lê o resultado da `readinessProbe` via API, porque o portal
+roda fora do cluster e não alcança a rede do Pod.
 """
 
 import logging
@@ -11,12 +16,9 @@ import re
 import threading
 import time
 
-import httpx
 from sqlalchemy import select
 
-from .config import get_settings
 from .db import session_scope
-from .edge import system_container_name
 from .models import System, SystemStatus
 
 log = logging.getLogger(__name__)
@@ -39,9 +41,12 @@ def check_once() -> dict[str, bool]:
             if sys.status == SystemStatus.active or (sys.status_message or "").startswith("app fora do ar")
         ]
 
+    from .drivers import get_driver
+
+    driver = get_driver()
     results: dict[str, bool] = {}
     for system_id, slug in systems:
-        healthy = _probe(slug)
+        healthy = driver.is_healthy(slug)
         results[slug] = healthy
         if healthy:
             _fail_counts[slug] = 0
@@ -65,20 +70,6 @@ def _clear_if_needed(system_id: str, slug: str) -> None:
             system.status_message = ""
         elif system.status == SystemStatus.active and message:
             system.status_message = ""
-
-
-def _probe(slug: str) -> bool:
-    """Qualquer resposta HTTP (<500) significa app viva — o gate de identidade
-    responde 403 sem token, e isso é app no ar, não app caída."""
-    try:
-        resp = httpx.get(_app_url(slug), timeout=5)
-        return resp.status_code < 500
-    except httpx.HTTPError:
-        return False
-
-
-def _app_url(slug: str) -> str:
-    return f"http://{system_container_name(slug)}:{get_settings().app_port}/"
 
 
 def _set(system_id: str, status: SystemStatus, message: str) -> None:

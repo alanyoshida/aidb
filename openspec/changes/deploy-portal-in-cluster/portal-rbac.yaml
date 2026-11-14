@@ -1,0 +1,90 @@
+# ServiceAccount + RBAC do portal (task 3.1, change `deploy-portal-in-cluster`) — exatamente as
+# operações que `portal/appaiforge/drivers/kubernetes_driver.py` e
+# `portal/appaiforge/checkpoints.py` (`_git_via_exec`) fazem via API, nem mais nem menos.
+# Verificado com `kubectl auth can-i --as=system:serviceaccount:<namespace>:appaiforge-portal`
+# pra cada verbo/recurso abaixo.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: appaiforge-portal
+  namespace: appaiforge
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: appaiforge-portal
+  namespace: appaiforge
+rules:
+  # provision()/remove()/reconcile_one()/is_healthy(): create_namespaced_pod,
+  # delete_namespaced_pod (_delete_pod_if_exists), read_namespaced_pod.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "create", "delete"]
+  # checkpoints.py:_git_via_exec -> connect_get_namespaced_pod_exec. Achado ao vivo (task 5.1):
+  # esse método específico do SDK faz upgrade de WebSocket via uma requisição GET (daí o nome),
+  # não a rota SPDY baseada em POST que `kubectl exec` usa — o apiserver autoriza pelo verbo HTTP
+  # real da requisição, então o RBAC certo aqui é "get", não "create" (suposição inicial errada,
+  # corrigida só depois de testar de verdade).
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get"]
+  # _ensure_workspace_pvc: read_namespaced_persistent_volume_claim, create_namespaced_...
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "create"]
+  # _upsert_config_map / remove(): delete_namespaced_config_map, create_namespaced_config_map.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "delete"]
+  # publish()/unpublish(): replace_namespaced_service (fallback create se 404),
+  # delete_namespaced_service.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "update", "delete"]
+  # publish()/unpublish() via _upsert_custom: create_namespaced_custom_object,
+  # delete_namespaced_custom_object, pros CRDs do Traefik (Middleware stripPrefix + IngressRoute).
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares", "ingressroutes"]
+    verbs: ["create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: appaiforge-portal
+  namespace: appaiforge
+subjects:
+  - kind: ServiceAccount
+    name: appaiforge-portal
+    namespace: appaiforge
+roleRef:
+  kind: Role
+  name: appaiforge-portal
+  apiGroup: rbac.authorization.k8s.io
+---
+# ensure_ready() lê/cria o próprio namespace (read_namespace/create_namespace) — único recurso
+# CLUSTER-scoped que o driver toca, por isso em ClusterRole/ClusterRoleBinding separados do
+# resto (que é tudo namespaced, acima). Se preferir não conceder isso à ServiceAccount do portal,
+# crie o namespace manualmente (`kubectl create namespace appaiforge`) antes de aplicar o
+# Deployment e remova este ClusterRole/ClusterRoleBinding — o driver só tenta criar quando
+# `read_namespace` responde 404.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: appaiforge-portal-namespaces
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: appaiforge-portal-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: appaiforge-portal
+    namespace: appaiforge
+roleRef:
+  kind: ClusterRole
+  name: appaiforge-portal-namespaces
+  apiGroup: rbac.authorization.k8s.io

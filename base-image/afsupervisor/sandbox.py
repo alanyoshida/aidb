@@ -170,9 +170,11 @@ def _net_access_bits(abi: int) -> int:
     return bits
 
 
-def apply_landlock(readable_paths: list[str], writable_paths: list[str]) -> None:
+def apply_landlock(
+    readable_paths: list[str], writable_paths: list[str], writable_files: list[str] | None = None
+) -> None:
     """Cria um ruleset Landlock liberando leitura+execução em
-    `readable_paths` e leitura+escrita em `writable_paths`, e aplica ao
+    `readable_paths` e leitura+escrita em `writable_paths`/`writable_files`, e aplica ao
     processo atual (`landlock_restrict_self`) — qualquer caminho fora dessas
     listas fica negado por padrão (Landlock é subtrativo) e a restrição é
     herdada por todo processo filho, de forma irrevogável.
@@ -185,7 +187,17 @@ def apply_landlock(readable_paths: list[str], writable_paths: list[str]) -> None
     `opencode` não existem no primeiro boot do container, e `mkdir` nesses
     caminhos falhava com `EACCES` até esta correção. `readable_paths` que
     não existem continuam ignorados silenciosamente (não faz sentido criar
-    um caminho só para lê-lo)."""
+    um caminho só para lê-lo).
+
+    `writable_files` é a mesma ideia, mas para caminhos que devem existir como
+    ARQUIVO, não diretório (ex.: `~/.gitconfig`, `~/.claude.json`) — achado
+    real (change `add-kubernetes-driver`, task 8.3): o perfil `claude-code`
+    lista esses caminhos de arquivo dentro de `writable_paths`, e
+    `os.makedirs` os criava como diretório vazio no primeiro boot, quebrando
+    qualquer escrita real que a CLI (ou `git`, verificando checkpoints via
+    exec) tentasse fazer neles depois (`IsADirectoryError`/"Is a directory").
+    Nunca disparado antes porque nada, até esta task, escrevia nesses
+    arquivos de dentro do próprio container do agente."""
     abi = landlock_abi()
     if abi <= 0:
         raise OSError("Landlock não suportado neste host (ABI 0)")
@@ -205,6 +217,13 @@ def apply_landlock(readable_paths: list[str], writable_paths: list[str]) -> None
         for path, access in ((p, write_bits) for p in writable_paths):
             if not os.path.exists(path):
                 os.makedirs(path, exist_ok=True)
+            _add_path_rule(libc, ruleset_fd, path, access)
+        for path, access in ((p, write_bits) for p in (writable_files or [])):
+            if not os.path.exists(path):
+                parent = os.path.dirname(path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                open(path, "a").close()
             _add_path_rule(libc, ruleset_fd, path, access)
         for path, access in ((p, read_bits) for p in readable_paths):
             _add_path_rule(libc, ruleset_fd, path, access)
@@ -303,6 +322,7 @@ def apply_sandbox(profile: dict, deny_syscalls: list[str] | None = None) -> None
     apply_landlock(
         readable_paths=profile.get("readable_paths", []),
         writable_paths=profile.get("writable_paths", []),
+        writable_files=profile.get("writable_files", []),
     )
     if landlock_abi() < 4:
         print(

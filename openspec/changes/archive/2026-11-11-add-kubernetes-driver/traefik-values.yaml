@@ -1,0 +1,24 @@
+# Traefik como Ingress controller dentro do cluster kind (D4 do design: roteamento de
+# /apps/{slug} entra no cluster, substituindo o file-provider externo usado pelo driver Docker).
+#
+# hostNetwork: os Pods do Traefik escutam direto nas portas 80/443 do NÓ do kind — que já são
+# as portas mapeadas por extraPortMappings em kind-cluster.yaml (host 18080/18443 -> nó 80/443).
+# Só funciona porque há um único nó (control-plane) neste cluster de validação.
+deployment:
+  kind: Deployment
+hostNetwork: true
+ports:
+  web:
+    port: 80
+  websecure:
+    port: 443
+service:
+  enabled: false
+providers:
+  kubernetesIngress:
+    enabled: false
+  # CRDs nativas (IngressRoute/Middleware) em vez do core Ingress — espelha 1:1 o que o
+  # file-provider do driver Docker já escreve hoje (router + middleware stripPrefix +
+  # service), em vez de reconstruir o path-stripping só com anotações do core Ingress.
+  kubernetesCRD:
+    enabled: true

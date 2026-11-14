@@ -137,8 +137,22 @@ PROFILES: dict[str, dict] = {
             "/home/agent/.npm",
             "/home/agent/.local",
             "/home/agent/.bashrc", "/home/agent/.bash_profile", "/home/agent/.bash_login",
-            "/home/agent/.profile", "/home/agent/.gitconfig",
+            "/home/agent/.profile",
             "/tmp",
+        ],
+        # `.gitconfig` especificamente precisa existir como ARQUIVO, não diretório, no primeiro
+        # boot (achado real, change `add-kubernetes-driver`, task 8.3): só ele é escrito de
+        # dentro do próprio container depois do boot (pelo `git config --global` do checkpoint
+        # via exec do driver Kubernetes — o checkpoint do driver Docker roda no processo do
+        # portal, fora do container, então nunca tocou nisso antes). Os demais nomes
+        # (`.claude.json`, `.bashrc` etc.) ficam em `writable_paths` mesmo sendo arquivos: a CLI
+        # os substitui por padrão temp-file-e-rename, que precisa de direito de criar/remover
+        # ENTRADA no diretório pai — só uma regra do Landlock no PRÓPRIO diretório (não no
+        # arquivo) dá isso; tratá-los como `writable_files` quebra esse padrão (achado real,
+        # mesma task: `test_claude_code_e2e.py` passava com eles como diretório vazio e passou a
+        # falhar na primeira chamada ao modelo quando movidos para `writable_files`).
+        "writable_files": [
+            "/home/agent/.gitconfig",
         ],
         "connect_tcp_ports": [53],
     },

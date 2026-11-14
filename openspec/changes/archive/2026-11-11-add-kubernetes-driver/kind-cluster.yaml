@@ -1,0 +1,22 @@
+# Cluster kind local para validar o driver Kubernetes de provisionamento
+# (change add-kubernetes-driver, task 2.1). Nome fixo (appaiforge-dev) para
+# não colidir com outros clusters kind já registrados na máquina.
+#
+# extraPortMappings expõe ao host as portas que o Traefik (D4 do design:
+# Ingress/Gateway dentro do cluster) vai escutar como controller de
+# ingress — sem isso, nenhum tráfego de fora do cluster alcançaria os
+# Services dos sistemas provisionados. 18080/18443 (não 8080/8443): a
+# máquina de desenvolvimento já tem outros serviços nessas portas padrão
+# (achado real ao criar o cluster — ver task 2.1).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: appaiforge-dev
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 18080
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 18443
+        protocol: TCP

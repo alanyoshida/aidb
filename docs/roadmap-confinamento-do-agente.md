@@ -1,7 +1,7 @@
 # Roadmap — confinamento e política do agente
 
-> **Status**: plano aceito; etapas 1–6 concluídas.
-> **Última revisão**: 2026-11-09.
+> **Status**: plano aceito; etapas 1–8 concluídas.
+> **Última revisão**: 2026-11-11.
 > Documento de trabalho de longa duração: uma change OpenSpec por etapa, na ordem abaixo.
 > Ao concluir uma etapa, marque na tabela e registre o ADR correspondente em
 > [`docs/adr/`](adr/README.md).
@@ -16,8 +16,8 @@
 | 4 | Proxy de banco + gate no data plane | gate independente do agente | ✅ concluída (change `db-proxy-gate-data-plane`, ADR 0021, ADR 0023) |
 | 5 | Perímetro de egress | proxies inescapáveis | ✅ concluída (changes `agent-network-perimeter` + `agent-https-forward-proxy`, ADR 0022, ADR 0024 — segunda metade fechada em 2026-11-08) |
 | 6 | Telemetria OTel | um trace por execução | ✅ concluída (changes `agent-telemetry-otel` + `agent-telemetry-backend-agnostic`, capability `agent-telemetry`, ADR 0025 — com divergência de escopo: ver seção da etapa) |
-| 7 | Segundo agente | validação da arquitetura | ⬜ não iniciada |
-| 8 | Kubernetes | pod por sistema | ⬜ não iniciada |
+| 7 | Segundo agente | validação da arquitetura | ✅ concluída (change `add-claude-code-agent-profile`, arquivada 2026-11-10) |
+| 8 | Kubernetes | pod por sistema | ✅ concluída (change `add-kubernetes-driver`, validada em `kind` local — cluster gerenciado real fica pra depois) |
 | 9 | KubeArmor / auditoria de kernel (opcional) | regra por binário | ⬜ não iniciada |
 
 ---
@@ -538,7 +538,23 @@ como OTLP logs são volume sério — filtrar no kernel **e** no collector, rete
 
 ---
 
-## Etapa 7 — Segundo agente (o teste da arquitetura)
+## Etapa 7 — Segundo agente (o teste da arquitetura) ✅ concluída
+
+**Status: ✅ concluída** (change `add-claude-code-agent-profile`, arquivada em
+`openspec/changes/archive/2026-11-10-add-claude-code-agent-profile/`, capability
+`agent-harness` estendida). Critério de sucesso negativo cumprido: zero edição em
+`afsupervisor/sandbox.py`, no proxy do gate de destrutivas (`base-image/dbproxy/`) ou nas regras
+de rede/Landlock existentes — confirmado no `design.md` da change. Perfil `claude-code` entregue
+com imagem própria (`appaiforge/claude-code:0.1.0`), shim HTTP de vida longa
+(`base-image/claude-code-shim/shim.py`) sobre a CLI headless (`claude -p --output-format
+stream-json`), acesso ao banco via o mesmo `gated-mcp` agnóstico de agente (D6), e caminhos de
+Landlock para `~/.claude`/`~/.config/anthropic` achados por verificação real dentro do container.
+
+**Achado durante a verificação, corrigido em separado (fora do escopo desta change, a pedido
+explícito do usuário)**: um bug pré-existente no relay HTTP absoluto do `httpproxy`
+(`base-image/httpproxy/proxy.py`) descartava headers e corpo da requisição — não causado pela
+adição do claude-code, e sua correção não tocou nenhuma das três áreas do critério negativo (ver
+nota pós-implementação nas tasks da change arquivada).
 
 **Objetivo**: validar que as etapas 1–6 produziram abstração de verdade.
 
@@ -561,9 +577,84 @@ inexistente. Por isso o gate foi para o data plane na etapa 4.
 
 ---
 
-## Etapa 8 — Kubernetes
+## Etapa 8 — Kubernetes ✅ concluída (validada em `kind` local)
 
-**Objetivo**: mesmo produto, driver k8s. Só depois da arquitetura estável e validada em dois agentes.
+**Status: ✅ concluída** (change `add-kubernetes-driver`, capability `container-driver-kubernetes`
+nova, `container-lifecycle` estendida) — **com um corte de escopo deliberado**: validada contra
+um cluster `kind` **local**, não contra um cluster gerenciado real (EKS/GKE/AKS). O objetivo desta
+etapa era provar que a abstração de driver (introduzida nesta mesma change) funciona para um
+segundo orquestrador sem reescrever a lógica de provisionamento — não entregar produção. Cluster
+gerenciado real, se vier a ser necessário, é trabalho futuro, fora desta change.
+
+**Entregue**: interface `ProvisioningDriver` (`portal/appaiforge/drivers/base.py`) extraída de
+`provisioning.py` sem alterar nenhum comportamento do driver Docker (verificado por toda a suíte
+de testes, idêntica antes/depois); driver Kubernetes (`kubernetes_driver.py`) com Pod único por
+sistema (agente + sidecars `dbgate`/`httpsproxy`, compartilhando netns do Pod por construção, sem
+a dependência de ordem que o `network_mode: container:<id>` do Docker exige); workspace via PVC
+(`local-path-provisioner`, já default no `kind`); arquivos de config via **ConfigMap**, não PVC
+(achado real: um PVC do `kind` fica no filesystem do nó do cluster, inacessível ao portal pra
+escrita direta — diferente do bind mount que o driver Docker compartilha com o portal);
+roteamento de `/apps/{slug}` via Traefik **dentro do cluster** (`IngressRoute`+`Middleware`
+nativos, instalado por Helm com `hostNetwork: true`), substituindo o file provider externo só
+quando o driver k8s está ativo; limites de CPU/memória/disco mapeados pro Pod; reconciliação via
+polling contra a API, reaproveitando o mesmo laço agnóstico de driver que já existia.
+
+**Checkpoints git, resolvido durante a implementação (achado real, não previsto no design
+original)**: `checkpoints.py` roda `git` no processo do **portal**, via path local — só funciona
+pro driver Docker, que compartilha bind mount com ele; o portal não tem nenhum caminho de
+filesystem compartilhado com um PVC do cluster. Resolvido com o usuário: `git` passa a rodar
+**dentro do container do agente via exec da API do Kubernetes** quando o driver é `kubernetes` —
+mesmo resultado observável nos dois drivers (checkpoint criado, listável, usado em rollback).
+
+**Bug pré-existente achado e corrigido nesta task (fora do escopo original, mas bloqueando a
+própria verificação desta etapa)**: `apply_landlock` (`base-image/afsupervisor/sandbox.py`, de
+antes desta change) criava todo `writable_path` ausente como **diretório** (`os.makedirs`), mesmo
+quando deveria ser um arquivo — o perfil `claude-code` lista `.gitconfig`/`.claude.json`/`.bashrc`
+etc. nessa mesma lista. Nunca disparado antes porque nada, até o exec-based git desta etapa,
+escrevia de dentro do próprio container do agente. Corrigido com um parâmetro novo
+`writable_files` (arquivo tocado vazio, não diretório, se ausente) — aplicado só a `.gitconfig`:
+os demais nomes continuam em `writable_paths` de propósito, porque a CLI os substitui pelo padrão
+temp-file-e-rename, que precisa de direito de criar/remover **entrada no diretório pai**, só
+concedido por uma regra do Landlock no diretório, nunca no arquivo isolado (achado ao vivo: mover
+todos pra `writable_files` quebrou a primeira chamada ao modelo nos dois drivers, Kubernetes e
+Docker — regressão real de escopo amplo, revertida pra um fix mínimo antes de prosseguir).
+
+**Limitações conhecidas, aceitas nesta etapa**: `pids_limit` sem bloqueio rígido por container no
+driver Kubernetes (sem equivalente de 1ª classe no Kubernetes); `refresh_https_allowlist` recria
+o Pod inteiro no driver Kubernetes (no Docker, só o sidecar do proxy é recriado — os três
+containers do Pod compartilham env imutável depois de criado).
+
+**Entrega verificável**: suíte completa roda limpa nos dois drivers — 384 testes unitários e 49 de
+integração (Docker: 36 + paridade Docker; Kubernetes: 9 do driver + paridade + E2E completo com
+geração real de app via agente, checkpoint real, acesso real a `/apps/{slug}` de fora do cluster
+pela porta que o `kind` expõe no host). `test_driver_parity.py` prova a paridade observável
+exercitando os dois drivers só através da interface comum, nunca de SDK específico.
+
+**Lacuna real achada depois de arquivada, corrigida em change separada**: `_harness_url`
+(`agent_queue.py:712`) monta o endereço do harness pelo DNS da rede Docker — nunca funcionou de
+verdade sob o driver Kubernetes com o portal rodando fora do cluster (arquitetura desta etapa). O
+E2E da task 8.3 passava só por monkeypatch dessa função, nunca exercitando o caminho real; a
+lacuna só foi achada numa sessão de teste manual, depois desta etapa já arquivada. Corrigida pela
+change `deploy-portal-in-cluster`: o portal passa a rodar dentro do cluster (só quando o driver
+ativo é Kubernetes), alcançando o harness via uma porta nova no `Service` que o driver já cria
+por sistema — sem protocolo novo, sem exposição externa adicional.
+
+**Não entregue nesta etapa (corte de escopo, não lacuna esquecida)**: `iptables REDIRECT` via
+initContainer pro gate de rede (o texto original desta seção, abaixo) — o driver Kubernetes desta
+etapa mantém o Landlock de rede do agente como está hoje, sem reescrever a interceptação do
+gate para IP; cluster gerenciado real (EKS/GKE/AKS).
+
+**Pendência futura — Gateway API no lugar do Ingress/IngressRoute do Traefik**: o roteamento de
+`/apps/{slug}` desta etapa usa `IngressRoute`+`Middleware`, CRDs específicos do Traefik — portáveis
+pro Traefik instalado em qualquer cluster, mas não pra outro controller de ingress. Gateway API é o
+sucessor padronizado (`HTTPRoute` é da própria API do Kubernetes, não CRD de vendor), e o texto
+original do plano (abaixo) já previa Service por sandbox + Gateway API no lugar do file provider.
+Não bloqueia nada hoje; vira trabalho real só se o cluster gerenciado real (item acima) usar outro
+ingress controller.
+
+---
+
+**Texto original do plano (histórico, não executado nesta etapa — ver corte de escopo acima)**:
 
 **Escopo**: pod por sistema = container do agente + sidecar do gate. O `iptables REDIRECT` em
 initContainer com `NET_ADMIN` (padrão Istio/Linkerd/Kuma, com regra `RETURN` por `--uid-owner`

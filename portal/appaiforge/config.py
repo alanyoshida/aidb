@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     # Chave mestra: deriva a chave Fernet e diferencia ambientes. Obrigatória em produção.
     secret_key: str = "dev-only-change-me"
 
+    # Driver de provisionamento ativo (change `add-kubernetes-driver`, etapa 8 do roadmap de
+    # confinamento) — "docker" (padrão, único hoje em produção) ou "kubernetes". Seleciona qual
+    # `appaiforge.drivers.ProvisioningDriver` `get_driver()` instancia; nenhum sistema escolhe
+    # driver por si (requirement "Driver de provisionamento é escolha de configuração").
+    provisioning_driver: str = "docker"
+    # Namespace do cluster onde o driver Kubernetes cria Pod/PVC/ConfigMap/Service por sistema.
+    k8s_namespace: str = "appaiforge"
+    # Contexto do kubeconfig a usar — nunca o "current-context" implícito (achado real: o
+    # current-context do kubeconfig deste host mudou entre dois passos manuais desta mesma
+    # validação, sem nenhuma ação deste driver; depender dele é frágil). Vazio = comportamento
+    # do cliente padrão (current-context), só aceitável fora deste cluster de validação.
+    k8s_kubeconfig_context: str = "kind-appaiforge-dev"
+
     # Docker
     base_image: str = "appaiforge/base:0.1.0"
     docker_network: str = "appaiforge-net"
