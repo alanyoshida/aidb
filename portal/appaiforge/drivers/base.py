@@ -19,6 +19,14 @@ class ComputeUnitNotFound(Exception):
     equivalente driver-agnóstico de `docker.errors.NotFound` para o container principal."""
 
 
+class WorkspaceWriteError(OSError):
+    """Falha ao escrever no workspace de um sistema quando o driver não dá ao portal um caminho
+    local/montado até ele (driver Kubernetes: a PVC só é alcançável via exec dentro do Pod —
+    change `fix-k8s-workspace-materialize-delete`). Subclasse de `OSError` para que chamadores
+    como `AgentQueue._execute` tratem essa falha da mesma forma que já tratam uma falha de escrita
+    local sob o driver Docker."""
+
+
 class ProvisioningDriver(Protocol):
     def ensure_ready(self) -> None:
         """Garante que a infraestrutura compartilhada do driver existe (rede/namespace)."""
