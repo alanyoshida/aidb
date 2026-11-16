@@ -1,0 +1,14 @@
+apiVersion: v2
+name: appaiforge-portal
+description: >-
+  Portal AIDB (FastAPI + NiceGUI) e seu Postgres rodando dentro de um cluster
+  Kubernetes, sob o driver de provisionamento Kubernetes (capability
+  container-driver-kubernetes). Equivalente em Helm aos manifests aplicados
+  manualmente em openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - appaiforge
+  - aidb
+  - nicegui

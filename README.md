@@ -36,6 +36,34 @@ docker compose -f deploy/docker-compose.yml exec portal appaiforge create-admin 
 # e remova a variável APPAIFORGE_SEED_DEMO_ADMIN do compose
 ```
 
+## Driver Kubernetes (validação local)
+
+O driver de provisionamento padrão é o Docker (acima). Existe também um **driver Kubernetes**
+(`APPAIFORGE_PROVISIONING_DRIVER=kubernetes`, capability `container-driver-kubernetes`,
+[roadmap etapa 8](docs/roadmap-confinamento-do-agente.md)), que materializa cada sistema como um
+Pod — hoje validado só contra um cluster `kind` local, nunca contra um cluster gerenciado real
+(EKS/GKE/AKS).
+
+Quando o driver ativo é Kubernetes, o próprio portal (e seu Postgres) também roda dentro do
+cluster — instale os dois com o chart Helm em [`deploy/helm/appaiforge-portal/`](deploy/helm/appaiforge-portal):
+
+```bash
+docker build -f deploy/portal.Dockerfile -t appaiforge/portal:0.1.0 .
+kind load docker-image appaiforge/portal:0.1.0 --name appaiforge-dev   # nome do cluster kind de validação
+
+helm install appaiforge-portal deploy/helm/appaiforge-portal \
+  --namespace appaiforge --create-namespace \
+  --kube-context kind-appaiforge-dev
+```
+
+Pré-requisito: o cluster `kind` já criado com Traefik como Ingress controller — ver
+`openspec/changes/archive/2026-11-11-add-kubernetes-driver/kind-cluster.yaml` e
+`traefik-values.yaml`. Detalhes de valores, teardown e o que o chart não cobre (broker de
+inferência, telemetria) ficam no [README do chart](deploy/helm/appaiforge-portal/README.md). Os
+manifests antigos, aplicados manualmente com `kubectl apply`, continuam em
+`openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/` só como histórico da decisão — o
+chart é a forma recomendada de instalar hoje.
+
 ## Chave de LLM (para geração real)
 
 O padrão do produto é GLM/Z.ai (ADR 0012). Obtenha uma chave e cadastre-a cifrada:
@@ -248,6 +276,7 @@ deve mostrar `1000:1000`, e `docker exec appaiforge-sys-<slug> id` deve mostrar 
 |---|---|---|
 | `DATABASE_URL` | postgres do compose | metadados do portal |
 | `SECRET_KEY` | — | **obrigatória em produção** (deriva a cifra de segredos) |
+| `PROVISIONING_DRIVER` | `docker` | `kubernetes` materializa cada sistema como Pod — ver [Driver Kubernetes](#driver-kubernetes-validação-local) acima |
 | `HARNESS_MODE` | `opencode` (no compose: `fake`) | `fake` = agente determinístico sem LLM (dev/E2E) |
 | `FAKE_DELAY` | `0.15` | ritmo do harness fake em segundos |
 | `BASE_IMAGE` | `appaiforge/base:0.1.0` | imagem dos containers de sistema |
@@ -312,7 +341,7 @@ O caminho opencode+GLM é validado manualmente (não roda em CI):
 ```
 portal/       appaiforge/ (FastAPI+NiceGUI), tests/ (unit, bdd, integration, e2e), migrations/
 base-image/   Dockerfile da imagem dos sistemas + afsupervisor (PID 1) + gated-mcp/ (MCP somente leitura com o gate)
-deploy/       docker-compose.yml (postgres, mysql, traefik, portal) e docker-compose.e2e.yml
+deploy/       docker-compose.yml (postgres, mysql, traefik, portal), docker-compose.e2e.yml e helm/ (chart do portal p/ driver Kubernetes)
 docs/adr/     decisões de arquitetura
 openspec/     specs vigentes (specs/) e histórico de changes (changes/archive/)
 ```

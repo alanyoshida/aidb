@@ -1,0 +1,106 @@
+# Valores default calibrados para o cluster kind de validação local (ver
+# openspec/changes/archive/2026-11-11-add-kubernetes-driver/kind-cluster.yaml e
+# openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/). Nunca use os
+# defaults de senha/token/secretKey abaixo num cluster que não seja descartável.
+
+# -- Nome usado para os recursos (Deployment, Service, StatefulSet, ...). Deixe
+# vazio para derivar de .Release.Name (ver templates/_helpers.tpl). Mantenha o
+# default "appaiforge-portal" se quiser paridade 1:1 com os manifests antigos.
+nameOverride: ""
+fullnameOverride: "appaiforge-portal"
+
+image:
+  repository: appaiforge/portal
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8080
+
+resources: {}
+# Exemplo:
+#   requests: { cpu: 100m, memory: 256Mi }
+#   limits: { cpu: "1", memory: 512Mi }
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# RBAC exatamente do tamanho que portal/appaiforge/drivers/kubernetes_driver.py e
+# checkpoints.py precisam (ver comentários de templates/rbac.yaml).
+rbac:
+  create: true
+  # `namespaces` (get/create) é o único recurso cluster-scoped que o driver toca
+  # (ensure_ready()). Desligue se preferir criar o namespace manualmente antes do
+  # install e não conceder ClusterRole/ClusterRoleBinding ao ServiceAccount do portal.
+  clusterScoped: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Segredos do portal. Por padrão o chart cria um Secret com os valores de
+# `secrets.*` abaixo (dev only). Em produção, defina `secrets.existingSecret`
+# com o nome de um Secret já criado fora do Helm, com as mesmas chaves
+# (secretKey, dbGateProxyServiceToken, postgresPassword) — os valores em
+# `secrets.*` são ignorados nesse caso.
+secrets:
+  existingSecret: ""
+  secretKey: "change-me-in-production"
+  dbGateProxyServiceToken: "troque-este-token"
+  postgresPassword: "appaiforge"
+
+portal:
+  # Driver de provisionamento ativo. Este chart só faz sentido com "kubernetes";
+  # fica configurável só para não esconder a env var por trás de um valor fixo
+  # (o portal lê APPAIFORGE_PROVISIONING_DRIVER como qualquer outra config).
+  provisioningDriver: kubernetes
+
+  # Namespace onde os Pods de sistema são provisionados. Vazio = mesmo
+  # namespace da release (.Release.Namespace), igual ao que os manifests
+  # antigos faziam (portal e sistemas no namespace "appaiforge").
+  systemsNamespace: ""
+
+  # "fake" (default, igual ao docker-compose) não chama LLM nenhum; troque para
+  # "opencode" para chat real com o agente.
+  harnessMode: fake
+
+  seedDemoAdmin: true
+
+  configsDir: /configs
+
+  dbGate:
+    mode: enforce
+
+  # Broker de inferência (ADR 0020) e telemetria OTel não são implantados por
+  # este chart (os manifests originais também não os incluíam) — a chave
+  # APPAIFORGE_INFERENCE_BROKER_ENABLED fica fixa em "false" no template.
+
+  maxSystems: 50
+  fakeDelay: 1.5
+
+  extraEnv: []
+  # Exemplo:
+  #   - name: APPAIFORGE_DISPLAY_TIMEZONE
+  #     value: America/Sao_Paulo
+
+postgres:
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  user: appaiforge
+  database: appaiforge
+  resources: {}
+  # Sem flag para desligar: a spec container-driver-kubernetes exige que os
+  # dados operacionais do portal sobrevivam à recriação do Pod (ver
+  # openspec/specs/container-driver-kubernetes/spec.md), por isso o PVC
+  # abaixo é sempre criado.
+  persistence:
+    size: 1Gi
+    storageClassName: ""

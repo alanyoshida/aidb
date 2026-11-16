@@ -1,0 +1,37 @@
+Portal AIDB instalado (driver de provisionamento: {{ .Values.portal.provisioningDriver }}).
+
+1. Espere o rollout terminar, se ainda não terminou:
+
+   kubectl --namespace {{ .Release.Namespace }} rollout status deployment/{{ include "appaiforge-portal.fullname" . }}
+
+2. Confirme que o portal respondeu:
+
+   kubectl --namespace {{ .Release.Namespace }} run health-check --rm -i --restart=Never \
+     --image=curlimages/curl --command -- curl -s -o /dev/null -w "%{http_code}\n" \
+     http://{{ include "appaiforge-portal.fullname" . }}:{{ .Values.service.port }}/api/health
+
+   Deve responder 200.
+
+3. Acesse o portal (sem Ingress/Traefik configurado para ele por este chart):
+
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "appaiforge-portal.fullname" . }} 8080:{{ .Values.service.port }}
+
+   http://localhost:8080
+{{- if .Values.portal.seedDemoAdmin }}
+   Login (admin semeado em dev): admin@appaiforge.local / admin123
+{{- end }}
+
+{{- if eq .Values.portal.harnessMode "fake" }}
+
+Nota: APPAIFORGE_HARNESS_MODE="fake" — o chat não chama nenhum LLM real.
+Troque portal.harnessMode para "opencode" (--set portal.harnessMode=opencode)
+para testar o chat de verdade com o agente.
+{{- end }}
+
+Teardown: `helm uninstall {{ .Release.Name }} -n {{ .Release.Namespace }}` remove o
+Deployment, o Postgres (StatefulSet) e o RBAC, mas NÃO o PVC do Postgres —
+StatefulSets não apagam o PVC de volumeClaimTemplates sozinhos. Para apagar
+tudo, inclusive os dados:
+
+   kubectl --namespace {{ .Release.Namespace }} delete pvc -l app.kubernetes.io/instance={{ .Release.Name }}
+

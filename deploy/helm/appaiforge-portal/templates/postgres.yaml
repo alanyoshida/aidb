@@ -1,0 +1,81 @@
+# Postgres do próprio portal — StatefulSet + PVC para persistência, Service
+# headless (ClusterIP: None) para identidade de DNS estável do único Pod
+# (replicas: 1, sem necessidade de balanceamento). Nada a ver com o Postgres
+# do docker-compose (driver Docker) nem com os bancos de produção que cada
+# sistema conecta via aba Conexões — este é só o banco operacional do portal.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appaiforge-portal.postgres.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal-postgres
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: portal-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "appaiforge-portal.postgres.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal-postgres
+spec:
+  serviceName: {{ include "appaiforge-portal.postgres.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: portal-postgres
+  template:
+    metadata:
+      labels:
+        {{- include "appaiforge-portal.labels" . | nindent 8 }}
+        app.kubernetes.io/component: portal-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: postgresPassword
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- with .Values.postgres.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgres.persistence.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.persistence.size | quote }}

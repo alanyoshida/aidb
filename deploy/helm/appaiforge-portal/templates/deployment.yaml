@@ -1,0 +1,142 @@
+# Deployment + Service do próprio portal dentro do cluster — só faz sentido
+# quando o driver de provisionamento ativo é Kubernetes; o docker-compose de
+# produção (driver Docker) não tem nenhuma relação com isto.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "appaiforge-portal.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: portal
+  template:
+    metadata:
+      labels:
+        {{- include "appaiforge-portal.labels" . | nindent 8 }}
+        app.kubernetes.io/component: portal
+    spec:
+      serviceAccountName: {{ include "appaiforge-portal.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: portal
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          env:
+            # Precisa vir antes de APPAIFORGE_DATABASE_URL: a interpolação
+            # $(POSTGRES_PASSWORD) do Kubernetes só resolve env vars já
+            # definidas mais acima na mesma lista.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: postgresPassword
+            - name: APPAIFORGE_DATABASE_URL
+              value: postgresql+psycopg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@{{ include "appaiforge-portal.postgres.fullname" . }}:5432/{{ .Values.postgres.database }}
+            - name: APPAIFORGE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: secretKey
+            - name: APPAIFORGE_PROVISIONING_DRIVER
+              value: {{ .Values.portal.provisioningDriver | quote }}
+            - name: APPAIFORGE_K8S_NAMESPACE
+              value: {{ include "appaiforge-portal.systemsNamespace" . | quote }}
+            # Nenhum APPAIFORGE_K8S_KUBECONFIG_CONTEXT aqui de propósito: rodando
+            # dentro do cluster, _load_kube_config() usa a identidade do próprio
+            # Pod (load_incluster_config()) antes de qualquer kubeconfig.
+            - name: APPAIFORGE_HARNESS_MODE
+              value: {{ .Values.portal.harnessMode | quote }}
+            - name: APPAIFORGE_CONFIGS_DIR
+              value: {{ .Values.portal.configsDir | quote }}
+            # Broker de inferência (ADR 0020) não é implantado por este chart —
+            # mesmo default "false" dos manifests originais.
+            - name: APPAIFORGE_INFERENCE_BROKER_ENABLED
+              value: "false"
+            - name: APPAIFORGE_DB_GATE_MODE
+              value: {{ .Values.portal.dbGate.mode | quote }}
+            - name: APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: dbGateProxyServiceToken
+            # DNS do Service do próprio portal (abaixo) — usado pelos sidecars
+            # dbgate de cada sistema pra chamar de volta o portal; o default de
+            # settings.portal_internal_url ("http://portal:8080") é o hostname da
+            # rede Docker, não resolve aqui.
+            - name: APPAIFORGE_PORTAL_INTERNAL_URL
+              value: http://{{ include "appaiforge-portal.fullname" . }}:{{ .Values.service.port }}
+            # main.py:_seed_demo_admin() compara com a string exata "1", não um
+            # bool qualquer — por isso o ternário em vez de `| quote` direto.
+            - name: APPAIFORGE_SEED_DEMO_ADMIN
+              value: {{ ternary "1" "0" .Values.portal.seedDemoAdmin | quote }}
+            - name: APPAIFORGE_MAX_SYSTEMS
+              value: {{ .Values.portal.maxSystems | quote }}
+            - name: APPAIFORGE_FAKE_DELAY
+              value: {{ .Values.portal.fakeDelay | quote }}
+            {{- with .Values.portal.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: configs-scratch
+              mountPath: /configs
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        # Staging local antes do ConfigMap (_upsert_config_map) — emptyDir,
+        # efêmero de propósito.
+        - name: configs-scratch
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "appaiforge-portal.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: portal
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 8080
