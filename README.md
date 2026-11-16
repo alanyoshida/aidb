@@ -17,8 +17,6 @@ Portal FastAPI + NiceGUI  (auth/RBAC, chat, proxy)
 Banco de produção  (PostgreSQL, MySQL ou BigQuery)
 ```
 
-- Cada sistema roda isolado no seu próprio container, confinado por padrão (seccomp + Landlock) — ver [Segurança](docs/seguranca.md).
-- Toda SQL que toca um banco de conexão passa por um gate classificador antes de chegar lá — ver [Segurança](docs/seguranca.md).
 - Decisões de arquitetura: [`docs/adr/`](docs/adr/README.md) (21 ADRs, formato MADR).
 - Especificações formais: `openspec/specs/` (13 capacidades); histórico de mudanças em `openspec/changes/archive/`.
 
@@ -69,6 +67,37 @@ helm install appaiforge-portal deploy/helm/appaiforge-portal \
 Materializa cada sistema como um Pod em vez de container Docker; só validado contra um cluster
 `kind` local (nunca contra um cluster gerenciado real). Detalhes, pré-requisitos (Traefik no
 cluster) e o chart Helm completo: [Driver Kubernetes](docs/driver-kubernetes.md).
+
+## Segurança
+
+Cada sistema roda isolado, com várias camadas independentes — uma falha numa não derruba as outras:
+
+- **Confinamento do agente** (3 modos de execução, `sandboxed` por padrão): seccomp nega um
+  denylist de syscalls perigosas e Landlock nega acesso a filesystem/rede fora do declarado no
+  perfil do agente — aplicados pelo próprio supervisor (PID 1), irrevogáveis, sem depender de
+  ninguém clicar "Aprovar" ([ADR 0018](docs/adr/0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md),
+  [ADR 0019](docs/adr/0019-sandbox-seccomp-landlock-no-supervisor.md)).
+- **Proxy HTTP(S) de saída obrigatório por sistema**: a única saída de internet do agente passa
+  por um sidecar com allow-list calculada (provedor de LLM/broker + registros de pacote) —
+  `443`/`80` saíram do Landlock fixo exatamente por isso
+  ([ADR 0024](docs/adr/0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md)).
+- **Gate de operações destrutivas**: toda SQL que toca um banco de conexão passa por um
+  classificador (sqlglot) rodando num sidecar no data plane — `DROP`/`TRUNCATE`/`ALTER` e
+  `DELETE`/`UPDATE` sem escopo por chave são recusados na hora, sem pedir aprovação a ninguém
+  ([ADR 0017](docs/adr/0017-gate-de-operacoes-destrutivas-com-classificador-sql.md),
+  [ADR 0021](docs/adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)).
+- **Segredos cifrados em repouso**: chaves de provedor de LLM e credenciais de conexão de banco
+  ficam cifradas no Postgres do portal, nunca em texto puro
+  ([ADR 0007](docs/adr/0007-metadados-em-postgres-e-credenciais-cifradas.md)).
+- **RBAC**: tipos globais de usuário (admin/editor), sem papel por sistema
+  ([ADR 0014](docs/adr/0014-rbac-com-tipos-globais-de-usuario.md)).
+- **Broker de inferência** (opcional): o container do sistema carrega só um token opaco em vez da
+  chave do provedor, revogável por sistema ou por sessão de chat
+  ([ADR 0020](docs/adr/0020-broker-de-inferencia-com-litellm.md), ver [LLM e broker](docs/llm-e-broker.md)).
+- **Auditoria**: toda ação de escrita da gestão e toda decisão do gate (aprovada/recusada/
+  bloqueada) fica numa trilha sem segredos.
+
+Detalhes de como cada camada funciona por dentro: [`docs/seguranca.md`](docs/seguranca.md).
 
 ## Documentação
 
