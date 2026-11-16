@@ -2,6 +2,15 @@
 
 Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você cadastra um sistema, conecta um banco (PostgreSQL, MySQL ou BigQuery), conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
 
+## Destaques
+
+- **Gera apps administrativas reais a partir de um chat em PT-BR**, sobre o schema de verdade do seu banco (via MCP) — não um template estático. Checkpoints permitem voltar o código a qualquer ponto.
+- **Isolamento de verdade por sistema**: cada container roda confinado por seccomp + Landlock, aplicado pelo kernel — não depende de aprovar um pedido de permissão no chat (ver [Segurança](#segurança)).
+- **Gate de SQL no data plane**: um `DROP` ou `DELETE` sem `WHERE` nunca chega ao banco — recusado por um sidecar classificador, sem pedir aprovação a ninguém.
+- **Segredos nunca tocam o container do sistema**: credenciais de banco e chaves de LLM ficam cifradas no portal; com o broker de inferência (opcional), o sistema nem recebe a chave real — só um token opaco revogável.
+- **Mesma lógica de negócio em Docker ou Kubernetes**: o driver de provisionamento é uma abstração comum, validada ponta a ponta nos dois (ver [Instalação](#instalação)).
+- **Pilha 100% Python**, do portal (FastAPI + NiceGUI) à app gerada (NiceGUI) — sem troca de linguagem/framework em nenhuma camada.
+
 ## Arquitetura
 
 ```
