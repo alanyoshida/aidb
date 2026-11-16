@@ -1,0 +1,125 @@
+# Segurança
+
+← [README](../README.md)
+
+## Gate de operações destrutivas
+
+Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador canônico com sqlglot — [ADR 0017](adr/0017-gate-de-operacoes-destrutivas-com-classificador-sql.md), spec `destructive-gate`):
+
+| Classe | Exemplo | Comportamento |
+|---|---|---|
+| **normal** | `DELETE FROM clientes WHERE id = $1` (escopo por chave) | executa sem atrito |
+| **confirmável** | `DELETE FROM clientes` ou `WHERE cidade = 'X'` | **sempre recusada** em `enforce` ([ADR 0023](adr/0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md)) |
+| **bloqueada** | DDL (`DROP`/`TRUNCATE`/`ALTER`/...) | **sempre recusada** |
+
+Desde a etapa 4 do confinamento ([ADR 0021](adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)), o gate roda no **data plane**: cada sistema com conexão Postgres/MySQL ganha um **sidecar** (`<slug>-dbgate`, mesmo network namespace do container do sistema) que fala o protocolo de fio do banco e classifica cada statement antes de repassá-la — não depende de reconhecer SQL dentro de texto de bash, e cobre tanto o agente quanto a app gerada. O container do sistema nunca vê a credencial real: `DATABASE_URL_<NOME>` e o comando do MCP recebem um DSN de loopback sem usuário/senha; só o sidecar guarda o segredo e abre a conexão de verdade.
+
+- **Pelo agente/app**: dois listeners por conexão (um para o agente/MCP, outro para a app gerada via `DATABASE_URL_<NOME>`) atribuem a origem sem ambiguidade. Em `enforce`, `bloqueada` e `confirmável` têm o **mesmo tratamento**: nenhuma das duas chega ao banco, nenhuma pede decisão de ninguém — o proxy recusa na hora (erro de protocolo ao cliente). Achado ao vivo que motivou isso ([ADR 0023](adr/0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md)): segurar `confirmável` e pedir aprovação por um card genérico deixava passar um `DELETE` sem `WHERE` disfarçado, se alguém aprovasse por hábito. Quando há uma run ativa do agente, a recusa aparece no chat com a statement e o motivo.
+- **Dois modos, por flag** (`DB_GATE_MODE`): `enforce` (default) torna o proxy o gate de verdade — `bloqueada`/`confirmável` são recusadas na hora e os globs de SQL somem do `permission.bash` do agente (ficam só os não-SQL); `shadow` classifica e **audita sem bloquear nada**, útil pra observar um sistema específico antes de confiar nele (`appaiforge compare-gate-decisions`, ver [roadmap](roadmap-confinamento-do-agente.md)). Trocar entre os dois é mudança de configuração, não de código.
+- **Na app gerada**: a camada `dbgate.py` (obrigatória nas guidelines) dispara um diálogo com a contagem estimada de linhas antes de executar operações confirmáveis; DDL é recusada — cinto-e-suspensório com o proxy, que já classifica a mesma statement antes dela chegar ao banco. Essa confirmação é da interface da app pros usuários dela, sem relação com o chat agente↔editor acima.
+- **Auditoria**: toda decisão (aprovada/recusada/bloqueada/sombra) fica na seção "Gate de destrutivas" da página do sistema, com autor, SQL, origem e data.
+- Apps geradas **antes** desta mudança migram para a camada na próxima edição pelo agente.
+
+## Confinamento do agente
+
+Cada sistema roda num container próprio sob um de três **modos de execução**, fixado na criação
+e nunca trocado automaticamente ([ADR 0018](adr/0018-perfil-de-runtime-do-agente-e-identidade-reduzida.md),
+[ADR 0019](adr/0019-sandbox-seccomp-landlock-no-supervisor.md), roadmap
+[`roadmap-confinamento-do-agente.md`](roadmap-confinamento-do-agente.md)):
+
+| Modo | Usuário | Capabilities | Landlock + seccomp |
+|---|---|---|---|
+| `legacy` | root | todas | não |
+| `reduced` | `agent` (uid 1000) | nenhuma (`cap_drop: ALL`) | não |
+| `sandboxed` | `agent` (uid 1000) | nenhuma | **sim** |
+
+Sistema novo recebe `sandboxed` automaticamente se o host suporta Landlock; sem suporte, cai para
+`reduced` com aviso (ou recusa a criação com `APPAIFORGE_REQUIRE_SANDBOX=true`, modo fail-closed
+de produção). Sistemas criados antes do ADR 0018 ficam em `legacy` — ver "Migrar um sistema para
+`sandboxed`" abaixo.
+
+**Como o confinamento funciona** (modo `sandboxed`): o supervisor (`afsupervisor`, PID 1 do
+container) aplica dois mecanismos auto-impostos e não-privilegiados no processo **filho** que vai
+virar o agente (`opencode serve`), nunca em si mesmo — ambos são herdados por todo processo que o
+agente gerar (bash, python, o script que ele escrever) e **irrevogáveis** depois de aplicados:
+
+- **seccomp** nega um denylist de syscalls perigosas (`ptrace`, `bpf`, `mount`, `setns`,
+  `perf_event_open`, `process_vm_readv`/`writev`, `pivot_root`, `io_uring_setup`, `unshare` com
+  `CLONE_NEWUSER`) — tudo o mais é permitido.
+- **Landlock de filesystem** nega acesso fora do declarado no perfil do agente
+  (`appaiforge/agent_profiles.py`): leitura+execução só em `/workspace`, `/opencode-config`,
+  `/usr`, `/lib`, `/opt`, `/proc`, `/dev` e um conjunto explícito de arquivos sob `/etc`
+  (resolução de nome, fuso horário, cache do linker, cadeia de certificados — **não** o diretório
+  inteiro); escrita só em `/workspace`, `/tmp` e os caches do `$HOME` do agente. Qualquer coisa
+  fora dessas listas — `/etc/passwd`, `/etc/shadow`, `/root`, os workspaces de outros sistemas —
+  fica negada pelo kernel, não por um pedido de permissão que o agente poderia simplesmente
+  receber "sim" de um editor apressado.
+- **Landlock de rede** ([ADR 0022](adr/0022-confinamento-de-rede-por-porta-tcp-via-landlock.md)),
+  empilhado por cima do de filesystem: conexão TCP de saída só nas portas calculadas para o
+  sistema — o `agent_port` de cada conexão cadastrada (proxy de gate de banco, etapa 4), a porta do
+  broker de inferência quando habilitado, a porta do proxy HTTP(S) de saída (abaixo), e sempre 53
+  (DNS por TCP). Fecha o bypass que as etapas 3/4 deixavam aberto: antes, um agente confinado por
+  filesystem ainda alcançava o Postgres/MySQL real direto, por fora do proxy, bastando descobrir o
+  endereço — a regra de porta do Landlock é agnóstica de endereço, então nega isso mesmo que o
+  agente ache o host real.
+
+**O que isso substitui**: a permissão `external_directory` do próprio opencode (pedia confirmação
+no chat toda vez que o agente tocava um caminho fora do workspace, inclusive **falsos-positivos**
+de caminho absoluto já dentro dele) hoje é liberada sem perguntar
+(`permission.external_directory: "allow"`) — a barreira real passou a ser o Landlock, que o
+sistema operacional aplica de verdade e não depende de ninguém clicar em "Aprovar".
+
+**Proxy HTTP(S) de saída** ([ADR 0024](adr/0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md)):
+443 e 80 saíram da lista fixa do Landlock — a única saída HTTP(S) do agente passa por um sidecar
+(`<slug>-httpsproxy`, mesmo network namespace do sistema), que só libera `CONNECT`/requisição HTTP
+para um destino (`host:porta`) numa **allow-list calculada por sistema**: o host do provedor de LLM
+configurado (quando o broker está desligado) ou o host:porta do broker (quando está ligado — nunca
+os dois), mais os registros de pacote (`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`).
+`HTTP_PROXY`/`HTTPS_PROXY` são injetadas automaticamente no ambiente do container; o proxy nunca
+decripta TLS, só faz o túnel.
+
+- **Acesso à internet** (toggle na aba Configurações, por sistema): desligado, o proxy não libera
+  nenhum destino externo — o broker de inferência (quando habilitado) não é afetado, porque nunca
+  passou por este proxy.
+- **Modo restrito** (toggle + aba Domínios, por sistema): ligado, a allow-list acima é **substituída
+  por completo** pela lista de domínios cadastrada ali — nasce pré-populada com os registros de
+  pacote, editável pelo editor do sistema (mesmo acesso da aba Conexões).
+
+**Limites aceitos por ora**: exfiltração via LLM pelo próprio prompt é um limite irredutível (o
+endpoint é legítimo, o agente pode mandar conteúdo do workspace por ele). Nenhuma das camadas de
+Landlock cobre a app gerada, que roda sem confinamento desde sempre. Sistemas em `legacy`/`reduced`
+não têm nenhuma (ou só a de filesystem) dessas garantias.
+
+### Migrar um sistema de `legacy` para `sandboxed`
+
+Não existe CLI/UI para isso (modo é "fixado na criação e imutável" por desenho) — foi feito uma
+vez, manualmente, para os sistemas que existiam antes do ADR 0018. Se precisar de novo: sistemas
+`legacy` rodam como root, então o workspace inteiro é **dono de root** — trocar só o modo sem
+corrigir isso prende o agente (agora uid 1000) fora dos próprios arquivos. A ordem importa:
+
+```bash
+# 1. dono do workspace para o uid do agente (ANTES de trocar o modo — enquanto
+#    o container antigo ainda roda como root, o bind do host já está acessível
+#    de fora dele via outro container efêmero com a mesma imagem)
+docker run --rm --user root -v /opt/appaiforge/workspaces/<slug>:/workspace \
+  appaiforge/base:0.1.0 chown -R 1000:1000 /workspace
+
+# 2. troca o modo no banco e recria o container (dentro do container do portal)
+docker exec appaiforge-portal-1 python -c "
+from appaiforge.db import session_scope
+from appaiforge.models import System, ExecutionMode
+from appaiforge.services.systems import get_system
+from appaiforge.provisioning import provision_system
+
+with session_scope() as s:
+    row = s.query(System).filter(System.slug == '<slug>').one()
+    row.execution_mode = ExecutionMode.sandboxed
+    system_id = row.id
+
+provision_system(get_system(system_id))
+"
+```
+
+Recriar o container invalida qualquer sessão de chat aberta nesse sistema (reabre sozinha na
+próxima mensagem). Confirme depois: `docker inspect appaiforge-sys-<slug> --format '{{.Config.User}}'`
+deve mostrar `1000:1000`, e `docker exec appaiforge-sys-<slug> id` deve mostrar o usuário `agent`.
