@@ -8,11 +8,18 @@ hoje (`network_mode: container:<id>` exige o container principal existir primeir
 PVC (persiste entre recriações do Pod); arquivos de config via ConfigMap — não PVC: um PVC do
 `local-path-provisioner` fica no filesystem do NÓ do cluster, inacessível ao portal (que roda fora
 do cluster) para escrita direta, ao contrário do bind mount do driver Docker (design.md, D3,
-achado durante esta implementação)."""
+achado durante esta implementação). D3 resolveu isso para config (ConfigMap via API) mas deixou a
+escrita no workspace sem resolução — fechado pela change `fix-k8s-workspace-materialize-delete`:
+`write_workspace_files()` escreve no workspace via exec dentro do container do agente (mesmo
+mecanismo que `checkpoints._git_via_exec` já usava só para git), e `delete_workspace_pvc()` remove
+a PVC na exclusão definitiva do sistema."""
 
+import io
 import json
 import logging
 import os
+import tarfile
+import time
 
 from kubernetes import client as k8s
 from kubernetes import config as k8s_config
@@ -22,7 +29,7 @@ _TRAEFIK_GROUP = "traefik.io"
 _TRAEFIK_VERSION = "v1alpha1"
 
 from ..models import ExecutionMode, System
-from .base import ComputeUnitNotFound
+from .base import ComputeUnitNotFound, WorkspaceWriteError
 
 log = logging.getLogger(__name__)
 
@@ -319,6 +326,103 @@ def _workspace_pvc_name(slug: str) -> str:
     from .. import provisioning as _p
 
     return f"{_p.system_container_name(slug)}-workspace"
+
+
+def delete_workspace_pvc(slug: str) -> None:
+    """Remove a PVC do workspace do sistema — chamado só por `provisioning.delete_system`
+    (exclusão definitiva, agnóstica de driver; change `fix-k8s-workspace-materialize-delete`).
+    `remove()` desta classe (arquivamento/parada) deliberadamente NÃO chama isto, pra preservar o
+    workspace entre reprovisionamentos (docstring de `_ensure_workspace_pvc`). 404 é sucesso
+    (idempotente), mesmo padrão já usado para o Service e as CRDs do Traefik em `unpublish()`."""
+    from .. import provisioning as _p
+
+    settings = _p.get_settings()
+    namespace = settings.k8s_namespace
+    name = _workspace_pvc_name(slug)
+    api = _api()
+    try:
+        api.delete_namespaced_persistent_volume_claim(name, namespace)
+    except ApiException as exc:
+        if exc.status != 404:
+            raise
+
+
+def _wait_for_agent_container_started(pod_name: str, namespace: str, *, timeout: float = 30.0, interval: float = 1.0) -> None:
+    """Aguarda o container `agent` existir e ter iniciado, antes de um exec nele — condição mais
+    fraca e mais rápida que `is_healthy()` (que exige a readinessProbe), porque aqui só precisamos
+    de um processo pra exec'utar um shell dentro, não da app já respondendo; exigir a readiness
+    probe arriscaria um deadlock, já que ela pode depender de arquivos que só chegam via este
+    mesmo mecanismo (change `fix-k8s-workspace-materialize-delete`). Levanta `WorkspaceWriteError`
+    no timeout em vez de bloquear indefinidamente."""
+    api = _api()
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            pod = api.read_namespaced_pod(pod_name, namespace)
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+            pod = None
+        if pod is not None:
+            statuses = pod.status.container_statuses or []
+            agent_status = next((cs for cs in statuses if cs.name == "agent"), None)
+            if agent_status is not None and agent_status.started:
+                return
+            if agent_status is None and pod.status.phase == "Running":
+                return
+        if time.monotonic() >= deadline:
+            raise WorkspaceWriteError(
+                f"container 'agent' do Pod {pod_name!r} não iniciou em {timeout}s para exec"
+            )
+        time.sleep(interval)
+
+
+def write_workspace_files(system: System, files: dict[str, bytes]) -> None:
+    """Escreve `files` (caminho relativo a `/workspace` -> conteúdo) no workspace REAL do
+    sistema via exec na API do Kubernetes — generaliza `checkpoints._git_via_exec` (mesmo
+    mecanismo, usado lá só para git) para qualquer escrita de arquivo, achado real durante
+    `deploy-portal-in-cluster`: `materialize()` não tinha nenhum caminho local válido sob este
+    driver (a PVC só é visível de dentro do Pod). Empacota `files` num tar em memória e extrai
+    com um só exec (`tar -xf -`), criando subdiretórios (ex.: `portal_templates/`) e gravando
+    todos os arquivos numa chamada em vez de uma por arquivo — mesma técnica que `kubectl cp`
+    usa. `write_stdin` aceita `bytes` diretamente (frame binário do WebSocket, sem round-trip por
+    texto/UTF-8), então o conteúdo do tar não precisa de base64."""
+    from kubernetes.stream import stream
+
+    from .. import provisioning as _p
+    from ..edge import system_container_name
+
+    settings = _p.get_settings()
+    namespace = settings.k8s_namespace
+    pod_name = system_container_name(system.slug)
+    _wait_for_agent_container_started(pod_name, namespace)
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for rel_path, content in files.items():
+            info = tarfile.TarInfo(name=rel_path)
+            info.size = len(content)
+            info.mtime = int(time.time())
+            tar.addfile(info, io.BytesIO(content))
+
+    resp = stream(
+        _api().connect_get_namespaced_pod_exec,
+        pod_name,
+        namespace,
+        container="agent",
+        command=["tar", "-xf", "-", "-C", "/workspace"],
+        stderr=True,
+        stdin=True,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+    resp.write_stdin(buffer.getvalue())
+    resp.run_forever(timeout=60)
+    stderr = (resp.read_stderr() or "").strip()
+    returncode = resp.returncode
+    if returncode not in (0, None):
+        raise WorkspaceWriteError(f"tar -xf - -C /workspace: {stderr}")
 
 
 def _config_map_name(slug: str) -> str:

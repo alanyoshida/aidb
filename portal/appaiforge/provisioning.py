@@ -680,6 +680,13 @@ def delete_system(system: System, actor_id: str | None = None, actor_email: str 
     )
     stop_and_remove(system)
     unpublish_app(system.slug)
+    if get_settings().provisioning_driver == "kubernetes":
+        # workspace real é a PVC, não `workspaces_dir` local (change
+        # `fix-k8s-workspace-materialize-delete`) — só aqui, nunca em `stop_and_remove`/
+        # `driver.remove()`, que preserva a PVC para arquivamento/reprovisionamento.
+        from .drivers.kubernetes_driver import delete_workspace_pvc
+
+        delete_workspace_pvc(system.slug)
     workspace = os.path.join(get_settings().workspaces_dir, system.slug)
     if os.path.isdir(workspace):
         import shutil

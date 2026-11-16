@@ -5,9 +5,9 @@ confinamento, change `add-kubernetes-driver`; capability `container-driver-kuber
 num dict de módulo nem num import de topo, pra não forçar a dependência do cliente Kubernetes
 (instalada só quando o driver `kubernetes` é usado) em quem só provisiona via Docker."""
 
-from .base import ComputeUnitNotFound, ProvisioningDriver, UnknownDriver
+from .base import ComputeUnitNotFound, ProvisioningDriver, UnknownDriver, WorkspaceWriteError
 
-__all__ = ["ComputeUnitNotFound", "ProvisioningDriver", "UnknownDriver", "get_driver"]
+__all__ = ["ComputeUnitNotFound", "ProvisioningDriver", "UnknownDriver", "WorkspaceWriteError", "get_driver"]
 
 
 def get_driver() -> ProvisioningDriver:

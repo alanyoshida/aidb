@@ -25,7 +25,11 @@ class GitError(Exception):
 def workspace_dir(system: System) -> str:
     """Caminho do workspace visível ao PRÓPRIO processo do portal — só existe de verdade sob o
     driver Docker (bind mount compartilhado). Não usar para montar comandos sob o driver
-    Kubernetes; `_git` já trata isso internamente (change `add-kubernetes-driver`, task 8.3)."""
+    Kubernetes; `_git` já trata isso internamente (change `add-kubernetes-driver`, task 8.3).
+    Mesma ressalva vale para `guidelines.materialize()` e `provisioning.delete_system()` (change
+    `fix-k8s-workspace-materialize-delete`): sob o driver Kubernetes, eles escrevem/removem via
+    `drivers.kubernetes_driver.write_workspace_files()`/`delete_workspace_pvc()`, nunca por este
+    caminho."""
     return os.path.join(get_settings().workspaces_dir, system.slug)
 
 

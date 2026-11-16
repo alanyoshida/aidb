@@ -272,7 +272,11 @@ class AgentQueue:
             }
             # sem expunge aqui: expurgar antes do commit descartaria o UPDATE de status
 
-        # guidelines vigentes entram no workspace antes da execução (spec agent-harness)
+        # guidelines vigentes entram no workspace antes da execução (spec agent-harness).
+        # Sob o driver Kubernetes, materialize() escreve via exec e pode levantar
+        # WorkspaceWriteError (timeout de prontidão do container, falha do exec) — subclasse de
+        # OSError (change `fix-k8s-workspace-materialize-delete`), então já cai aqui, degradando
+        # a run exatamente como uma falha de escrita local sob o driver Docker.
         try:
             guidelines.materialize(system)
         except OSError:

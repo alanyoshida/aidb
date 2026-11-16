@@ -261,3 +261,43 @@ def test_eventos_sao_redigidos_antes_do_buffer(fake_workspace, clean_db):
     events_text = "\n".join(e.text + (e.meta.get("command") or "") for e in queue.buffers[run.id].snapshot())
     assert "senhona" not in events_text
     assert ":***@" in events_text
+
+
+def test_run_prossegue_quando_materialize_falha_sob_driver_kubernetes(fake_workspace, clean_db, monkeypatch):
+    """Change `fix-k8s-workspace-materialize-delete` (task 1.4): sob o driver Kubernetes,
+    materialize() escreve via exec e pode levantar `WorkspaceWriteError` (timeout de prontidão
+    do container, falha do exec) — subclasse de `OSError`, então `AgentQueue._execute` deve
+    degradar a run exatamente como já faz hoje para uma falha de escrita local (warn, segue sem
+    guidelines), em vez de deixar a exceção propagar e travar o worker."""
+    from appaiforge.drivers.base import WorkspaceWriteError
+    from appaiforge.config import get_settings
+
+    monkeypatch.setenv("APPAIFORGE_PROVISIONING_DRIVER", "kubernetes")
+    get_settings.cache_clear()
+
+    def _boom(system, files):
+        raise WorkspaceWriteError("container do agente não ficou pronto para exec em 30s")
+
+    monkeypatch.setattr("appaiforge.drivers.kubernetes_driver.write_workspace_files", _boom)
+
+    editor = auth.create_user("k8sfail@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "K8sFail", "k8s-fail-materialize")
+    queue = AgentQueue(FakeHarness(str(fake_workspace / "workspaces"), step_delay=0))
+    run = queue.enqueue(system.id, editor.id, "crie um CRUD")
+
+    from appaiforge.db import session_scope
+    from appaiforge.models import AgentRun
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        with session_scope() as s:
+            row = s.get(AgentRun, run.id)
+            if row is not None and row.status in (RunStatus.succeeded, RunStatus.failed, RunStatus.interrupted):
+                break
+        time.sleep(0.1)
+
+    with session_scope() as s:
+        row = s.get(AgentRun, run.id)
+        assert row.status == RunStatus.succeeded, "a run deveria prosseguir sem guidelines, não travar/falhar"
+
+    get_settings.cache_clear()

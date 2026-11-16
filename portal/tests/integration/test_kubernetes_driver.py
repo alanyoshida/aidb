@@ -393,6 +393,110 @@ def test_reconciliacao_recria_pod_deletado_manualmente(system):
     assert pod.metadata.uid != original_uid, "esperava um Pod NOVO (UID diferente), não o antigo"
 
 
+def test_materialize_grava_agents_md_e_templates_via_exec(system):
+    """Requirement 'Guidelines chegam ao workspace real do sistema' (capability
+    container-driver-kubernetes) — `materialize()` deve gravar AGENTS.md e os templates
+    canônicos dentro do Pod via exec, não num diretório local do processo do portal, que sob
+    este driver nunca é visto pelo agente (achado real, change
+    `fix-k8s-workspace-materialize-delete`)."""
+    import subprocess
+
+    from appaiforge import guidelines
+    from appaiforge.provisioning import provision_system
+    from appaiforge.edge import system_container_name
+
+    provision_system(system)
+    pod_name = system_container_name(system.slug)
+    _wait_pod_running(pod_name)
+
+    guidelines.materialize(system)
+
+    read_agents = subprocess.run(
+        [
+            "kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test",
+            "exec", pod_name, "-c", "agent", "--",
+            "cat", "/workspace/AGENTS.md",
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert read_agents.returncode == 0, f"stdout={read_agents.stdout!r} stderr={read_agents.stderr!r}"
+    assert read_agents.stdout == guidelines.current_content()
+
+    for name in guidelines.TEMPLATE_FILES:
+        read_template = subprocess.run(
+            [
+                "kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test",
+                "exec", pod_name, "-c", "agent", "--",
+                "cat", f"/workspace/portal_templates/{name}",
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert read_template.returncode == 0, f"{name}: stdout={read_template.stdout!r} stderr={read_template.stderr!r}"
+        with open(os.path.join(guidelines.TEMPLATES_PACKAGE_DIR, name)) as f:
+            assert read_template.stdout == f.read(), f"{name} divergiu do original"
+
+
+def test_materialize_falha_apos_timeout_se_container_nao_iniciou(system):
+    """Requirement 'Container do agente ainda não está pronto' — sem provisionar o Pod, o
+    exec-write não deve bloquear indefinidamente: espera por um tempo limitado e levanta
+    `WorkspaceWriteError` (subclasse de `OSError`) em vez disso."""
+    from appaiforge.drivers.base import WorkspaceWriteError
+    from appaiforge.drivers.kubernetes_driver import _wait_for_agent_container_started
+    from appaiforge.edge import system_container_name
+
+    pod_name = system_container_name(system.slug)  # nunca provisionado neste teste
+    with pytest.raises(WorkspaceWriteError):
+        _wait_for_agent_container_started(pod_name, "appaiforge-test", timeout=2.0, interval=0.5)
+
+
+def test_delete_workspace_pvc_e_idempotente(system):
+    """Requirement 'Remoção do armazenamento persistente do workspace na exclusão definitiva' —
+    uma segunda chamada (404 já tratado) não deve levantar."""
+    from appaiforge.drivers.kubernetes_driver import delete_workspace_pvc
+    from appaiforge.provisioning import provision_system
+
+    provision_system(system)  # garante que a PVC do workspace existe
+    delete_workspace_pvc(system.slug)
+    delete_workspace_pvc(system.slug)
+
+
+def test_exclusao_definitiva_remove_a_pvc_do_workspace(system):
+    """Requirement 'Remoção do armazenamento persistente do workspace na exclusão definitiva' —
+    `delete_system()` deve remover a PVC real, não só o diretório local inerte sob este driver
+    (achado real, change `fix-k8s-workspace-materialize-delete`): sem este tratamento, toda
+    exclusão definitiva deixava a PVC órfã no cluster."""
+    from kubernetes.client.rest import ApiException
+
+    from appaiforge.drivers.kubernetes_driver import _workspace_pvc_name
+    from appaiforge.provisioning import delete_system, provision_system
+
+    provision_system(system)
+    pvc_name = _workspace_pvc_name(system.slug)
+    _k8s_api().read_namespaced_persistent_volume_claim(pvc_name, "appaiforge-test")  # existe antes
+
+    delete_system(system)
+
+    with pytest.raises(ApiException) as exc_info:
+        _k8s_api().read_namespaced_persistent_volume_claim(pvc_name, "appaiforge-test")
+    assert exc_info.value.status == 404
+
+
+def test_arquivamento_preserva_a_pvc_do_workspace(system):
+    """Requirement 'Arquivamento e reprovisionamento preservam a PVC' — só `delete_system()`
+    remove a PVC (design.md, Decision 4); `archive_system()` (-> `stop_and_remove()` ->
+    `driver.remove()`) deve preservá-la, sem perda de conteúdo em caso de reativação futura."""
+    from appaiforge.drivers.kubernetes_driver import _workspace_pvc_name
+    from appaiforge.provisioning import archive_system, provision_system
+
+    provision_system(system)
+    pvc_name = _workspace_pvc_name(system.slug)
+
+    archive_system(system)
+
+    pvc = _k8s_api().read_namespaced_persistent_volume_claim(pvc_name, "appaiforge-test")
+    assert pvc is not None
+
+
 def test_checkpoint_via_exec_commita_e_sobrevive_a_recriacao(system):
     """Requirement de paridade (achado real, task 8.3): checkpoints git funcionam sob o driver
     Kubernetes via exec dentro do container, sem o portal precisar de acesso a filesystem

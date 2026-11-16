@@ -123,7 +123,23 @@ def materialize(system: System) -> str:
 
     As cópias são byte a byte com os originais em appaiforge/app_template/ — um teste
     garante que não divergem. Devolve o caminho do AGENTS.md.
+
+    Sob o driver Kubernetes, `workspaces_dir` não é o workspace real do sistema (a PVC só é
+    visível de dentro do Pod) — escreve via exec no container do agente em vez de no filesystem
+    local do portal (change `fix-k8s-workspace-materialize-delete`, achado real durante
+    `deploy-portal-in-cluster`: sem este tratamento, os arquivos nunca chegavam ao agente).
     """
+    if get_settings().provisioning_driver == "kubernetes":
+        from .drivers.kubernetes_driver import write_workspace_files
+
+        content = current_content().encode("utf-8")
+        files = {"AGENTS.md": content}
+        for name in TEMPLATE_FILES:
+            with open(os.path.join(TEMPLATES_PACKAGE_DIR, name), "rb") as f:
+                files[os.path.join("portal_templates", name)] = f.read()
+        write_workspace_files(system, files)
+        return "/workspace/AGENTS.md"
+
     system_dir = os.path.join(get_settings().workspaces_dir, system.slug)
     os.makedirs(system_dir, exist_ok=True)
     path = os.path.join(system_dir, "AGENTS.md")
