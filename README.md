@@ -30,6 +30,12 @@ Banco de produção  (PostgreSQL, MySQL ou BigQuery)
 
 ## Instalação
 
+Duas formas de subir o portal, conforme o **driver de provisionamento** (o que materializa cada
+sistema — container Docker ou Pod Kubernetes). O driver padrão, e o único validado para produção,
+é o Docker.
+
+### Opção 1 — Docker (padrão, produção)
+
 ```bash
 cd deploy
 docker compose up -d --build          # postgres + mysql + traefik + portal
@@ -49,7 +55,20 @@ docker compose -f deploy/docker-compose.yml exec portal appaiforge create-admin 
 
 Sem chave de LLM cadastrada, o portal opera em **modo fake** (todo o resto funciona) — para geração real, ver [Chave de LLM e broker de inferência](docs/llm-e-broker.md).
 
-Instalação alternativa, sob o driver de provisionamento Kubernetes (validação local via `kind` + Helm): ver [Driver Kubernetes](docs/driver-kubernetes.md).
+### Opção 2 — Kubernetes (driver alternativo, validação local)
+
+```bash
+docker build -f deploy/portal.Dockerfile -t appaiforge/portal:0.1.0 .
+kind load docker-image appaiforge/portal:0.1.0 --name appaiforge-dev
+
+helm install appaiforge-portal deploy/helm/appaiforge-portal \
+  --namespace appaiforge --create-namespace \
+  --kube-context kind-appaiforge-dev
+```
+
+Materializa cada sistema como um Pod em vez de container Docker; só validado contra um cluster
+`kind` local (nunca contra um cluster gerenciado real). Detalhes, pré-requisitos (Traefik no
+cluster) e o chart Helm completo: [Driver Kubernetes](docs/driver-kubernetes.md).
 
 ## Documentação
 
