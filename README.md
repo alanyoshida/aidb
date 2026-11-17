@@ -9,6 +9,10 @@ Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você
 - **Gate de SQL no data plane**: um `DROP` ou `DELETE` sem `WHERE` nunca chega ao banco — recusado por um sidecar classificador, sem pedir aprovação a ninguém.
 - **Segredos nunca tocam o container do sistema**: credenciais de banco e chaves de LLM ficam cifradas no portal; com o broker de inferência (opcional), o sistema nem recebe a chave real — só um token opaco revogável.
 - **Mesma lógica de negócio em Docker ou Kubernetes**: o driver de provisionamento é uma abstração comum, validada ponta a ponta nos dois (ver [Instalação](#instalação)).
+- **Mudanças planejadas pelo chat com OpenSpec**: o agente de cada sistema já vem com o OpenSpec
+  1.15.0 (versão pinada na imagem base, sem depender de rede) e os comandos `/opsx-propose`,
+  `/opsx-explore`, `/opsx-apply` e `/opsx-archive`. Ao digitar `/` no chat, o campo sugere os
+  comandos disponíveis no agente daquele sistema (ver [guia de uso](docs/guia-de-uso.md#chat)).
 - **Pilha 100% Python**, do portal (FastAPI + NiceGUI) à app gerada (NiceGUI) — sem troca de linguagem/framework em nenhuma camada.
 
 ## Arquitetura

@@ -35,7 +35,11 @@ def fake_opencode():
             if self.path == "/session":
                 self._json({"id": SESSION})
             elif self.path == f"/session/{SESSION}/prompt_async":
+                state.setdefault("prompts", []).append(json.loads(body or b"{}"))
                 self._json({"ok": True})
+            elif self.path == f"/session/{SESSION}/command":
+                state.setdefault("commands_sent", []).append(json.loads(body or b"{}"))
+                self._json({"ok": True}, state.get("command_status", 200))
             elif self.path == f"/session/{SESSION}/abort":
                 state["aborted"] = True
                 self._json({"ok": True})
@@ -49,6 +53,10 @@ def fake_opencode():
                 self._json({"error": "not found"}, 404)
 
         def do_GET(self):
+            if self.path == "/command":
+                if state.get("commands_status", 200) != 200:
+                    return self._json({"error": "x"}, state["commands_status"])
+                return self._json(state.get("commands", []))
             if self.path == "/event":
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -289,3 +297,71 @@ def test_question_asked_normalizado_e_reply_reject(fake_opencode):
     assert replies[0][0] == "/question/que_123/reply"
     assert json.loads(replies[0][1]) == {"answers": [["Sim"]]}
     assert replies[1][0] == "/question/que_999/reject"
+
+
+# --- comandos do agente (change add-openspec-to-system-container, tasks 4.2/4.3) ---
+
+_COMMANDS = [
+    {"name": "opsx-propose", "description": "Propose a new change", "source": "command",
+     "template": "Propose a new change - create it.\n\n**Provided arguments**: $ARGUMENTS"},
+    {"name": "opsx-apply", "description": "Implement tasks", "source": "command", "template": "Apply.\n$ARGUMENTS"},
+    {"name": "openspec-propose", "description": "skill", "source": "skill", "template": "skill"},
+]
+
+
+def test_list_commands_so_comandos_com_nome_e_descricao(fake_opencode):
+    fake_opencode["commands"] = _COMMANDS
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    assert harness.list_commands({"slug": "erp"}) == [
+        {"name": "opsx-propose", "description": "Propose a new change"},
+        {"name": "opsx-apply", "description": "Implement tasks"},
+    ]
+
+
+def test_list_commands_falha_vira_lista_vazia(fake_opencode):
+    fake_opencode["commands_status"] = 500
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    assert harness.list_commands({"slug": "erp"}) == []
+    assert OpencodeHarness(lambda sys_: "http://127.0.0.1:9").list_commands({"slug": "erp"}) == []
+
+
+def test_comando_conhecido_vai_pelo_endpoint_de_comando(fake_opencode):
+    fake_opencode["commands"] = _COMMANDS
+    fake_opencode["events"] = [
+        # eco do template expandido chegando antes do message.updated: não vira resposta
+        _evt("message.part.updated", sessionID=SESSION,
+             part={"type": "text", "text": "Propose a new change - create it.\n\n**Provided arguments**: filtro por data", "messageID": "msg_u"}),
+        _evt("message.updated", sessionID=SESSION, info={"id": "msg_a", "role": "assistant"}),
+        _evt("message.part.updated", sessionID=SESSION, part={"type": "text", "text": "change criada", "messageID": "msg_a"}),
+        _evt("session.status", sessionID=SESSION, status={"type": "idle"}),
+    ]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    events = _run(harness, {"slug": "erp", "provider": "glm", "model": "glm-4.6"}, prompt="/opsx-propose filtro por data")
+    sent = fake_opencode["commands_sent"]
+    from appaiforge.harness.opencode import COMMAND_PROJECT_HINT
+
+    assert sent == [{"command": "opsx-propose", "arguments": f"filtro por data\n\n{COMMAND_PROJECT_HINT}",
+                     "model": "zhipuai/glm-4.6"}]
+    assert "/workspace" in COMMAND_PROJECT_HINT
+    assert "prompts" not in fake_opencode
+    messages = [e.text for e in events if e.kind == "message"]
+    assert messages == ["change criada"]
+    assert events[-1].kind == "run_finished"
+
+
+def test_texto_comum_e_barra_desconhecida_seguem_pelo_prompt(fake_opencode):
+    fake_opencode["commands"] = _COMMANDS
+    fake_opencode["events"] = [_evt("session.status", sessionID=SESSION, status={"type": "idle"})]
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    _run(harness, {"slug": "erp"}, prompt="crie um CRUD")
+    _run(harness, {"slug": "erp"}, prompt="/nao-existe x")
+    assert [p["parts"][0]["text"] for p in fake_opencode["prompts"]] == ["crie um CRUD", "/nao-existe x"]
+    assert "commands_sent" not in fake_opencode
+
+
+def test_comando_recusado_pelo_agente_vira_run_error(fake_opencode):
+    fake_opencode["commands"] = _COMMANDS
+    fake_opencode["command_status"] = 500
+    harness = OpencodeHarness(lambda sys_: fake_opencode["base"])
+    events = _run(harness, {"slug": "erp"}, prompt="/opsx-apply minha-change")
+    assert events[-1].kind == "run_error" and "/opsx-apply" in events[-1].text

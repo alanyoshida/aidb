@@ -40,6 +40,13 @@ def opencode_provider(provider: str) -> tuple[str, str]:
     return PROVIDER_MAP.get(provider, (provider, f"{provider.upper()}_API_KEY"))
 
 
+COMMAND_PROJECT_HINT = (
+    "(Contexto da plataforma: o projeto deste sistema é /workspace — o OpenSpec já está "
+    "inicializado lá. Rode o CLI `openspec` a partir de /workspace, ex.: "
+    "`cd /workspace && openspec list --json`.)"
+)
+
+
 class OpencodeHarness(HarnessPort):
     def __init__(self, resolve_base_url: Callable[[dict], str], timeout: float = 30.0):
         self.resolve_base_url = resolve_base_url
@@ -55,6 +62,9 @@ class OpencodeHarness(HarnessPort):
         # texto antes do evento que anuncia a mensagem; tratar "role ainda
         # desconhecido" como "esconder" fazia a resposta real sumir do chat)
         self._pending_prompt: dict[str, str] = {}
+        # sessionID -> início fixo do template de um `/comando` em andamento: com o endpoint de
+        # comando, a mensagem de usuário gravada é o template expandido, não o texto digitado
+        self._pending_template: dict[str, str] = {}
 
     def create_session(self, system: dict) -> str:
         base = self.resolve_base_url(system)
@@ -113,6 +123,45 @@ class OpencodeHarness(HarnessPort):
         except httpx.HTTPError as exc:
             log.warning("falha ao rejeitar pergunta do agente (%s): %s", request_id, exc)
 
+    COMMAND_LIST_TIMEOUT = 2.0
+
+    def _fetch_commands(self, system: dict) -> list[dict]:
+        """`GET /command` do opencode serve (confirmado na 1.19.5 — design D5)."""
+        base = self.resolve_base_url(system)
+        try:
+            resp = httpx.get(f"{base}/command", timeout=self.COMMAND_LIST_TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            return []
+        return [c for c in data if isinstance(c, dict) and c.get("name")] if isinstance(data, list) else []
+
+    def list_commands(self, system: dict) -> list[dict]:
+        """Só `source == "command"` (arquivos `.opencode/commands/`): as skills de mesmo
+        propósito também aparecem em `/command` e duplicariam cada fluxo no autocomplete."""
+        return [
+            {"name": c["name"], "description": c.get("description") or ""}
+            for c in self._fetch_commands(system)
+            if c.get("source", "command") == "command"
+        ]
+
+    def _command_for(self, system: dict, prompt: str) -> tuple[str, str, str] | None:
+        """(nome, argumentos, template) quando o prompt é `/<comando conhecido> args`."""
+        text = prompt.strip()
+        if not text.startswith("/") or text.startswith("//"):
+            return None
+        head, _, args = text[1:].partition(" ")
+        if not head:
+            return None
+        for c in self._fetch_commands(system):
+            if c["name"] == head:
+                return head, args.strip(), str(c.get("template") or "")
+        return None
+
+    def _template_prefix(self, template: str) -> str:
+        fixed = template.split("$ARGUMENTS", 1)[0].strip()
+        return fixed[:200]
+
     def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
         on_event(RunEvent("run_started", meta={"session_id": session_id}))
         base = self.resolve_base_url(system)
@@ -120,6 +169,10 @@ class OpencodeHarness(HarnessPort):
         # pelo catálogo e pode nem servir para chat (já veio um de imagem),
         # respondendo sem nenhum texto. O provedor/modelo do sistema manda.
         provider_id, _ = opencode_provider(system.get("provider", ""))
+        command = self._command_for(system, prompt)
+        if command is not None:
+            self._run_command(system, session_id, prompt, command, provider_id, on_event)
+            return
         payload: dict = {"parts": [{"type": "text", "text": prompt}]}
         if provider_id and system.get("model"):
             payload["model"] = {"providerID": provider_id, "modelID": system["model"]}
@@ -133,8 +186,57 @@ class OpencodeHarness(HarnessPort):
         resp.raise_for_status()
 
         self._pending_prompt[session_id] = prompt.strip()
+        self._stream_events(base, session_id, on_event)
+
+    def _run_command(self, system: dict, session_id: str, prompt: str,
+                     command: tuple[str, str, str], provider_id: str, on_event) -> None:
+        """`/<comando> args` vai pelo endpoint de comando do opencode, que expande o template
+        do comando (o `prompt_async` mandaria o texto cru ao modelo — task 4.1/4.3). O endpoint
+        só responde ao fim da execução, então é disparado em segundo plano com o stream de
+        eventos já conectado (nenhum evento do começo se perde)."""
+        base = self.resolve_base_url(system)
+        name, args, template = command
+        # O opencode do sistema roda em /opencode-config (fora do workspace) e o CLI do OpenSpec
+        # procura a raiz a partir do diretório atual: sem isto o agente não acha o projeto e
+        # pergunta se deve inicializar um novo (achado na validação real). Vai junto dos
+        # argumentos, que o template do comando inclui em $ARGUMENTS.
+        payload: dict = {"command": name, "arguments": f"{args}\n\n{COMMAND_PROJECT_HINT}".strip()}
+        if provider_id and system.get("model"):
+            payload["model"] = f"{provider_id}/{system['model']}"
+        outcome: dict = {}
+
+        def fire() -> None:
+            try:
+                r = httpx.post(f"{base}/session/{session_id}/command", json=payload, timeout=None)
+                outcome["status"] = r.status_code
+                outcome["body"] = r.text[:300]
+            except httpx.HTTPError as exc:
+                outcome["error"] = exc
+
+        self._pending_prompt[session_id] = prompt.strip()
+        self._pending_template[session_id] = self._template_prefix(template)
+
+        def started(_sse) -> str | None:
+            thread = threading.Thread(target=fire, daemon=True)
+            thread.start()
+            thread.join(timeout=1.5)  # falha imediata (sessão expirada, comando recusado)
+            if outcome.get("status") == 404:
+                raise SessionExpiredError(f"sessão opencode {session_id!r} não existe mais")
+            if "error" in outcome or outcome.get("status", 200) >= 400:
+                detail = outcome.get("error") or f"HTTP {outcome.get('status')}: {outcome.get('body', '')}"
+                return f"o agente recusou o comando /{name}: {detail}"
+            return None
+
+        self._stream_events(base, session_id, on_event, on_connected=started)
+
+    def _stream_events(self, base: str, session_id: str, on_event, on_connected=None) -> None:
         try:
             with httpx.stream("GET", f"{base}/event", timeout=None) as sse:
+                if on_connected is not None:
+                    failure = on_connected(sse)
+                    if failure:
+                        on_event(RunEvent("run_error", text=failure))
+                        return
                 for line in sse.iter_lines():
                     if not line.startswith("data: "):
                         continue
@@ -155,6 +257,7 @@ class OpencodeHarness(HarnessPort):
         finally:
             self._aborting.discard(session_id)
             self._pending_prompt.pop(session_id, None)
+            self._pending_template.pop(session_id, None)
 
     def _normalize(self, envelope: dict, session_id: str) -> RunEvent | None:
         etype = envelope.get("type")
@@ -209,6 +312,9 @@ class OpencodeHarness(HarnessPort):
                 role = self._message_roles.get(part.get("messageID"))
                 if role == "user":
                     return None
+                template = self._pending_template.get(session_id)
+                if role is None and template and text.startswith(template):
+                    return None  # eco do `/comando`: o template expandido é a mensagem do editor
                 if role is None and text == self._pending_prompt.get(session_id):
                     # `message.updated` (que diria o role) ainda não chegou —
                     # texto idêntico ao prompt recém-enviado é o eco da

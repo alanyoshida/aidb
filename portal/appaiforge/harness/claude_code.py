@@ -86,6 +86,10 @@ class ClaudeCodeHarness(HarnessPort):
     def reject_question(self, system: dict, session_id: str, request_id: str) -> None:
         return None
 
+    def list_commands(self, system: dict) -> list[dict]:
+        """Fora do escopo da change add-openspec-to-system-container: sem autocomplete."""
+        return []
+
     def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
         on_event(RunEvent("run_started", meta={"session_id": session_id}))
         base = self.resolve_base_url(system)

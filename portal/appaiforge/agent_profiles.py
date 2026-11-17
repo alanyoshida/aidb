@@ -64,6 +64,10 @@ PROFILES: dict[str, dict] = {
             "/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/opencode",
             "/etc/ssl/certs", "/etc/ssl/cert.pem", "/etc/ssl/ca-bundle.pem",
             "/etc/openssl/certs", "/etc/pki",
+            # Config do OpenSSL lida na inicialização de todo processo Node — sem ela o CLI do
+            # OpenSpec aborta com erro de config sob Landlock (achado na validação real da change
+            # add-openspec-to-system-container). Arquivo de config, sem segredo.
+            "/etc/ssl/openssl.cnf",
         ],
         # Além de /workspace, o mapa real de escrita de uma geração completa
         # (etapa 1, docs/roadmap-confinamento-do-agente.md) mostrou o agente
