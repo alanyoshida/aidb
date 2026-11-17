@@ -55,6 +55,31 @@ secrets:
   secretKey: "change-me-in-production"
   dbGateProxyServiceToken: "troque-este-token"
   postgresPassword: "appaiforge"
+  # Change add-oidc-sso — chaves opcionais (vazio = não usado). Com existingSecret,
+  # inclua `oidcClientSecret` e/ou `breakglassPasswordHash` no Secret externo.
+  oidcClientSecret: ""
+  # Hash de `appaiforge hash-password` (sem escapar o $: aqui não há interpolação).
+  breakglassPasswordHash: ""
+
+# Autenticação (change add-oidc-sso). "local" (e-mail/senha) ou "oidc" (SSO contra
+# IdP externo — o chart não implanta IdP). O modo fica gravado na base no primeiro
+# boot; trocar depois faz o portal recusar subir.
+auth:
+  mode: local
+  # URL pública do portal, como o navegador a vê (base do redirect_uri do OIDC).
+  publicBaseUrl: ""
+  oidc:
+    issuer: ""
+    clientId: ""
+    # Base interna do IdP para chamadas servidor-a-servidor, quando o Pod não
+    # alcança o endereço público (vazio = usa o emissor).
+    internalBaseUrl: ""
+    scopes: "openid email profile"
+    rolesClaim: "realm_access.roles"
+    groupsClaim: "groups"
+  # Admin de emergência (os dois modos); a senha vem de secrets.breakglassPasswordHash.
+  breakglass:
+    email: ""
 
 portal:
   # Driver de provisionamento ativo. Este chart só faz sentido com "kubernetes";

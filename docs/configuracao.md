@@ -23,5 +23,15 @@
 | `DB_GATE_MODE` | `enforce` | `enforce` o sidecar recusa bloqueada/confirmável na hora, sem aprovação (ADR 0021/0023); `shadow` audita sem bloquear — ver [Segurança](seguranca.md) |
 | `DB_GATE_PROXY_SERVICE_TOKEN` | — | segredo compartilhado entre o sidecar e o portal (mesmo padrão do broker) |
 | `SEED_DEMO_ADMIN` | — | `1` semeia o admin de dev quando não há usuários (nunca em produção) |
+| `AUTH_MODE` | `local` | `local` (e-mail/senha) ou `oidc` (SSO); gravado no primeiro boot, não muda depois — ver [Autenticação](autenticacao.md) |
+| `PUBLIC_BASE_URL` | — | URL pública do portal (obrigatória no modo `oidc`; base do `redirect_uri`) |
+| `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | IdP e client confidencial (obrigatórios no modo `oidc`) |
+| `OIDC_INTERNAL_BASE_URL` | — | base interna do IdP para discovery/token/JWKS |
+| `OIDC_SCOPES` / `OIDC_ROLES_CLAIM` / `OIDC_GROUPS_CLAIM` | `openid email profile` / `realm_access.roles` / `groups` | escopos e claims de papel e grupos |
+| `OIDC_REVALIDATE_SECONDS` / `OIDC_NETWORK_GRACE_SECONDS` | 300 / 60 | revalidação da sessão no IdP e tolerância a IdP fora do ar |
+| `BREAKGLASS_EMAIL` / `BREAKGLASS_PASSWORD_HASH` | — | admin de emergência (hash de `appaiforge hash-password`) |
+| `BREAKGLASS_SESSION_HOURS` | 8 | duração máxima da sessão do break-glass |
+| `LOGIN_RATE_LIMIT_ATTEMPTS` / `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | 5 / 900 | falhas por IP+e-mail que bloqueiam o login local, e a janela |
+| `IDENTITY_TOKEN_TTL_SECONDS` | 60 | validade do JWT de identidade entregue às apps |
 
 Limites: CPU/memória aplicados via Docker; **quota de disco** requer storage driver com suporte a `storage-opt` (overlay2/ext4 não suporta — o container sobe sem quota e o portal registra a ressalva).

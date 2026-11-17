@@ -101,6 +101,10 @@ Cada sistema roda isolado, com várias camadas independentes — uma falha numa 
 - **Segredos cifrados em repouso**: chaves de provedor de LLM e credenciais de conexão de banco
   ficam cifradas no Postgres do portal, nunca em texto puro
   ([ADR 0007](docs/adr/0007-metadados-em-postgres-e-credenciais-cifradas.md)).
+- **Autenticação local ou SSO (OIDC)**, escolhida por ENV e travada na instalação, com admin
+  break-glass; o acesso a cada app é verificado pelo portal a cada requisição e a app recebe a
+  identidade num JWT restrito a ela ([ADR 0027](docs/adr/0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md),
+  ver [Autenticação](docs/autenticacao.md)).
 - **RBAC**: tipo global por usuário — `admin` (tudo), `editor` (cria e gerencia sistemas) ou
   `app_user` (só usa as apps de sistemas a que tem acesso); sem papel por sistema
   ([ADR 0014](docs/adr/0014-rbac-com-tipos-globais-de-usuario.md)).
@@ -119,6 +123,7 @@ os ADRs linkados acima.
 | Tema | Onde |
 |---|---|
 | Criar um sistema, chat, editor, aparência | [`docs/guia-de-uso.md`](docs/guia-de-uso.md) |
+| Login local, SSO por OIDC (Keycloak), break-glass e acesso às apps | [`docs/autenticacao.md`](docs/autenticacao.md) |
 | Gate de operações destrutivas e confinamento do agente | [`docs/seguranca.md`](docs/seguranca.md) |
 | Chave de LLM e broker de inferência (LiteLLM) | [`docs/llm-e-broker.md`](docs/llm-e-broker.md) |
 | Instalação sob o driver Kubernetes (chart Helm) | [`docs/driver-kubernetes.md`](docs/driver-kubernetes.md) |

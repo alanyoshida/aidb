@@ -31,6 +31,13 @@ def k8s_env(tmp_path, monkeypatch):
     monkeypatch.setenv("APPAIFORGE_HOST_CONFIG_DIR", str(tmp_path / "configs"))
     monkeypatch.setenv("APPAIFORGE_PROVISIONING_DRIVER", "kubernetes")
     monkeypatch.setenv("APPAIFORGE_K8S_NAMESPACE", "appaiforge-test")
+    # forwardAuth das rotas de app (change add-oidc-sso) chama o portal pelo DNS do Service
+    # do portal implantado no cluster pelo chart; precisa ser uma versão com
+    # /internal/edge/auth/{slug}.
+    monkeypatch.setenv(
+        "APPAIFORGE_PORTAL_INTERNAL_URL",
+        os.environ.get("APPAIFORGE_TEST_K8S_PORTAL_URL", "http://appaiforge-portal.appaiforge.svc.cluster.local:8080"),
+    )
     from appaiforge.config import get_settings
 
     get_settings.cache_clear()
@@ -82,7 +89,7 @@ def _cleanup(slug: str) -> None:
                 raise
 
     custom = k8s.CustomObjectsApi()
-    for plural, object_name in (("ingressroutes", name), ("middlewares", f"{name}-strip")):
+    for plural, object_name in (("ingressroutes", name), ("middlewares", f"{name}-strip"), ("middlewares", f"{name}-auth")):
         try:
             custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", namespace, plural, object_name)
         except ApiException as exc:
@@ -276,9 +283,10 @@ def test_publish_app_roteia_pelo_ingress_externo(system):
     _wait_pod_running(pod_name)
     publish_app(system)
 
-    # o placeholder do afsupervisor (nenhuma app gerada ainda) responde 200 ou 403 (token
-    # ausente), nunca uma falha de conexão — confirma que a cadeia host->Traefik->Service->Pod
-    # está de ponta a ponta, sem precisar de uma app real gerada (fora do escopo desta task).
+    # Sem sessão, o forwardAuth (change add-oidc-sso) responde 302 para o login do portal —
+    # prova que Traefik -> Middleware forwardAuth -> portal está de ponta a ponta; com o
+    # portal do cluster numa versão anterior ao forwardAuth, o 404 dele vazaria aqui e o
+    # teste falharia (sinal de que o chart precisa ser atualizado antes).
     # Retry curto: o provider CRD do Traefik observa IngressRoute/Service por informers
     # separados — o evento da IngressRoute pode chegar antes do da Service já criada,
     # gerando um 404 transitório até o próximo resync (achado real, não um bug do driver).
@@ -289,10 +297,10 @@ def test_publish_app_roteia_pelo_ingress_externo(system):
             capture_output=True, text=True, timeout=15,
         )
         last_code = result.stdout.strip()
-        if last_code in ("200", "403"):
+        if last_code == "302":
             break
         time.sleep(1)
-    assert last_code in ("200", "403"), f"último código: {last_code!r}"
+    assert last_code == "302", f"último código: {last_code!r}"
 
 
 def test_harness_alcancavel_pelo_service_interno(system):

@@ -1,14 +1,18 @@
 """Administração de usuários, grupos, chaves de LLM, auditoria e guidelines
 (specs portal-identity, llm-provider-keys, management-audit, agent-harness)."""
 
+from zoneinfo import ZoneInfo
+
 from nicegui import ui
 from sqlalchemy import select
 
 from .. import guidelines
+from ..auth_mode import is_oidc
+from ..config import get_settings
 from ..db import session_scope
 from ..models import System, User
 from ..services import audit, catalog, connections, directory, provider_keys
-from .common import get_current_user, notify, render_header
+from .common import get_current_user, redirect_to_login, notify, render_header
 
 _USER_TYPES = ["admin", "editor", "app_user"]
 
@@ -23,7 +27,7 @@ def register() -> None:
     def admin_page() -> None:
         user = get_current_user()
         if user is None:
-            ui.navigate.to("/login")
+            redirect_to_login()
             return
         if not user.is_admin:
             render_header(user)
@@ -55,10 +59,19 @@ def register() -> None:
 
 
 def _users_panel(user: User) -> None:
+    oidc_mode = is_oidc()
+
+    def _last_login(dt) -> str:
+        if dt is None:
+            return "nunca entrou"
+        local = dt.astimezone(ZoneInfo(get_settings().display_timezone))
+        return "último login " + local.strftime("%d/%m/%Y %H:%M")
+
     def refresh() -> None:
         users_box.clear()
         with users_box:
-            for email, utype, active in directory.list_users():
+            for row in directory.list_users_overview():
+                email, utype, active = row["email"], row["type"], row["active"]
                 with ui.card().classes("w-full").props(f"data-testid=user-card:{email}"):
                     with ui.row().classes("items-center gap-2"):
                         ui.icon("person").classes("text-gray-500")
@@ -67,6 +80,18 @@ def _users_panel(user: User) -> None:
                         ui.badge("Sim" if active else "Não").props(
                             "color=positive" if active else "color=neutral text-color=neutraltext"
                         )
+                        if row["break_glass"]:
+                            ui.badge("break-glass").props("color=negative data-testid=user-breakglass")
+                    if oidc_mode:
+                        ui.label(_last_login(row["last_login_at"])).classes("text-xs text-gray-500").props(
+                            "data-testid=user-last-login"
+                        )
+                        continue
+                    if row["break_glass"]:
+                        ui.label("Definido por configuração (ENV); não é editável aqui.").classes(
+                            "text-xs text-gray-500"
+                        )
+                        continue
                     with ui.row().classes("gap-2"):
                         ui.button("Editar tipo", icon="badge", on_click=lambda e=email, t=utype: open_type_dialog(e, t)).props("dense outline data-testid=user-edit-type")
                         ui.button("Desativar" if active else "Ativar", icon="toggle_off" if active else "toggle_on", on_click=lambda e=email, a=active: toggle_active(e, a)).props("dense outline data-testid=user-toggle-active")
@@ -146,12 +171,20 @@ def _users_panel(user: User) -> None:
         delete_message.set_text(f"Excluir o usuário '{target_email}'?{extra}")
         delete_dialog.open()
 
-    ui.button("Novo usuário", icon="add", on_click=open_create_dialog).classes("mb-3")
+    if oidc_mode:
+        ui.label(
+            "Usuários, tipos e desativação são geridos pelo IdP (SSO). Aqui aparecem os que já "
+            "entraram no portal."
+        ).classes("text-sm text-gray-600 mb-3").props("data-testid=users-managed-by-idp")
+    else:
+        ui.button("Novo usuário", icon="add", on_click=open_create_dialog).classes("mb-3")
     users_box = ui.column().classes("w-full max-w-3xl gap-2")
     refresh()
 
 
 def _groups_panel(user: User) -> None:
+    oidc_mode = is_oidc()
+
     def refresh() -> None:
         listing.clear()
         groups = directory.list_groups()
@@ -162,7 +195,8 @@ def _groups_panel(user: User) -> None:
             for name, emails, slugs in groups:
                 with ui.card().classes("w-full").props(f"data-testid=group-card:{name}"):
                     ui.label(name).classes("font-semibold")
-                    ui.label(f"membros: {', '.join(emails) or '—'}").classes("text-sm text-gray-600")
+                    if not oidc_mode:
+                        ui.label(f"membros: {', '.join(emails) or '—'}").classes("text-sm text-gray-600")
                     ui.label(f"sistemas: {', '.join(slugs) or '—'}").classes("text-sm text-gray-600")
                     with ui.row().classes("gap-2"):
                         # Remover membro/Desvincular também levam color=negative: são
@@ -170,13 +204,18 @@ def _groups_panel(user: User) -> None:
                         # indistinguíveis de Renomear (achado do critique — mesmo
                         # padrão de "remover X" usado em Conexões/Provedores).
                         ui.button("Renomear", icon="edit", on_click=lambda n=name: open_rename(n)).props("dense outline data-testid=group-rename")
-                        ui.button("Remover membro", icon="person_remove", on_click=lambda n=name, e=emails: open_remove_member(n, e)).props("dense outline color=negative data-testid=group-remove-member")
+                        if not oidc_mode:
+                            ui.button("Remover membro", icon="person_remove", on_click=lambda n=name, e=emails: open_remove_member(n, e)).props("dense outline color=negative data-testid=group-remove-member")
                         ui.button("Desvincular sistema", icon="link_off", on_click=lambda n=name, s=slugs: open_unlink(n, s)).props("dense outline color=negative data-testid=group-unlink")
                         ui.button("Excluir", icon="delete", on_click=lambda n=name: open_delete(n)).props("dense outline color=negative data-testid=group-delete")
 
-    def _simple_dialog(action, testid, label, icon):
+    def _simple_dialog(action, testid, label, icon, warning=None):
         with ui.dialog() as dlg, ui.card().classes("w-96"):
             ui.label(label).classes("font-semibold text-lg")
+            if warning:
+                ui.label(warning).classes("text-xs").style("color: var(--ap-warning, #b45309)").props(
+                    f"data-testid={testid}-warning"
+                )
             field = ui.input().classes("w-full").props(f"data-testid={testid}")
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Cancelar", on_click=dlg.close).props("flat")
@@ -185,7 +224,31 @@ def _groups_panel(user: User) -> None:
 
     with ui.dialog() as group_dialog, ui.card().classes("w-96"):
         ui.label("Novo grupo").classes("font-semibold text-lg")
+        if oidc_mode:
+            ui.label("Use exatamente o nome do grupo no IdP.").classes("text-xs text-gray-500")
         gname = ui.input("Nome do grupo").classes("w-full").props("data-testid=new-group-name")
+        gname_hint = ui.label("").classes("text-xs").style("color: var(--ap-warning, #b45309)").props(
+            "data-testid=new-group-hint"
+        )
+        suggestions_box = ui.row().classes("gap-1 flex-wrap")
+
+        def update_hint() -> None:
+            gname_hint.set_text(directory.group_name_hint(gname.value or "") or "")
+
+        gname.on_value_change(lambda _: update_hint())
+
+        def fill_suggestions() -> None:
+            suggestions_box.clear()
+            if not oidc_mode:
+                return
+            names = directory.suggested_group_names()
+            with suggestions_box:
+                if names:
+                    ui.label("Vistos em logins, ainda não cadastrados:").classes("text-xs text-gray-500 w-full")
+                for n in names:
+                    ui.chip(n, icon="group_add", on_click=lambda n=n: gname.set_value(n)).props(
+                        f"dense clickable data-testid=group-suggestion:{n}"
+                    )
 
         def create_group_action() -> None:
             try:
@@ -202,6 +265,8 @@ def _groups_panel(user: User) -> None:
 
     def open_group_dialog() -> None:
         gname.set_value("")
+        gname_hint.set_text("")
+        fill_suggestions()
         group_dialog.open()
 
     with ui.dialog() as member_dialog, ui.card().classes("w-96"):
@@ -247,7 +312,7 @@ def _groups_panel(user: User) -> None:
 
     rename_dialog, rename_input = _simple_dialog(
         lambda value, dlg: (directory.rename_group(group_target["name"], value, user), dlg.close(), refresh()),
-        "group-rename-name", "Renomear grupo", "edit",
+        "group-rename-name", "Renomear grupo", "edit", warning=directory.rename_warning(),
     )
     group_target: dict = {"name": None}
 
@@ -315,7 +380,8 @@ def _groups_panel(user: User) -> None:
 
     with ui.row().classes("mb-3 gap-2"):
         ui.button("Novo grupo", icon="add", on_click=open_group_dialog)
-        ui.button("Adicionar membro a um grupo", icon="person_add", on_click=open_member_dialog)
+        if not oidc_mode:
+            ui.button("Adicionar membro a um grupo", icon="person_add", on_click=open_member_dialog)
         ui.button("Vincular a sistema", icon="link", on_click=open_link_dialog)
 
     listing = ui.column().classes("w-full max-w-3xl gap-2")

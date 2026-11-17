@@ -24,6 +24,31 @@ from .models import AgentRun, ChatSession, RunStatus, TokenUsage, System, User, 
 log = logging.getLogger(__name__)
 
 
+def _resume_run(run_id: str) -> None:
+    """awaiting_approval -> running num UPDATE condicional e atômico: nunca sobrescreve um estado
+    final que o worker já tenha gravado."""
+    from sqlalchemy import update
+
+    with session_scope() as s:
+        s.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run_id, AgentRun.status == RunStatus.awaiting_approval)
+            .values(status=RunStatus.running)
+        )
+
+
+def _pause_run(run_id: str) -> None:
+    """running -> awaiting_approval (só quando a entrega da decisão ao harness falhou)."""
+    from sqlalchemy import update
+
+    with session_scope() as s:
+        s.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run_id, AgentRun.status == RunStatus.running)
+            .values(status=RunStatus.awaiting_approval)
+        )
+
+
 def _policy_decision_span(run_id: str, classification: str, decision: str) -> None:
     """Span curto (abre e encerra na hora) para uma decisão do gate de
     destrutivas no controle do próprio portal — não leva o SQL (fica só em
@@ -607,8 +632,12 @@ class AgentQueue:
             author = s.get(UserM, user.id) if user is not None else None
             if author is not None:
                 s.expunge(author)
-        harness_system = {"slug": info["system_slug"], "agent_profile": info.get("agent_profile")}
-        self.harness_for(harness_system).reply_gate(harness_system, info["session_id"], request_id, approve)
+        # Tudo que a decisão grava acontece ANTES de liberar o harness: se o harness terminasse
+        # a run enquanto ainda gravávamos (auditoria/span/evento), o worker gravava `succeeded`
+        # e a volta para `running` vinha depois por cima — run "executando" para sempre (corrida
+        # achada no E2E do gate). A volta para running é um UPDATE condicional e atômico.
+        self.pending_gates.pop(run_id, None)
+        _resume_run(run_id)
         # pendências sem SQL (permissão fora do domínio do gate, ex.: acesso a
         # diretório) não entram no histórico de decisões de banco — gravar ali
         # seria uma decisão de SQL inventada, sem statement nenhuma por trás
@@ -620,15 +649,18 @@ class AgentQueue:
                 author_id=author.id if author else None, author_email=author.email if author else None,
             )
             _policy_decision_span(run_id, gate.GateClass.CONFIRMABLE.value, "aprovada" if approve else "recusada")
-        self.pending_gates.pop(run_id, None)
         buffer = self.buffers.get(run_id)
         if buffer:
             label = info["sql"][:80] if info["sql"] is not None else info.get("detail", "")
             buffer.push(RunEvent("gate_resolved", text=f"{'aprovada' if approve else 'recusada'} pelo editor: {label}"))
-        with session_scope() as s:
-            run = s.get(AgentRun, run_id)
-            if run is not None and run.status == RunStatus.awaiting_approval:
-                run.status = RunStatus.running
+        harness_system = {"slug": info["system_slug"], "agent_profile": info.get("agent_profile")}
+        try:
+            self.harness_for(harness_system).reply_gate(harness_system, info["session_id"], request_id, approve)
+        except Exception:
+            # a decisão não chegou ao agente: a pendência volta, para o editor poder decidir de novo
+            self.pending_gates[run_id] = info
+            _pause_run(run_id)
+            raise
         return True
 
     def decide_question(self, run_id: str, request_id: str, label: str) -> bool:
@@ -638,16 +670,19 @@ class AgentQueue:
         info = self.pending_questions.get(run_id)
         if info is None or info["request_id"] != request_id:
             return False
-        harness_system = {"slug": info["system_slug"], "agent_profile": info.get("agent_profile")}
-        self.harness_for(harness_system).reply_question(harness_system, info["session_id"], request_id, label)
+        # mesma ordem de decide_gate: grava antes de liberar o harness (evita a corrida)
         self.pending_questions.pop(run_id, None)
+        _resume_run(run_id)
         buffer = self.buffers.get(run_id)
         if buffer:
             buffer.push(RunEvent("question_resolved", text=f"respondida pelo editor: {label}"))
-        with session_scope() as s:
-            run = s.get(AgentRun, run_id)
-            if run is not None and run.status == RunStatus.awaiting_approval:
-                run.status = RunStatus.running
+        harness_system = {"slug": info["system_slug"], "agent_profile": info.get("agent_profile")}
+        try:
+            self.harness_for(harness_system).reply_question(harness_system, info["session_id"], request_id, label)
+        except Exception:
+            self.pending_questions[run_id] = info
+            _pause_run(run_id)
+            raise
         return True
 
     def interrupt(self, run_id: str, system: System) -> None:

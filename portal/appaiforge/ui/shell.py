@@ -6,7 +6,7 @@ capability; aqui fica a moldura comum com logout.
 
 from nicegui import ui
 
-from .common import get_current_user, render_header
+from .common import get_current_user, redirect_to_login, render_header
 
 
 def register() -> None:
@@ -14,7 +14,7 @@ def register() -> None:
     def index_page() -> None:
         user = get_current_user()
         if user is None:
-            ui.navigate.to("/login")
+            redirect_to_login()
             return
 
         render_header(user)

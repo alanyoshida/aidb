@@ -25,3 +25,11 @@ def test_set_provider_key_cadastra_cifrado_e_atualiza(clean_db):
         rows = s.execute(select(ProviderKey).where(ProviderKey.provider == "glm")).scalars().all()
         assert len(rows) == 1
         assert decrypt_secret(rows[0].key_encrypted) == "outra-chave"
+
+
+def test_hash_password_gera_hash_aceito(capsys):
+    from appaiforge.security import verify_password
+
+    assert cli.main(["hash-password", "--password", "s3nha-forte"]) == 0
+    hashed = capsys.readouterr().out.strip()
+    assert hashed.startswith("scrypt$") and verify_password("s3nha-forte", hashed)

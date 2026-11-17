@@ -17,7 +17,7 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0003](0003-container-por-sistema-com-supervisor-pid1.md) | Container por sistema com supervisor próprio como PID 1 | aceito |
 | [0004](0004-opencode-serve-atras-de-adapter-com-fila-no-portal.md) | Harness opencode serve atrás de adapter; fila de execução no portal | aceito |
 | [0005](0005-streaming-do-chat-por-websocket.md) | Streaming do chat por WebSocket | aceito |
-| [0006](0006-identidade-injetada-por-token-hmac.md) | Identidade do portal propagada às apps por token HMAC | aceito |
+| [0006](0006-identidade-injetada-por-token-hmac.md) | Identidade do portal propagada às apps por token HMAC | substituído por 0027 |
 | [0007](0007-metadados-em-postgres-e-credenciais-cifradas.md) | Metadados em Postgres; credenciais cifradas em repouso | aceito |
 | [0008](0008-mcp-para-agente-driver-direto-para-app.md) | MCP para o agente analisar; driver direto para a app gerada | aceito |
 | [0009](0009-git-por-sistema-com-checkpoints.md) | Git por sistema com checkpoints por execução | aceito |
@@ -25,7 +25,7 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0011](0011-guidelines-de-geracao-editaveis-pelo-admin.md) | Guidelines de geração centralizadas, editáveis pelo admin | aceito |
 | [0012](0012-llm-via-api-externa-provedor-por-sistema.md) | LLM via API externa; provedor por sistema (default GLM); custo só com visibilidade | aceito |
 | [0013](0013-containers-sempre-ativos-com-reconciliacao.md) | Containers sempre ativos, com reconciliação e limites padrão | aceito |
-| [0014](0014-rbac-com-tipos-globais-de-usuario.md) | RBAC com tipos globais de usuário; só editor cria sistemas | aceito |
+| [0014](0014-rbac-com-tipos-globais-de-usuario.md) | RBAC com tipos globais de usuário; só editor cria sistemas | aceito (autenticação: ver 0027) |
 | [0015](0015-mesma-credencial-de-producao-para-app-gerada.md) | App gerada usa a mesma credencial de produção; gate de destrutivas adiado | aceito (gate: ver 0017) |
 | [0016](0016-testes-em-tres-camadas-unit-bdd-e2e.md) | Testes em três camadas: unitários, BDD e E2E pelo browser | aceito |
 | [0017](0017-gate-de-operacoes-destrutivas-com-classificador-sql.md) | Gate de operações destrutivas com classificador SQL único (sqlglot) | aceito (gatilho do agente: ver 0021) |
@@ -38,3 +38,4 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0024](0024-proxy-http-s-de-saida-obrigatorio-por-sistema.md) | Proxy HTTP(S) de saída obrigatório por sistema, com allow-list por host (fecha o corte de escopo da etapa 5) | aceito |
 | [0025](0025-telemetria-otel-agnostica-de-backend.md) | Telemetria OTel agnóstica de backend via Collector; Debug log em Postgres próprio; gate/auditoria continuam fora da telemetria | aceito |
 | [0026](0026-metricas-de-recursos-por-container-via-cadvisor.md) | Métricas de recursos por container via cAdvisor, rotuladas no scrape pra portabilidade futura a Kubernetes | aceito |
+| [0027](0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md) | SSO por OIDC opcional (modo por ENV, break-glass); acesso às apps verificado no edge e identidade por app em JWT | aceito |

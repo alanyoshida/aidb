@@ -100,12 +100,12 @@ def test_chat_gera_app_e_registra_uso_e_checkpoint(page, suffix):
     page.locator('[data-testid=confirm-checkpoint-delete]').click()
     page.get_by_text("Nenhum checkpoint ainda.").wait_for(timeout=30_000)
 
-    # a app gerada (fake) está no ar pela rota do portal (entrada autenticada)
+    # a app gerada (fake) está no ar em /apps/<slug> (acesso verificado pelo edge)
     import time
 
     last = None
     for _ in range(30):
-        resp = page.request.get(f"/entry/{slug}")
+        resp = page.request.get(f"/apps/{slug}/")
         last = (resp.status, resp.text()[:80])
         if resp.ok and "App de exemplo" in resp.text():
             break
@@ -152,9 +152,9 @@ def test_rota_publicada_ao_criar_e_removida_ao_arquivar(page, suffix):
     page.locator('[data-testid=create-system]').click()
     _wait_system_active(page)
 
-    # publicada: placeholder responde (via entrada autenticada) enquanto a app não existe
+    # publicada: placeholder responde (acesso verificado pelo edge) enquanto a app não existe
     for _ in range(20):
-        resp = page.request.get(f"/entry/{slug}")
+        resp = page.request.get(f"/apps/{slug}/")
         if resp.ok and "ainda nao gerada" in resp.text():
             break
         time.sleep(1)

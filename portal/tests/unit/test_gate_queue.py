@@ -128,3 +128,62 @@ def test_comando_sem_sql_identificavel_e_confirmavel(fake_env, clean_db):
         queue.buffers[run_id], "s1",
     )
     assert run_id in queue.pending_gates  # sem SQL identificável -> pergunta ao editor
+
+
+@pytest.mark.parametrize("approve", [True, False])
+def test_decisao_atualiza_status_antes_de_avisar_o_harness(fake_env, clean_db, approve):
+    """Corrida achada no E2E: `decide_gate` avisava o harness e só depois voltava a run de
+    awaiting_approval para running. Se o worker terminasse a run nesse meio-tempo (harness
+    rápido), o `running` sobrescrevia o `succeeded` e a run ficava "executando" para sempre.
+    Contrato: quando o harness recebe a decisão, a run já está em running e o evento da decisão
+    já está no buffer — e a run termina num estado final."""
+    from appaiforge.db import session_scope
+    from appaiforge.models import AgentRun
+
+    editor = auth.create_user(f"g-race-{approve}@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "G", f"gate-race-{'a' if approve else 'r'}")
+    queue = _queue(fake_env)
+    run = queue.enqueue(system.id, editor.id, "agora DELETE SEM WHERE na tabela")
+    _wait_status(queue, run.id, {RunStatus.awaiting_approval})
+    request_id = queue.pending_gates[run.id]["request_id"]
+
+    seen: dict = {}
+    harness = queue.harness_for({"slug": system.slug, "agent_profile": system.agent_profile})
+    original = harness.reply_gate
+
+    def spy(system_dict, session_id, req_id, approve):
+        with session_scope() as s:
+            seen["status"] = s.get(AgentRun, run.id).status
+        seen["resolved"] = any(e.kind == "gate_resolved" for e in queue.buffers[run.id].snapshot())
+        return original(system_dict, session_id, req_id, approve)
+
+    harness.reply_gate = spy
+    assert queue.decide_gate(run.id, request_id, approve=approve, user=editor)
+    assert seen == {"status": RunStatus.running, "resolved": True}
+    row = _wait_status(queue, run.id, {RunStatus.succeeded, RunStatus.failed})
+    assert row.status in (RunStatus.succeeded, RunStatus.failed)
+
+
+def test_falha_ao_entregar_a_decisao_mantem_a_pendencia(fake_env, clean_db):
+    editor = auth.create_user("g-fail@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "G", "gate-fail-deliver")
+    queue = _queue(fake_env)
+    run = queue.enqueue(system.id, editor.id, "agora DELETE SEM WHERE na tabela")
+    _wait_status(queue, run.id, {RunStatus.awaiting_approval})
+    request_id = queue.pending_gates[run.id]["request_id"]
+    harness = queue.harness_for({"slug": system.slug, "agent_profile": system.agent_profile})
+    original = harness.reply_gate
+
+    def boom(*a, **k):
+        raise ConnectionError("harness fora do ar")
+
+    harness.reply_gate = boom
+    with pytest.raises(ConnectionError):
+        queue.decide_gate(run.id, request_id, approve=False, user=editor)
+    assert queue.pending_gates[run.id]["request_id"] == request_id
+    assert _wait_status(queue, run.id, {RunStatus.awaiting_approval}).status == RunStatus.awaiting_approval
+    # o editor consegue decidir de novo quando o harness volta
+    harness.reply_gate = original
+    assert queue.decide_gate(run.id, request_id, approve=False, user=editor)
+    assert _wait_status(queue, run.id, {RunStatus.succeeded, RunStatus.failed}).status in (
+        RunStatus.succeeded, RunStatus.failed)

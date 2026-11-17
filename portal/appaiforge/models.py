@@ -78,11 +78,18 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
+    # Nulo para usuários-sombra do modo oidc (sem credencial local; change add-oidc-sso).
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     type: Mapped[UserType] = mapped_column(Enum(UserType, name="user_type"))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     theme: Mapped[str] = mapped_column(String(32), default="light-indigo", server_default="light-indigo")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # `sub` do IdP (modo oidc): chave estável do usuário-sombra; e-mail e tipo são
+    # atualizados a cada login a partir do token.
+    idp_subject: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    # Admin de emergência definido por ENV; não é gerenciável pela UI.
+    break_glass: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
     def is_admin(self) -> bool:
@@ -100,6 +107,37 @@ class Session(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # Como a sessão foi aberta: "local", "oidc" ou "break_glass" (change add-oidc-sso).
+    auth_method: Mapped[str] = mapped_column(String(20), default="local", server_default="local")
+    # Snapshot da identidade vinda do token (modo oidc): tipo global e nomes de grupos.
+    user_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    groups: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Tokens do IdP cifrados (Fernet): refresh para revalidar, id_token para o logout.
+    refresh_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    id_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Próxima revalidação junto ao IdP (nulo = sessão local, sem revalidação).
+    revalidate_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PortalInstance(Base):
+    """Linha única com o modo de autenticação gravado no primeiro boot (change add-oidc-sso,
+    requirement "Modo de autenticação fixado na instalação")."""
+
+    __tablename__ = "portal_instance"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    auth_mode: Mapped[str] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ObservedIdpGroup(Base):
+    """Nomes de grupo vistos em tokens do IdP (modo oidc) — alimentam as sugestões ao
+    cadastrar grupos; não concedem acesso por si."""
+
+    __tablename__ = "observed_idp_groups"
+
+    name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Group(Base):

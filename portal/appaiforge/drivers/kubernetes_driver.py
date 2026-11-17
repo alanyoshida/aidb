@@ -222,32 +222,9 @@ class KubernetesProvisioningDriver:
                 raise
 
         custom = _custom_api()
-        middleware = {
-            "apiVersion": f"{_TRAEFIK_GROUP}/{_TRAEFIK_VERSION}",
-            "kind": "Middleware",
-            "metadata": {"name": f"{name}-strip", "namespace": namespace},
-            "spec": {"stripPrefix": {"prefixes": [f"/apps/{slug}"]}},
-        }
-        _upsert_custom(custom, namespace, "middlewares", f"{name}-strip", middleware)
-
-        ingressroute = {
-            "apiVersion": f"{_TRAEFIK_GROUP}/{_TRAEFIK_VERSION}",
-            "kind": "IngressRoute",
-            "metadata": {"name": name, "namespace": namespace},
-            "spec": {
-                "entryPoints": ["web"],
-                "routes": [
-                    {
-                        "match": f"PathPrefix(`/apps/{slug}`)",
-                        "kind": "Rule",
-                        "priority": 100,
-                        "middlewares": [{"name": f"{name}-strip"}],
-                        "services": [{"name": name, "port": settings.app_port}],
-                    }
-                ],
-            },
-        }
-        _upsert_custom(custom, namespace, "ingressroutes", name, ingressroute)
+        objects = app_route_objects(namespace, name, slug, settings.app_port)
+        for plural, obj in objects:
+            _upsert_custom(custom, namespace, plural, obj["metadata"]["name"], obj)
 
     def unpublish(self, slug: str) -> None:
         from .. import provisioning as _p
@@ -263,7 +240,9 @@ class KubernetesProvisioningDriver:
                 raise
 
         custom = _custom_api()
-        for plural, object_name in (("ingressroutes", name), ("middlewares", f"{name}-strip")):
+        for plural, object_name in (
+            ("ingressroutes", name), ("middlewares", f"{name}-strip"), ("middlewares", f"{name}-auth"),
+        ):
             try:
                 custom.delete_namespaced_custom_object(
                     _TRAEFIK_GROUP, _TRAEFIK_VERSION, namespace, plural, object_name
@@ -303,6 +282,48 @@ class KubernetesProvisioningDriver:
         return bool(agent_status and agent_status.ready)
 
 
+def app_route_objects(namespace: str, name: str, slug: str, app_port: int) -> list[tuple[str, dict]]:
+    """Middlewares (forwardAuth + stripPrefix) e IngressRoute de `/apps/{slug}` — equivalentes
+    ao `apps-<slug>.yml` do driver Docker (`edge.app_route_config`). O forwardAuth vem ANTES do
+    strip (change add-oidc-sso, D8) e chama o portal pelo endereço interno (Service)."""
+    from ..edge import EDGE_AUTH_RESPONSE_HEADERS, edge_auth_address
+
+    api_version = f"{_TRAEFIK_GROUP}/{_TRAEFIK_VERSION}"
+    auth_mw = {
+        "apiVersion": api_version,
+        "kind": "Middleware",
+        "metadata": {"name": f"{name}-auth", "namespace": namespace},
+        "spec": {"forwardAuth": {
+            "address": edge_auth_address(slug),
+            "authResponseHeaders": list(EDGE_AUTH_RESPONSE_HEADERS),
+        }},
+    }
+    strip_mw = {
+        "apiVersion": api_version,
+        "kind": "Middleware",
+        "metadata": {"name": f"{name}-strip", "namespace": namespace},
+        "spec": {"stripPrefix": {"prefixes": [f"/apps/{slug}"]}},
+    }
+    ingressroute = {
+        "apiVersion": api_version,
+        "kind": "IngressRoute",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": {
+            "entryPoints": ["web"],
+            "routes": [
+                {
+                    "match": f"PathPrefix(`/apps/{slug}`)",
+                    "kind": "Rule",
+                    "priority": 100,
+                    "middlewares": [{"name": f"{name}-auth"}, {"name": f"{name}-strip"}],
+                    "services": [{"name": name, "port": app_port}],
+                }
+            ],
+        },
+    }
+    return [("middlewares", auth_mw), ("middlewares", strip_mw), ("ingressroutes", ingressroute)]
+
+
 def _custom_api() -> k8s.CustomObjectsApi:
     _load_kube_config()
     return k8s.CustomObjectsApi()
@@ -328,7 +349,7 @@ def _workspace_pvc_name(slug: str) -> str:
     return f"{_p.system_container_name(slug)}-workspace"
 
 
-def delete_workspace_pvc(slug: str) -> None:
+def delete_workspace_pvc(slug: str, *, timeout: float = 60.0, interval: float = 1.0) -> None:
     """Remove a PVC do workspace do sistema — chamado só por `provisioning.delete_system`
     (exclusão definitiva, agnóstica de driver; change `fix-k8s-workspace-materialize-delete`).
     `remove()` desta classe (arquivamento/parada) deliberadamente NÃO chama isto, pra preservar o
@@ -345,6 +366,20 @@ def delete_workspace_pvc(slug: str) -> None:
     except ApiException as exc:
         if exc.status != 404:
             raise
+        return
+    # A exclusão é assíncrona: o PVC fica com deletionTimestamp + finalizer `pvc-protection` até o
+    # Pod que o montava terminar (alguns segundos, medido no kind). Espera sumir para que "exclusão
+    # definitiva" tenha o mesmo significado do driver Docker (rmtree síncrono) quando retorna.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            api.read_namespaced_persistent_volume_claim(name, namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                return
+            raise
+        time.sleep(interval)
+    raise TimeoutError(f"PVC {namespace}/{name} ainda existe {timeout:.0f}s depois da exclusão")
 
 
 def _wait_for_agent_container_started(pod_name: str, namespace: str, *, timeout: float = 30.0, interval: float = 1.0) -> None:

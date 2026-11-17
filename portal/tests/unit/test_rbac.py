@@ -77,3 +77,36 @@ def test_admin_acessa_tudo_e_outros_conforme_vinculo(users):
     assert visible_system_ids(users["app_user"]) == {sys1.id}
     assert can_manage_system(users["editor"], sys1)
     assert not can_manage_system(users["app_user"], sys1)
+
+
+# --- Pertença a grupos vinda do token (change add-oidc-sso, D6) ---
+
+def _oidc_principal(user: User, groups: tuple[str, ...]):
+    from appaiforge.auth import Principal
+
+    return Principal(
+        id=user.id, email=user.email, type=UserType.app_user, theme="light-indigo",
+        active=True, auth_method="oidc", break_glass=False, group_names=groups,
+    )
+
+
+def test_grupo_do_token_casa_pelo_nome_exato(users):
+    _mk_system(users["editor"], "fin")
+    create_group("financeiro")
+    link_group_to_system("financeiro", "fin")
+    sys_id = next(iter(visible_system_ids(users["editor"])))
+    assert can_access_system(_oidc_principal(users["app_user"], ("financeiro",)), sys_id)
+    assert not can_access_system(_oidc_principal(users["app_user"], ("Financeiro",)), sys_id)
+    assert not can_access_system(_oidc_principal(users["app_user"], ("ti-infra",)), sys_id)
+    assert not can_access_system(_oidc_principal(users["app_user"], ()), sys_id)
+
+
+def test_no_modo_oidc_membros_do_banco_nao_contam(users):
+    _mk_system(users["editor"], "rh")
+    create_group("rh")
+    link_group_to_system("rh", "rh")
+    add_member("rh", "app@t.local")
+    sys_id = next(iter(visible_system_ids(users["editor"])))
+    # a mesma pessoa, entrando pelo IdP sem o grupo no token, não acessa
+    assert not can_access_system(_oidc_principal(users["app_user"], ()), sys_id)
+    assert can_access_system(users["app_user"], sys_id)

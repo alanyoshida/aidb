@@ -3,27 +3,33 @@
 from nicegui import ui
 
 from .. import auth
+from ..auth_routes import login_url
 from ..models import User
 from . import theme
 
-SET_COOKIE_JS = "document.cookie = 'appaiforge_session={token}; path=/; max-age={max_age}; SameSite=Lax'"
-CLEAR_COOKIE_JS = "document.cookie = 'appaiforge_session=; path=/; max-age=0; SameSite=Lax'"
 
-
-def get_current_user() -> User | None:
-    """Usuário da sessão corrente (cookie), ou None."""
+def get_current_user() -> auth.Principal | None:
+    """Identidade da sessão corrente (cookie), ou None. Devolve um `auth.Principal`,
+    que expõe os mesmos atributos de `User` usados pelas páginas (change add-oidc-sso)."""
     token = ui.context.client.request.cookies.get(auth.COOKIE_NAME)
-    return auth.resolve_user(token)
+    return auth.resolve_principal(token)
 
 
 def current_token() -> str | None:
     return ui.context.client.request.cookies.get(auth.COOKIE_NAME)
 
 
-def require_user() -> User:
+def redirect_to_login() -> None:
+    """Leva ao login lembrando a página pedida, para voltar a ela depois de entrar."""
+    url = ui.context.client.request.url
+    target = url.path + (f"?{url.query}" if url.query else "")
+    ui.navigate.to(login_url(target))
+
+
+def require_user() -> auth.Principal:
     user = get_current_user()
     if user is None:
-        ui.navigate.to("/login")
+        redirect_to_login()
         raise RuntimeError("redirect para /login")
     return user
 
@@ -132,10 +138,16 @@ def render_theme_css(theme_key: str) -> None:
 def render_header(user: User) -> None:
     """Header comum a todas as páginas autenticadas (navegação + menu do usuário)."""
     def do_logout() -> None:
-        auth.logout(current_token())
-        ui.run_javascript(CLEAR_COOKIE_JS + "; window.location = '/login'")
+        # rota HTTP: o cookie é HttpOnly e o logout oidc segue para o IdP
+        ui.navigate.to("/auth/logout")
 
     render_theme_css(user.theme)
+
+    if getattr(user, "break_glass", False):
+        with ui.element("div").classes("w-full text-center text-sm font-semibold py-1").style(
+            "background: var(--ap-danger, #b91c1c); color: #fff"
+        ).props("data-testid=breakglass-banner"):
+            ui.label("Sessão de emergência (break-glass) — toda ação fica registrada na auditoria.")
 
     with ui.header().classes("items-center justify-between"):
         ui.label("AIDB").classes("text-xl font-bold cursor-pointer ap-brand").on("click", lambda: ui.navigate.to("/"))

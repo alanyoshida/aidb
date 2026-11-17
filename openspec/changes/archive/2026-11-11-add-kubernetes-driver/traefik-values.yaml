@@ -6,7 +6,18 @@
 # Só funciona porque há um único nó (control-plane) neste cluster de validação.
 deployment:
   kind: Deployment
+  # Com hostNetwork, o padrão ClusterFirst cai no DNS do HOST e nomes *.svc.cluster.local não
+  # resolvem. O forwardAuth das rotas /apps/{slug} (change add-oidc-sso) chama o portal pelo DNS
+  # do Service dele, então o Traefik precisa do DNS do cluster.
+  dnsPolicy: ClusterFirstWithHostNet
 hostNetwork: true
+# Com hostNetwork num nó só, o pod novo não agenda enquanto o antigo segura as portas 80/443:
+# o rollout derruba o antigo antes de subir o novo (alguns segundos sem edge).
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 0
 ports:
   web:
     port: 80

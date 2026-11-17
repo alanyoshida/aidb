@@ -10,7 +10,7 @@ from ..models import System
 from ..rbac import can_access_system, can_manage_system
 from ..services import catalog, connections, network_policy
 from ..services.systems import get_system, rename_system, revoke_inference_access, set_provider
-from .common import get_current_user, notify, render_header
+from .common import get_current_user, redirect_to_login, notify, render_header
 
 
 def _stamp(iso: str) -> str:
@@ -53,7 +53,7 @@ def register() -> None:
     def system_page(system_id: str) -> None:
         user = get_current_user()
         if user is None:
-            ui.navigate.to("/login")
+            redirect_to_login()
             return
         system = get_system(system_id)
         if system is None or not can_access_system(user, system.id):
@@ -320,7 +320,9 @@ def _render_connections(system, user) -> None:
             if not is_bq:
                 cport.set_value(_KIND_DEFAULT_PORT[kind_key])
 
-        ckind.on("update:model-value", _on_kind_change)
+        # on_value_change entrega ValueChangeEventArguments (.value); `.on("update:model-value")`
+        # entregava GenericEventArguments, sem .value, e os campos do BigQuery nunca apareciam.
+        ckind.on_value_change(_on_kind_change)
 
         def add_conn() -> None:
             kind_key = _KIND_OPTIONS.get(ckind.value, "postgres")
@@ -403,7 +405,7 @@ def _render_connections(system, user) -> None:
             if not is_bq:
                 eport.set_value(_KIND_DEFAULT_PORT[kind_key])
 
-        ekind.on("update:model-value", _on_ekind_change)
+        ekind.on_value_change(_on_ekind_change)
 
         def save_edit() -> None:
             kind_key = _KIND_OPTIONS.get(ekind.value, "postgres")

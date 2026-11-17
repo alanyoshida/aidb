@@ -25,11 +25,17 @@ Você é o agente de código deste sistema. Siga estas regras em toda geração:
 - Interface toda em português do Brasil (rótulos, mensagens, datas por extenso).
 
 ## Identidade do usuário (SSO do portal)
-- O portal redireciona para a app com `?t=<token>`: payload base64url JSON
-  `{user_id, user_type, exp}` + assinatura hex HMAC-SHA256 (TTL ~60s).
-- Valide com `APP_IDENTITY_SECRET` (env) usando o helper canônico
-  `appaiforge.app_template.identity` (copie para a app gerada):
-  token válido -> sessão da app; inválido/expirado -> recuse (o portal reautentica).
+- O portal só deixa a requisição chegar à app depois de verificar a sessão e o acesso do
+  usuário; então o edge injeta o header `X-AIDB-Identity` em TODA requisição: um JWT HS256
+  assinado com `APP_IDENTITY_SECRET` (env), audiência `aidb-app:<slug>`, validade curta,
+  com `sub`, `email`, `user_type` (admin/editor/app_user) e `groups`.
+- Copie o helper canônico `appaiforge.app_template.identity` para a app e chame
+  `install_identity(app)` logo no início; nas páginas, leia o usuário com
+  `current_identity(request)`. Identidade ausente/inválida -> 401.
+- NÃO crie sessão própria nem login na app: a identidade vale por requisição, e o logout
+  ou a perda de acesso no portal precisam valer na requisição seguinte.
+- Para testar com `curl`, gere um token local assinado com `APP_IDENTITY_SECRET` (HS256,
+  `iss=aidb-portal`, `aud=aidb-app:<slug>`) e envie no header `X-AIDB-Identity`.
 
 ## Acesso a dados (OBRIGATÓRIO: camada dbgate)
 - As conexões cadastradas chegam como envs `DATABASE_URL_<NOME>` (NOME em MAIÚSCULAS_COM_UNDERSCORE).

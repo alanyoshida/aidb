@@ -123,6 +123,37 @@ class Settings(BaseSettings):
     session_ttl_days: int = 7
     identity_token_ttl_seconds: int = 60
 
+    # Autenticação (change add-oidc-sso). "local" (e-mail/senha, padrão) ou "oidc" (SSO
+    # contra IdP externo). O modo é gravado na base no primeiro boot e não pode mudar
+    # depois (requirement "Modo de autenticação fixado na instalação").
+    auth_mode: str = "local"
+    # URL pública do portal, como o navegador a vê (ex.: http://localhost:8082). Base do
+    # redirect_uri e do post_logout_redirect_uri no modo oidc.
+    public_base_url: str = ""
+    # Emissor público do IdP (valida `iss`; ex.: http://localhost:8180/realms/aidb).
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_scopes: str = "openid email profile"
+    # Caminho (com ponto) do claim de papéis no access token e do claim de grupos.
+    oidc_roles_claim: str = "realm_access.roles"
+    oidc_groups_claim: str = "groups"
+    # Base interna do IdP para chamadas servidor-a-servidor (discovery/token/JWKS), quando o
+    # portal não alcança o IdP pelo endereço público (ex.: http://keycloak:8080 no compose).
+    oidc_internal_base_url: str = ""
+    # Intervalo máximo entre revalidações da sessão junto ao IdP (spec: no máximo 5 min).
+    oidc_revalidate_seconds: int = 300
+    # Tolerância a falha de rede com o IdP antes de encerrar a sessão (fail-closed).
+    oidc_network_grace_seconds: int = 60
+
+    # Admin break-glass: definido só por ENV (hash scrypt de `appaiforge hash-password`).
+    breakglass_email: str = ""
+    breakglass_password_hash: str = ""
+    breakglass_session_hours: int = 8
+    # Rate limit da rota de login local: N falhas por (IP, e-mail) bloqueiam pela janela.
+    login_rate_limit_attempts: int = 5
+    login_rate_limit_window_seconds: int = 900
+
     # Telemetria OTel (change agent-telemetry-otel / agent-telemetry-backend-agnostic).
     # Vazio = SDK segue no-op (sem exporter configurado); nenhum código do
     # portal/broker decide isto por `if`, só a presença do endpoint liga a

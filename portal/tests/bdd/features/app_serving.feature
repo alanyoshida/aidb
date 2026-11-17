@@ -2,19 +2,29 @@ Feature: Serviço da app gerada
   Como usuário do portal
   Quero acessar a app do sistema com minha identidade já autenticada
   Para usar os dados sem logar de novo
-  # Fonte: specs/app-serving/spec.md
+  # Fonte: specs/app-serving/spec.md (change add-oidc-sso)
 
   Scenario: App identifica o usuário
-    Given um sistema com segredo de identidade
-    When o portal assina um token para o usuário "u1" do tipo "app_user"
-    Then a app reconhece "u1" como "app_user" pelo token
+    Given um sistema "erp" ativo com um membro de grupo vinculado
+    When o membro abre "/apps/erp/" logado no portal
+    Then a app reconhece o membro pelo identificador, tipo e grupos
+
+  Scenario: Identidade de outra app
+    Given um sistema "erp" ativo com um membro de grupo vinculado
+    When chega à app "erp" uma identidade emitida para a app "rh"
+    Then a app recusa a identidade
 
   Scenario: Token de identidade inválido
-    Given um sistema com segredo de identidade
-    When a app recebe um token assinado com segredo errado
-    Then a app recusa a sessão
+    Given um sistema "erp" ativo com um membro de grupo vinculado
+    When chega à app uma identidade expirada
+    Then a app recusa a identidade
 
-  Scenario: Token de identidade expirado
-    Given um sistema com segredo de identidade
-    When a app recebe um token válido emitido há mais de uma hora
-    Then a app recusa a sessão
+  Scenario: Usuário não logado abre o link da app
+    Given um sistema "erp" ativo com um membro de grupo vinculado
+    When alguém sem sessão abre "/apps/erp/relatorios"
+    Then é levado ao login com retorno a "/apps/erp/relatorios"
+
+  Scenario: Usuário sem acesso é recusado
+    Given um sistema "erp" ativo com um membro de grupo vinculado
+    When um usuário sem vínculo abre "/apps/erp/"
+    Then o portal recusa com permissão insuficiente
