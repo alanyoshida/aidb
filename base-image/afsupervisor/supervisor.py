@@ -134,6 +134,9 @@ HTTPServer(("0.0.0.0", {port}), R).serve_forever()
 '''
 
 
+OPENSPEC_TIMEOUT_SECONDS = 30
+
+
 class ProcessRunner:
     """Abstração mínima sobre subprocess; testes injetam um fake.
 
@@ -158,6 +161,12 @@ class ProcessRunner:
         )
         self._children[popen.pid] = popen
         return popen.pid
+
+    def run(self, cmd: list[str], cwd: str | None = None, timeout: float | None = None) -> int:
+        """Execução síncrona (passos de preparo do workspace); levanta TimeoutExpired."""
+        return subprocess.run(
+            cmd, cwd=cwd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, timeout=timeout,
+        ).returncode
 
     def alive(self, pid: int) -> bool:
         popen = self._children.get(pid)
@@ -193,6 +202,66 @@ class Supervisor:
         self.app_failures = 0
         self.is_placeholder = True
         self._signature: tuple | None = dir_signature(self.app_dir) if app_entry_exists(self.app_dir) else None
+
+    def ensure_openspec(self) -> str:
+        """Deixa o workspace com OpenSpec configurado para o opencode (change
+        add-openspec-to-system-container, D2), antes do harness subir.
+
+        Sem `openspec/`: `openspec init --tools opencode --language pt-BR`. Com `openspec/`:
+        `openspec update`, que só atualiza comandos e skills do agente e preserva changes,
+        specs e config. Roda com a mesma identidade do harness (o próprio supervisor), então
+        os arquivos ficam com o dono certo nos dois drivers. Qualquer falha — CLI ausente,
+        erro ou timeout de 30 s — só é registrada: agente e app sobem do mesmo jeito.
+        Devolve "init", "update" ou "failed"."""
+        try:
+            return self._openspec_cli()
+        finally:
+            self._link_agent_commands()
+
+    def _link_agent_commands(self) -> None:
+        """Expõe `/workspace/.opencode/commands` no diretório GLOBAL de comandos do opencode.
+
+        O opencode do sistema roda em `/opencode-config` (fora do workspace, para o agente não
+        alterar a própria config — ADR 0018) e por isso não lê o `.opencode/` do workspace; só
+        os comandos (prompts em markdown) são expostos aqui, nunca a config do projeto. Fica na
+        camada gravável do container (HOME), refeito a cada subida. Um diretório real já
+        existente nesse lugar não é sobrescrito."""
+        source = os.path.join(self.workspace, ".opencode", "commands")
+        if not os.path.isdir(source):
+            return
+        link = os.path.join(os.path.expanduser("~"), ".config", "opencode", "commands")
+        try:
+            if os.path.islink(link):
+                if os.readlink(link) == source:
+                    return
+                os.unlink(link)
+            elif os.path.exists(link):
+                print(f"[afsupervisor] {link} já existe e não é link; comandos do OpenSpec não expostos",
+                      file=sys.stderr)
+                return
+            os.makedirs(os.path.dirname(link), exist_ok=True)
+            os.symlink(source, link)
+        except OSError as exc:
+            print(f"[afsupervisor] não foi possível expor os comandos do agente: {exc!r}", file=sys.stderr)
+
+    def _openspec_cli(self) -> str:
+        initialized = os.path.isdir(os.path.join(self.workspace, "openspec"))
+        if initialized:
+            action, cmd = "update", ["openspec", "update", self.workspace]
+        else:
+            action = "init"
+            cmd = ["openspec", "init", "--tools", "opencode", "--language", "pt-BR", self.workspace]
+        try:
+            returncode = self.runner.run(cmd, cwd=self.workspace, timeout=OPENSPEC_TIMEOUT_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - bootstrap nunca derruba o sistema
+            print(f"[afsupervisor] openspec {action} falhou: {exc!r}; seguindo sem bloquear", file=sys.stderr)
+            return "failed"
+        if returncode != 0:
+            print(f"[afsupervisor] openspec {action} saiu com código {returncode}; seguindo sem bloquear",
+                  file=sys.stderr)
+            return "failed"
+        print(f"[afsupervisor] openspec {action} ok", file=sys.stderr)
+        return action
 
     def start_harness(self) -> None:
         if self.agent_profile is None:
@@ -275,6 +344,7 @@ class Supervisor:
                 self.start_app()  # app removida (rollback): volta ao placeholder
 
     def run_forever(self, poll_interval: float = 1.0) -> None:
+        self.ensure_openspec()
         self.start_harness()
         self.start_app()
         while True:

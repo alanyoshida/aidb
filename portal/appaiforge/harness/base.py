@@ -60,3 +60,9 @@ class HarnessPort:
     def reject_question(self, system: dict, session_id: str, request_id: str) -> None:
         """Encerra uma pergunta pendente sem resposta (ex.: run interrompida)."""
         raise NotImplementedError
+
+    def list_commands(self, system: dict) -> list[dict]:
+        """Comandos `/<nome>` que o agente do sistema reconhece, como
+        `[{"name", "description"}]` (change add-openspec-to-system-container, D5). Falha ou
+        indisponibilidade devolve lista vazia — o autocomplete do chat some, o envio não."""
+        return []

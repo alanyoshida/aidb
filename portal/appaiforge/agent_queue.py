@@ -491,6 +491,10 @@ class AgentQueue:
 
         # Persistir eventos para consulta futura (correção do chat ao fazer F5)
         self._persist_events(run_id, buffer)
+        # a execução pode ter criado/alterado comandos do agente (autocomplete do chat)
+        from .services.agent_commands import invalidate as _invalidate_commands
+
+        _invalidate_commands(system_id)
 
         if succeeded:
             # checkpoint da execução + publicação da app (ADR 0009, spec app-serving)

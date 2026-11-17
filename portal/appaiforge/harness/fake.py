@@ -81,6 +81,33 @@ class FakeHarness(HarnessPort):
         self.question_decisions: dict[str, str | None] = {}  # question: request_id -> rótulo (None = rejeitada)
         self.counter = 0
 
+    def list_commands(self, system: dict) -> list[dict]:
+        """Comandos de `.opencode/commands/*.md` do workspace, com o `description` do
+        frontmatter — o mesmo que o opencode real lista (determinístico para o E2E)."""
+        import os
+
+        cmd_dir = os.path.join(self.workspace_root, system["slug"], ".opencode", "commands")
+        try:
+            names = sorted(f for f in os.listdir(cmd_dir) if f.endswith(".md"))
+        except OSError:
+            return []
+        out = []
+        for fname in names:
+            description = ""
+            try:
+                with open(os.path.join(cmd_dir, fname), encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+            except OSError:
+                continue
+            if lines and lines[0].strip() == "---":
+                for line in lines[1:]:
+                    if line.strip() == "---":
+                        break
+                    if line.startswith("description:"):
+                        description = line.split(":", 1)[1].strip().strip('"').strip("'")
+            out.append({"name": fname[:-3], "description": description})
+        return out
+
     def create_session(self, system: dict) -> str:
         self.counter += 1
         return f"ses_fake_{self.counter:06d}"

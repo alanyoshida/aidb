@@ -26,12 +26,20 @@ class FakeRunner:
         self.killed: list[int] = []
         self.dead: set[int] = set()
         self._next = 100
+        self.ran: list[tuple[list, str | None, float | None]] = []
+        self.run_result: int | Exception = 0
 
     def spawn(self, cmd, env=None, cwd=None, preexec_fn=None):
         self._next += 1
         self.spawned.append((cmd, cwd))
         self.preexec_fns.append(preexec_fn)
         return self._next
+
+    def run(self, cmd, cwd=None, timeout=None):
+        self.ran.append((cmd, cwd, timeout))
+        if isinstance(self.run_result, Exception):
+            raise self.run_result
+        return self.run_result
 
     def alive(self, pid):
         return pid not in self.dead
@@ -246,3 +254,81 @@ def test_supervisor_troca_placeholder_pela_app_quando_ela_aparece(tmp_path):
     sup.poll()
     assert not sup.is_placeholder
     assert "main.py" in str(runner.spawned[-1][0][-1])
+
+
+# --- bootstrap do OpenSpec (change add-openspec-to-system-container, task 2.1) ---
+
+def test_openspec_workspace_vazio_faz_init_em_pt_br(tmp_path):
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+    assert sup.ensure_openspec() == "init"
+    cmd, cwd, timeout = runner.ran[0]
+    assert cmd == ["openspec", "init", "--tools", "opencode", "--language", "pt-BR", str(tmp_path)]
+    assert cwd == str(tmp_path) and timeout == 30
+
+
+def test_openspec_workspace_inicializado_faz_update(tmp_path):
+    (tmp_path / "openspec" / "changes" / "minha-change").mkdir(parents=True)
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+    assert sup.ensure_openspec() == "update"
+    assert runner.ran[0][0] == ["openspec", "update", str(tmp_path)]
+
+
+def test_openspec_roda_antes_do_harness(tmp_path, monkeypatch):
+    import afsupervisor.supervisor as mod
+
+    order = []
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+    monkeypatch.setattr(sup, "ensure_openspec", lambda: order.append("openspec"))
+    monkeypatch.setattr(sup, "start_harness", lambda: order.append("harness"))
+    monkeypatch.setattr(sup, "start_app", lambda: order.append("app"))
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: (_ for _ in ()).throw(KeyboardInterrupt()))
+    try:
+        sup.run_forever()
+    except KeyboardInterrupt:
+        pass
+    assert order == ["openspec", "harness", "app"]
+
+
+def test_openspec_falha_ou_timeout_nao_impede_o_harness(tmp_path, capsys):
+    import subprocess
+
+    for erro in (subprocess.TimeoutExpired(["openspec"], 30), FileNotFoundError("openspec"), 1):
+        runner = FakeRunner()
+        runner.run_result = erro
+        sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+        assert sup.ensure_openspec() == "failed"
+        sup.start_harness()
+        assert sup.harness_pid is not None and not sup.harness_failed
+    assert "openspec init" in capsys.readouterr().err
+
+
+def test_openspec_liga_comandos_do_workspace_no_diretorio_global_do_opencode(tmp_path, monkeypatch):
+    """O opencode do sistema roda em /opencode-config (fora do workspace, para o agente não
+    alterar a própria config) e por isso não lê `/workspace/.opencode/`. Só os comandos são
+    expostos, pelo diretório global de comandos do opencode — nunca a config do projeto."""
+    home = tmp_path / "home"
+    ws = tmp_path / "ws"
+    (ws / ".opencode" / "commands").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    sup = Supervisor(runner=FakeRunner(), workspace=str(ws), agent_profile=FAKE_PROFILE)
+    assert sup.ensure_openspec() == "init"
+    link = home / ".config" / "opencode" / "commands"
+    assert link.is_symlink() and os.readlink(link) == str(ws / ".opencode" / "commands")
+    # idempotente em reinícios
+    assert sup.ensure_openspec() in ("init", "update")
+    assert link.is_symlink()
+
+
+def test_openspec_nao_sobrescreve_diretorio_global_real(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    real = home / ".config" / "opencode" / "commands"
+    real.mkdir(parents=True)
+    (real / "meu.md").write_text("x")
+    ws = tmp_path / "ws"
+    (ws / ".opencode" / "commands").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    Supervisor(runner=FakeRunner(), workspace=str(ws), agent_profile=FAKE_PROFILE).ensure_openspec()
+    assert not real.is_symlink() and (real / "meu.md").exists()

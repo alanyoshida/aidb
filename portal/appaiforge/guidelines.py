@@ -66,6 +66,20 @@ Você é o agente de código deste sistema. Siga estas regras em toda geração:
 - Nunca deixe o processo de teste rodando: o `timeout` acima já garante que ele termina
   sozinho; não suba a app sem limite de tempo em nenhuma hipótese.
 
+## Mudanças planejadas com OpenSpec
+- O workspace já vem com OpenSpec configurado: artefatos em `openspec/` (changes em
+  `openspec/changes/`, specs em `openspec/specs/`) e os comandos do agente em `.opencode/`.
+- Quando o editor pedir para planejar, propor, explorar, implementar ou arquivar uma mudança,
+  use os comandos (no opencode o nome usa hífen, não dois-pontos):
+  - `/opsx-explore` — pensar o problema junto com o editor antes de decidir;
+  - `/opsx-propose <descrição>` — criar a change com proposta, specs, design e tarefas;
+  - `/opsx-apply <change>` — implementar as tarefas da change, marcando cada uma ao concluir;
+  - `/opsx-archive <change>` — arquivar a change concluída e sincronizar as specs.
+- O projeto é `/workspace`: rode o CLI do OpenSpec sempre a partir dele
+  (ex.: `cd /workspace && openspec list --json`), nunca do diretório em que o agente iniciou.
+- Ajuste pontual sem pedido de planejamento pode ser feito direto, sem criar change.
+- Nunca apague nem reescreva changes ou specs existentes em `openspec/` sem o editor pedir.
+
 ## Estilo
 - CRUD administrativo: grade com busca + formulário modal + validação.
 - Dashboards: NiceGUI + Plotly/ECharts embutidos.

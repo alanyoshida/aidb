@@ -24,6 +24,17 @@ RUN curl -fsSL https://opencode.ai/install | bash -s -- --version "${OPENCODE_VE
     && mv /root/.opencode /opt/opencode \
     && ln -sf /opt/opencode/bin/opencode /usr/local/bin/opencode
 
+# CLI do OpenSpec em versão pinada (change add-openspec-to-system-container, D1): o agente
+# usa os comandos /opsx-* no workspace sem depender de rede em runtime — o registry npm
+# não está na allowlist do proxy de saída. Telemetria e checagem de versão nova desligadas
+# (fariam acesso de rede bloqueado a cada execução).
+ARG OPENSPEC_VERSION=1.15.0
+RUN npm install -g --no-fund --no-audit "@fission-ai/openspec@${OPENSPEC_VERSION}" \
+    && npm cache clean --force
+ENV OPENSPEC_TELEMETRY=0 \
+    OPENSPEC_NO_UPDATE_CHECK=1 \
+    OPENSPEC_NO_ANIMATION=1
+
 # uv para rodar a app gerada com deps próprias
 RUN pip install --no-cache-dir uv==0.13.7
 

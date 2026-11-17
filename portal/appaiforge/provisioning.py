@@ -463,6 +463,10 @@ def provision_system(system: System) -> str:
     settings = get_settings()
     profile = get_profile(system.agent_profile)
     _check_capacity(system.id)
+    # container novo pode ter outro conjunto de comandos do agente (autocomplete do chat)
+    from .services.agent_commands import invalidate as _invalidate_commands
+
+    _invalidate_commands(system.id)
     ensure_network()
     driver = get_driver()
 

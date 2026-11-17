@@ -239,3 +239,10 @@ def test_create_system_persiste_perfil_claude_code(clean_db):
     editor = auth.create_user("profile4@t.local", "pw", UserType.editor.value)
     system = create_system(editor, "Sistema", "sistema-perfil-claude-code", agent_profile="claude-code")
     assert system.agent_profile == "claude-code"
+
+
+def test_perfil_opencode_le_config_do_openssl_no_sandbox():
+    """Node (CLI do OpenSpec) lê /etc/ssl/openssl.cnf ao iniciar; sob Landlock sem isto aborta."""
+    from appaiforge.agent_profiles import get_profile
+
+    assert "/etc/ssl/openssl.cnf" in get_profile("opencode")["readable_paths"]

@@ -269,6 +269,12 @@ def render_chat(
                 ui.button("Nova sessão", icon="add", on_click=lambda: _new_session()).props(
                     'flat dense no-caps aria-label="Nova sessão"'
                 ).classes("text-xs text-amber-600")
+            # autocomplete de comandos do agente (change add-openspec-to-system-container, D5):
+            # aparece acima do campo quando a mensagem começa com "/" e ainda não tem espaço
+            cmd_box = ui.column().classes("w-full af-cmd-menu").props(
+                'data-testid=chat-command-menu role=listbox aria-label="Comandos do agente"'
+            )
+            cmd_box.set_visibility(False)
             input_row = ui.row().classes("w-full items-center")
             with input_row:
                 prompt = ui.input(placeholder="Peça algo ao agente (ex.: crie um CRUD da tabela clientes)").classes("grow af-chat-input").props(
@@ -596,7 +602,103 @@ def render_chat(
 
     send_btn.on_click(do_send)
     interrupt_btn.on_click(do_interrupt)
-    prompt.on("keydown.enter", do_send)
+
+    # --- autocomplete de comandos (D5) ------------------------------------------------
+    # A lista vem do agente do sistema (services.agent_commands, com cache). Sem lista (agente
+    # fora do ar), simplesmente não há sugestões: o envio não depende dela.
+    cmd_state: dict = {"items": [], "idx": 0, "open": False}
+
+    def _cmd_query() -> str | None:
+        text = prompt.value or ""
+        if not text.startswith("/") or " " in text:
+            return None
+        return text[1:]
+
+    def _set_cmd_open(value: bool) -> None:
+        if cmd_state["open"] != value:
+            cmd_state["open"] = value
+            cmd_box.set_visibility(value)
+            # o handler de teclado roda no navegador: só segura Enter/Tab/setas com o menu aberto
+            ui.run_javascript(f"window.__aidbCmdOpen = {'true' if value else 'false'};")
+
+    def _render_cmds() -> None:
+        cmd_box.clear()
+        with cmd_box:
+            for i, c in enumerate(cmd_state["items"]):
+                selected = i == cmd_state["idx"]
+                with ui.row().classes(
+                    "w-full items-baseline gap-2 af-cmd-item" + (" af-cmd-item--on" if selected else "")
+                ).props(
+                    f'data-testid=chat-command:{c["name"]} role=option aria-selected={"true" if selected else "false"}'
+                ).on("click", lambda _e, i=i: _choose_cmd(i)):
+                    ui.label(f'/{c["name"]}').classes("af-cmd-name")
+                    if c["description"]:
+                        ui.label(c["description"]).classes("af-cmd-desc")
+
+    async def _refresh_cmds() -> None:
+        query = _cmd_query()
+        if query is None:
+            _set_cmd_open(False)
+            return
+        from nicegui import run as _run
+
+        from ..services import agent_commands
+
+        commands = await _run.io_bound(agent_commands.list_for, system)
+        if _cmd_query() != query:  # o editor continuou digitando enquanto a lista chegava
+            return
+        items = [c for c in commands if c["name"].startswith(query)]
+        if not items:
+            _set_cmd_open(False)
+            return
+        cmd_state["items"] = items
+        cmd_state["idx"] = min(cmd_state["idx"], len(items) - 1)
+        _render_cmds()
+        _set_cmd_open(True)
+
+    def _choose_cmd(i: int) -> None:
+        name = cmd_state["items"][i]["name"]
+        _set_cmd_open(False)
+        prompt.set_value(f"/{name} ")
+        prompt.run_method("focus")
+
+    def _on_prompt_key(e) -> None:
+        key = e.args
+        if key == "Enter":
+            if cmd_state["open"]:
+                _choose_cmd(cmd_state["idx"])
+            else:
+                do_send()
+            return
+        if not cmd_state["open"]:
+            return
+        if key in ("ArrowDown", "ArrowUp"):
+            step = 1 if key == "ArrowDown" else -1
+            cmd_state["idx"] = (cmd_state["idx"] + step) % len(cmd_state["items"])
+            _render_cmds()
+        elif key == "Tab":
+            _choose_cmd(cmd_state["idx"])
+        elif key == "Escape":
+            _set_cmd_open(False)
+
+    async def _on_prompt_change(_e) -> None:
+        cmd_state["idx"] = 0 if _cmd_query() in ("", None) else cmd_state["idx"]
+        await _refresh_cmds()
+
+    ui.run_javascript("window.__aidbCmdOpen = false;")
+    prompt.on_value_change(_on_prompt_change)
+    # Um handler só para o teclado: Enter escolhe a sugestão com o menu aberto e envia com ele
+    # fechado — dois handlers (escolher + enviar) disputariam o mesmo Enter.
+    prompt.on(
+        "keydown", _on_prompt_key,
+        js_handler="""(e) => {
+            const open = window.__aidbCmdOpen === true;
+            if (e.key === 'Enter') { if (open) e.preventDefault(); emit('Enter'); return; }
+            if (open && ['ArrowDown', 'ArrowUp', 'Tab', 'Escape'].includes(e.key)) {
+                e.preventDefault(); emit(e.key);
+            }
+        }""",
+    )
 
     approval_state: dict = {"signature": None}
 

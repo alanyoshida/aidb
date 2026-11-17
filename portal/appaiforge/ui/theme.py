@@ -408,6 +408,12 @@ CHAT_CSS: Final[str] = """
 .af-chat-input .q-field__control { border-radius: 22px !important; background: var(--ap-surface-2) !important;
   padding: 0 16px !important; border: 1px solid var(--ap-border) !important; }
 .af-chat-send { background: var(--ap-accent) !important; color: var(--ap-on-accent) !important; }
+.af-cmd-menu { background: var(--ap-surface); border: 1px solid var(--ap-border); border-radius: 12px;
+  box-shadow: var(--ap-shadow); max-height: 240px; overflow-y: auto; padding: 4px; gap: 0 !important; }
+.af-cmd-item { padding: 6px 10px; border-radius: 8px; cursor: pointer; flex-wrap: nowrap; }
+.af-cmd-item:hover, .af-cmd-item--on { background: var(--ap-surface-2); }
+.af-cmd-name { color: var(--ap-text); font-weight: 600; font-family: ui-monospace, monospace; white-space: nowrap; }
+.af-cmd-desc { color: var(--ap-muted); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .af-chat-send .q-icon { color: var(--ap-on-accent) !important; }
 
 /* Botão de sessão na sidebar: um título longo (+ " · horário" concatenado)

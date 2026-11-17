@@ -22,6 +22,7 @@
 - **Debug**: comandos executados e arquivos alterados só aparecem com a chave **Debug** ligada; ligar e desligar não perde histórico.
 - **Artifacts**: o agente pode responder com blocos ` ```echart `, ` ```table ` e ` ```html `, que o chat renderiza como gráfico, tabela interativa e HTML em sandbox.
 - **Checkpoint manual**: o botão informa se criou um checkpoint ou se não havia alteração a salvar.
+- **Comandos do agente (`/`)**: digitar `/` no início da mensagem abre a lista dos comandos que o agente daquele sistema reconhece, com descrição; o texto filtra a lista, setas navegam, Enter ou Tab completam o comando (sem enviar) e Esc fecha. Todo sistema vem com o OpenSpec 1.15.0 configurado no workspace (`openspec/` e `.opencode/`, artefatos em PT-BR): `/opsx-propose <descrição>` cria uma change com proposta, specs, design e tarefas; `/opsx-explore` ajuda a pensar antes de decidir; `/opsx-apply <change>` implementa; `/opsx-archive <change>` arquiva. Os arquivos da change entram no checkpoint da execução. Se o agente não responder à listagem, o chat só não mostra sugestões — a mensagem é enviada normalmente.
 
 ## Editor
 
