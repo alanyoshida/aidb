@@ -194,6 +194,14 @@ def test_permission_external_directory_e_sempre_allow(editor, tmp_path):
     assert config["permission"]["external_directory"] == "allow"
 
 
+def test_opencode_carrega_agents_md_do_workspace_por_instructions(editor, tmp_path):
+    """O agente roda com cwd=/opencode-config (fora do workspace), então só lê as guidelines
+    se a config apontar o AGENTS.md explicitamente (change fix-opencode-load-agents-md)."""
+    system = create_system(editor, "INSTR", "prov-instructions")
+    config = _config(tmp_path, system)
+    assert config["instructions"] == ["/workspace/AGENTS.md"]
+
+
 def test_write_opencode_config_grava_em_config_dir_nao_no_workspace(editor, tmp_path):
     import os
 

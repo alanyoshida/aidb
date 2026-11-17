@@ -42,6 +42,10 @@ DB_GATE_PORT_BASE = 15400
 # muitas conexões cadastradas num sistema.
 HTTPS_PROXY_PORT = 15500
 
+# Guidelines da plataforma no workspace, visto de dentro da unidade de execução: os dois drivers
+# montam o workspace em /workspace e `guidelines.materialize` grava o AGENTS.md na raiz.
+WORKSPACE_AGENTS_MD = "/workspace/AGENTS.md"
+
 
 class CapacityReached(Exception):
     pass
@@ -308,6 +312,12 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
         # cobre só rede, etapa 5 do roadmap), então isto não piora o que já não
         # estava garantido por outra camada.
         "permission": {"bash": _bash_permission_globs(), "external_directory": "allow"},
+        # O agente roda com cwd=/opencode-config, fora do workspace (para não carregar config
+        # de projeto gravável por ele), então o opencode não acha o AGENTS.md sozinho: as
+        # guidelines materializadas antes de cada execução só chegam ao modelo apontadas aqui.
+        # `instructions` só injeta texto no prompt, não habilita config do workspace
+        # (change fix-opencode-load-agents-md, verificado no opencode 1.19.5).
+        "instructions": [WORKSPACE_AGENTS_MD],
     }
     if provider is not None and provider["kind"] == "openai-compatible":
         models = {m: {} for m in (provider["models"] or [])}
