@@ -30,6 +30,7 @@ DELETE FROM gate_decisions WHERE system_id IN (SELECT id FROM _e2e_systems)
 DELETE FROM gate_requests WHERE system_id IN (SELECT id FROM _e2e_systems)
   OR run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
 DELETE FROM run_events WHERE run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
+DELETE FROM agent_telemetry_spans WHERE run_id IN (SELECT id FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems));
 DELETE FROM checkpoints WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM token_usage WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems);

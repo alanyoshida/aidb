@@ -78,3 +78,25 @@ def verify_identity_token(secret: str, token: str) -> dict | None:
         return payload
     except (ValueError, TypeError, json.JSONDecodeError):
         return None
+
+
+APP_IDENTITY_ISSUER = "aidb-portal"
+
+
+def app_identity_audience(slug: str) -> str:
+    return f"aidb-app:{slug}"
+
+
+def sign_app_identity_jwt(secret: str, slug: str, claims: dict, ttl_seconds: int) -> str:
+    """JWT HS256 com o segredo do sistema e audiência restrita à app (change add-oidc-sso, D9).
+
+    Segredo por sistema + `aud` impedem que a identidade emitida para uma app valha em
+    outra; a app nunca recebe o token do IdP."""
+    from joserfc import jwt
+    from joserfc.jwk import OctKey
+
+    now = int(time.time())
+    body = dict(claims)
+    body.update({"iss": APP_IDENTITY_ISSUER, "aud": app_identity_audience(slug), "iat": now,
+                 "exp": now + ttl_seconds})
+    return jwt.encode({"alg": "HS256", "typ": "JWT"}, body, OctKey.import_key(secret))

@@ -1,0 +1,117 @@
+# Stack E2E do modo OIDC (change add-oidc-sso, D11): portal com APPAIFORGE_AUTH_MODE=oidc
+# contra um Keycloak local com o realm `aidb` importado (deploy/keycloak/aidb-realm.json).
+#
+#   docker compose -f deploy/docker-compose.e2e-oidc.yml up -d --build
+#   cd portal && uv run pytest tests/e2e_oidc
+#
+# Separado do stack E2E local (deploy/docker-compose.e2e.yml) porque o modo de autenticação
+# fica travado na base de cada instalação. NÃO rode as duas suítes ao mesmo tempo: os
+# contêineres de sistema têm nome global (appaiforge-sys-<slug>). Workspaces e configs
+# ficam em diretórios próprios no host (…-e2e-oidc), porque a limpeza de início da suíte
+# local apaga workspaces sem sistema correspondente na base dela.
+#
+# Endereços: portal em http://localhost:8082, Keycloak em http://localhost:8180
+# (console admin: admin/admin). O navegador usa o endereço público do Keycloak
+# (KC_HOSTNAME) e o portal fala com ele pela rede interna (APPAIFORGE_OIDC_INTERNAL_BASE_URL);
+# o `iss` dos tokens continua sendo o público.
+name: appaiforge-e2e-oidc
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appaiforge
+      POSTGRES_PASSWORD: appaiforge
+      POSTGRES_DB: appaiforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appaiforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8180:8080"
+    volumes:
+      - ./keycloak/aidb-realm.json:/opt/keycloak/data/import/aidb-realm.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '\"UP\"' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  traefik:
+    image: traefik:v3.1
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "8082:80"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - dynamic:/etc/traefik/dynamic
+    depends_on:
+      portal:
+        condition: service_healthy
+
+  portal:
+    build:
+      context: ..
+      dockerfile: deploy/portal.Dockerfile
+    environment:
+      APPAIFORGE_DATABASE_URL: postgresql+psycopg://appaiforge:appaiforge@postgres:5432/appaiforge
+      APPAIFORGE_SECRET_KEY: e2e-oidc-secret
+      APPAIFORGE_DOCKER_NETWORK: appaiforge-e2e-oidc-net
+      APPAIFORGE_WORKSPACES_DIR: /workspaces
+      APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_E2E_OIDC_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e-oidc}
+      APPAIFORGE_CONFIGS_DIR: /configs
+      APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_E2E_OIDC_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-oidc}
+      APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
+      APPAIFORGE_PORTAL_INTERNAL_URL: http://portal:8080
+      APPAIFORGE_HARNESS_MODE: fake
+      APPAIFORGE_FAKE_DELAY: "1.5"
+      APPAIFORGE_MAX_SYSTEMS: "50"
+      APPAIFORGE_HEALTH_INTERVAL: "5"
+      # --- autenticação (change add-oidc-sso) ---
+      APPAIFORGE_AUTH_MODE: oidc
+      APPAIFORGE_PUBLIC_BASE_URL: http://localhost:8082
+      APPAIFORGE_OIDC_ISSUER: http://localhost:8180/realms/aidb
+      APPAIFORGE_OIDC_INTERNAL_BASE_URL: http://keycloak:8080
+      APPAIFORGE_OIDC_CLIENT_ID: aidb-portal
+      APPAIFORGE_OIDC_CLIENT_SECRET: aidb-e2e-client-secret
+      # Break-glass de teste. Senha só de E2E: bg-e2e-senha ($$ escapa o $ do hash).
+      APPAIFORGE_BREAKGLASS_EMAIL: breakglass@appaiforge.local
+      APPAIFORGE_BREAKGLASS_PASSWORD_HASH: "scrypt$$16384$$8$$1$$3EeR8N0OFgBPKuKIdmcdfw==$$ibnzfUIG5ffad/t5NwOpxlYCvyUd+yLgsAxHqOMRXRE="
+    volumes:
+      - ${APPAIFORGE_E2E_OIDC_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e-oidc}:/workspaces
+      - ${APPAIFORGE_E2E_OIDC_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-oidc}:/configs
+      - dynamic:/dynamic
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+networks:
+  default:
+    name: appaiforge-e2e-oidc-net
+
+volumes:
+  pgdata:
+  dynamic:

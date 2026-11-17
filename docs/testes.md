@@ -20,6 +20,15 @@ docker compose -f deploy/docker-compose.e2e.yml up -d --build
 cd portal && uv run pytest tests/e2e     # browser (Playwright), do zero, no stack 8081
 ```
 
+O modo SSO tem seu **próprio stack** (o modo de autenticação fica travado na base): portal na
+porta 8082 com `AUTH_MODE=oidc` e um Keycloak local (8180) com o realm de teste — ver
+[Autenticação](autenticacao.md#e2e-com-keycloak-local). Não rode as duas suítes E2E ao mesmo tempo.
+
+```bash
+docker compose -f deploy/docker-compose.e2e-oidc.yml up -d --build
+cd portal && uv run pytest tests/e2e_oidc
+```
+
 ## Cenário com LLM real (`@llm_real`)
 
 O caminho opencode+GLM é validado manualmente (não roda em CI):

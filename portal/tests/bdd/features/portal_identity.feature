@@ -44,3 +44,47 @@ Feature: Autenticação local no portal
     And um "app_user" membro do grupo "clientes" vinculado ao sistema "erp"
     Then o "app_user" enxerga o sistema "erp"
     And um "app_user" sem vínculo não enxerga o sistema "erp"
+
+  # --- Retorno ao destino após o login (change add-oidc-sso) ---
+
+  Scenario: Volta à página pedida
+    Given um usuário ativo registrado com e-mail e senha
+    When ele abre "/systems/abc" sem sessão e é levado ao login
+    And ele entra pelo formulário de login
+    Then ele chega a "/systems/abc"
+
+  Scenario: Destino externo é ignorado
+    Given um usuário ativo registrado com e-mail e senha
+    When o login é iniciado com destino "https://outro.example/roubo"
+    And ele entra pelo formulário de login
+    Then ele chega a "/"
+
+  # --- Administração no modo OIDC (change add-oidc-sso) ---
+
+  Scenario: Gestão de usuários indisponível no modo OIDC
+    Given o portal no modo "oidc" com um admin break-glass
+    And um usuário que já entrou pelo IdP
+    Then o admin não consegue criar, alterar tipo, desativar nem excluir usuários
+    And o admin não consegue adicionar nem remover membros de grupos
+
+  Scenario: Admin cadastra grupo com nome do IdP
+    Given o portal no modo "oidc" com um admin break-glass
+    And um sistema "vendas" de um editor
+    When o admin cadastra o grupo "financeiro" e o vincula ao sistema "vendas"
+    Then um usuário cujo token traz o grupo "financeiro" acessa o sistema "vendas"
+    And um usuário cujo token traz o grupo "Financeiro" não acessa o sistema "vendas"
+
+  Scenario: Sugestão de nomes vistos
+    Given o portal no modo "oidc" com um admin break-glass
+    And o grupo "marketing" foi visto em um token
+    Then o portal sugere "marketing" ao cadastrar grupo
+    And cadastrar "nunca-visto" mostra o aviso de grupo sem usuários
+    And cadastrar "marketing" não mostra aviso
+
+  Scenario: Aviso ao renomear no modo OIDC
+    Given o portal no modo "oidc" com um admin break-glass
+    Then renomear grupo mostra o aviso de nome idêntico ao do IdP
+
+  Scenario: Sem aviso ao renomear no modo local
+    Given um usuário do tipo "admin" autenticado
+    Then renomear grupo não mostra aviso

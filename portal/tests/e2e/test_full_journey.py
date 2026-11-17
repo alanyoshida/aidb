@@ -44,7 +44,17 @@ def _select(page, testid: str, text: str) -> None:
     """
     page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
     page.locator(f"[data-testid={testid}]").click()
-    page.locator(".q-menu:visible").get_by_text(text, exact=True).click()
+    menu = page.locator(".q-menu:visible")
+    menu.wait_for(timeout=5_000)
+    # O q-select usa rolagem virtual: com muitas opções (a suíte cheia passa de 50 sistemas) só
+    # as primeiras ~30 são renderizadas. Rola o menu até a opção existir no DOM.
+    option = menu.get_by_text(text, exact=True)
+    for _ in range(40):
+        if option.count():
+            break
+        menu.evaluate("m => { m.scrollTop += m.clientHeight; }")
+        page.wait_for_timeout(150)
+    option.click()
     page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
 
 
@@ -145,21 +155,21 @@ def test_jornada_completa(page, suffix):
     # 4. app_user DO grupo usa a app com identidade do portal
     _logout(page)
     _login(page, app_in_email, "pw-jornada")
-    page.goto(f"/entry/{slug}")
+    page.goto(f"/apps/{slug}/")
     page.wait_for_timeout(2500)
     body = page.inner_text("body")
     assert "App de exemplo" in body, f"app_user do grupo não alcançou a app: {body[:200]}"
     page.goto("/")
     _logout(page)
 
-    # 5. app_user SEM vínculo é negado (na entrada e direto na app)
+    # 5. app_user SEM vínculo é negado (na entrada legada e direto na app, pelo edge)
     _login(page, app_out_email, "pw-jornada")
     page.goto(f"/entry/{slug}")
     page.get_by_text("Nenhum sistema acessível.").wait_for(timeout=30_000)
     page.goto(f"/apps/{slug}/")
     page.wait_for_timeout(1500)
     assert "App de exemplo" not in page.inner_text("body")
-    assert "acesso restrito" in page.inner_text("body")
+    assert "Permissão insuficiente" in page.inner_text("body")
     page.goto("/")
     _logout(page)
 
@@ -173,7 +183,7 @@ def test_jornada_completa(page, suffix):
 
     # a app continua no ar após o rollback (supervisor reinicia no estado restaurado)
     for _ in range(20):
-        resp = page.request.get(f"/entry/{slug}")
+        resp = page.request.get(f"/apps/{slug}/")
         if resp.ok and "App de exemplo" in resp.text():
             break
         time.sleep(1)

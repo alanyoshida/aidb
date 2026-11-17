@@ -80,6 +80,39 @@ spec:
             # bool qualquer — por isso o ternário em vez de `| quote` direto.
             - name: APPAIFORGE_SEED_DEMO_ADMIN
               value: {{ ternary "1" "0" .Values.portal.seedDemoAdmin | quote }}
+            # Autenticação (change add-oidc-sso).
+            - name: APPAIFORGE_AUTH_MODE
+              value: {{ .Values.auth.mode | quote }}
+            - name: APPAIFORGE_PUBLIC_BASE_URL
+              value: {{ .Values.auth.publicBaseUrl | quote }}
+            {{- if eq .Values.auth.mode "oidc" }}
+            - name: APPAIFORGE_OIDC_ISSUER
+              value: {{ required "auth.oidc.issuer é obrigatório com auth.mode=oidc" .Values.auth.oidc.issuer | quote }}
+            - name: APPAIFORGE_OIDC_CLIENT_ID
+              value: {{ required "auth.oidc.clientId é obrigatório com auth.mode=oidc" .Values.auth.oidc.clientId | quote }}
+            - name: APPAIFORGE_OIDC_INTERNAL_BASE_URL
+              value: {{ .Values.auth.oidc.internalBaseUrl | quote }}
+            - name: APPAIFORGE_OIDC_SCOPES
+              value: {{ .Values.auth.oidc.scopes | quote }}
+            - name: APPAIFORGE_OIDC_ROLES_CLAIM
+              value: {{ .Values.auth.oidc.rolesClaim | quote }}
+            - name: APPAIFORGE_OIDC_GROUPS_CLAIM
+              value: {{ .Values.auth.oidc.groupsClaim | quote }}
+            - name: APPAIFORGE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: oidcClientSecret
+            {{- end }}
+            {{- if .Values.auth.breakglass.email }}
+            - name: APPAIFORGE_BREAKGLASS_EMAIL
+              value: {{ .Values.auth.breakglass.email | quote }}
+            - name: APPAIFORGE_BREAKGLASS_PASSWORD_HASH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: breakglassPasswordHash
+            {{- end }}
             - name: APPAIFORGE_MAX_SYSTEMS
               value: {{ .Values.portal.maxSystems | quote }}
             - name: APPAIFORGE_FAKE_DELAY

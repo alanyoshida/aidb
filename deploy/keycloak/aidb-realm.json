@@ -1,0 +1,93 @@
+{
+  "realm": "aidb",
+  "displayName": "AIDB (E2E)",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "loginWithEmailAllowed": true,
+  "roles": {
+    "realm": [
+      {"name": "admin", "description": "Tipo global admin no portal AIDB"},
+      {"name": "editor", "description": "Tipo global editor no portal AIDB"},
+      {"name": "app_user", "description": "Tipo global app_user no portal AIDB"}
+    ]
+  },
+  "groups": [
+    {"name": "e2e-financeiro", "path": "/e2e-financeiro"},
+    {"name": "e2e-vendas", "path": "/e2e-vendas"}
+  ],
+  "clients": [
+    {
+      "clientId": "aidb-portal",
+      "name": "Portal AIDB",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "aidb-e2e-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": ["http://localhost:8082/auth/callback"],
+      "webOrigins": ["http://localhost:8082"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8082/login"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "e2e-admin", "email": "e2e-admin@e2e-oidc.local", "emailVerified": true,
+      "firstName": "Admin", "lastName": "E2E", "enabled": true,
+      "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}],
+      "realmRoles": ["admin"]
+    },
+    {
+      "username": "e2e-editor", "email": "e2e-editor@e2e-oidc.local", "emailVerified": true,
+      "firstName": "Editor", "lastName": "E2E", "enabled": true,
+      "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}],
+      "realmRoles": ["editor"]
+    },
+    {
+      "username": "e2e-financeiro", "email": "e2e-financeiro@e2e-oidc.local", "emailVerified": true,
+      "firstName": "Financeiro", "lastName": "E2E", "enabled": true,
+      "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}],
+      "realmRoles": ["app_user"],
+      "groups": ["/e2e-financeiro"]
+    },
+    {
+      "username": "e2e-vendas", "email": "e2e-vendas@e2e-oidc.local", "emailVerified": true,
+      "firstName": "Vendas", "lastName": "E2E", "enabled": true,
+      "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}],
+      "realmRoles": ["app_user"],
+      "groups": ["/e2e-vendas"]
+    },
+    {
+      "username": "e2e-semrole", "email": "e2e-semrole@e2e-oidc.local", "emailVerified": true,
+      "firstName": "Sem", "lastName": "Papel", "enabled": true,
+      "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}]
+    }
+  ]
+}

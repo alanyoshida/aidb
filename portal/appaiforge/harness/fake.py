@@ -13,36 +13,45 @@ from .base import HarnessPort, RunEvent
 _SAMPLE_APP = '''"""App de exemplo gerada pelo FakeHarness (E2E) — com gate de identidade."""
 import base64, hashlib, hmac, json, os, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import urlparse, parse_qs
 
 SECRET = os.environ.get("APP_IDENTITY_SECRET", "")
 SLUG = os.environ.get("APPAIFORGE_SLUG", "__SLUG__")
+AUD = "aidb-app:" + SLUG
+
+
+def _b64(s):
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
 def _identity(token):
+    """Espelho de app_template.identity.verify_identity (spec app-serving): JWT HS256
+    do header X-AIDB-Identity, emitido pelo portal para ESTA app."""
     if not SECRET or not token:
         return None
     try:
-        body_b64, sig = token.rsplit(".", 1)
-        expected = hmac.new(SECRET.encode(), body_b64.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
+        h, p, sig = token.split(".")
+        if json.loads(_b64(h)).get("alg") != "HS256":
             return None
-        padded = body_b64 + "=" * (-len(body_b64) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
-        if int(payload.get("exp", 0)) < time.time():
+        expected = hmac.new(SECRET.encode(), (h + "." + p).encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _b64(sig)):
             return None
-        return payload
+        claims = json.loads(_b64(p))
+        aud = claims.get("aud")
+        if claims.get("iss") != "aidb-portal" or AUD not in (aud if isinstance(aud, list) else [aud]):
+            return None
+        if int(claims.get("exp", 0)) < time.time():
+            return None
+        return claims
     except Exception:
         return None
 
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        token = parse_qs(urlparse(self.path).query).get("t", [None])[0]
-        user = _identity(token)
+        user = _identity(self.headers.get("X-AIDB-Identity"))
         if user is None:
             body = "AIDB: acesso restrito. Abra a app pelo portal.\\n".encode()
-            self.send_response(403)
+            self.send_response(401)
         else:
             body = f"App de exemplo do sistema {SLUG} — ola, {user.get('user_id', '?')[:8]}!\\n".encode()
             self.send_response(200)

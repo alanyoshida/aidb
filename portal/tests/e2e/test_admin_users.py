@@ -43,7 +43,16 @@ def _select(page, testid: str, text: str) -> None:
     """
     page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
     page.locator(f"[data-testid={testid}]").click()
-    page.locator(".q-menu:visible").get_by_text(text, exact=True).click()
+    menu = page.locator(".q-menu:visible")
+    menu.wait_for(timeout=5_000)
+    # rolagem virtual do q-select: só ~30 opções ficam no DOM; rola até a opção existir
+    option = menu.get_by_text(text, exact=True)
+    for _ in range(40):
+        if option.count():
+            break
+        menu.evaluate("m => { m.scrollTop += m.clientHeight; }")
+        page.wait_for_timeout(150)
+    option.click()
     page.locator(".q-menu:visible").wait_for(state="hidden", timeout=5_000)
 
 

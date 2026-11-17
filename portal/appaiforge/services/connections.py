@@ -81,7 +81,21 @@ def _test_postgres(host: str, port: int, database: str, username: str, password:
 
 
 def _test_bigquery(project: str, dataset: str, sa_json: str) -> None:
+    """Valida o Service Account JSON e o acesso ao dataset (spec db-bigquery).
+
+    O JSON é validado sempre, inclusive com o emulador (antes, no emulador ele nem era lido).
+    O acesso é verificado com `get_dataset` em vez de uma query: confirma credencial, projeto e
+    dataset sem custo de execução, e funciona no emulador do E2E — que não suporta
+    INFORMATION_SCHEMA e devolvia `jobInternalError`, que o client tratava como recuperável e
+    recriava o job indefinidamente."""
     import os
+
+    try:
+        info = json.loads(sa_json)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ConnectionFailed("Service Account JSON inválido") from exc
+    if not isinstance(info, dict) or not info.get("client_email"):
+        raise ConnectionFailed("Service Account JSON inválido")
     try:
         from google.cloud import bigquery
         if os.environ.get("BIGQUERY_EMULATOR_HOST"):
@@ -90,15 +104,10 @@ def _test_bigquery(project: str, dataset: str, sa_json: str) -> None:
         else:
             from google.oauth2 import service_account
             creds = service_account.Credentials.from_service_account_info(
-                json.loads(sa_json),
-                scopes=["https://www.googleapis.com/auth/bigquery.readonly"],
+                info, scopes=["https://www.googleapis.com/auth/bigquery.readonly"],
             )
         client = bigquery.Client(project=project, credentials=creds)
-        list(client.query(
-            f"SELECT 1 FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES` LIMIT 1"
-        ).result())
-    except json.JSONDecodeError as exc:
-        raise ConnectionFailed("Service Account JSON inválido") from exc
+        client.get_dataset(f"{project}.{dataset}", timeout=15)
     except Exception as exc:
         raise ConnectionFailed(f"não foi possível conectar ao BigQuery: {exc.__class__.__name__}") from exc
 

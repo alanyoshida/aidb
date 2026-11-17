@@ -1,6 +1,6 @@
 # 0006 — Identidade do portal propagada às apps por token HMAC
 
-* Status: aceito
+* Status: substituído por [0027](0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md) (o handoff `?t=` segue só como compatibilidade)
 * Data: 2026-11-01
 * Decidida em: change `appai-forge-mvp` (design D6)
 

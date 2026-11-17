@@ -66,11 +66,16 @@ services:
       APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN: ${APPAIFORGE_INFERENCE_BROKER_SERVICE_TOKEN:-troque-este-token}
       APPAIFORGE_DB_GATE_MODE: ${APPAIFORGE_DB_GATE_MODE:-enforce}
       APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN: ${APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN:-troque-este-token}
-      BIGQUERY_EMULATOR_HOST: bigquery-emulator:9050
+      # URL completa: a lib usa o valor como endpoint e exige o esquema (sem ele: InvalidSchema).
+      BIGQUERY_EMULATOR_HOST: http://bigquery-emulator:9050
       APPAIFORGE_FAKE_DELAY: "1.5"
       APPAIFORGE_MAX_SYSTEMS: "50"
       APPAIFORGE_HEALTH_INTERVAL: "5"
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
+      # Break-glass de teste (change add-oidc-sso). Senha só de E2E: bg-e2e-senha
+      # ($$ escapa o $ do hash scrypt para o compose).
+      APPAIFORGE_BREAKGLASS_EMAIL: breakglass@appaiforge.local
+      APPAIFORGE_BREAKGLASS_PASSWORD_HASH: "scrypt$$16384$$8$$1$$3EeR8N0OFgBPKuKIdmcdfw==$$ibnzfUIG5ffad/t5NwOpxlYCvyUd+yLgsAxHqOMRXRE="
     volumes:
       - ${APPAIFORGE_E2E_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e}:/workspaces
       - ${APPAIFORGE_E2E_CONFIGS_DIR:-/opt/appaiforge/configs-e2e}:/configs

@@ -159,7 +159,14 @@ def test_sistema_claude_code_ponta_a_ponta_com_checkpoint(claude_code_e2e_system
 
     assert status == RunStatus.succeeded, f"run falhou: {summary}"
 
+    # O status `succeeded` é gravado antes do checkpoint (agent_queue grava o fim da run, persiste
+    # os eventos e só então faz o commit git dentro do container): espera a condição em vez de
+    # assumir que já vale — sob carga (suíte inteira) a consulta imediata via 0 checkpoints.
+    deadline = time.time() + 30
     checkpoints = list_checkpoints(system)
+    while not checkpoints and time.time() < deadline:
+        time.sleep(0.5)
+        checkpoints = list_checkpoints(system)
     assert len(checkpoints) == 1
     assert checkpoints[0]["git_sha"]
 

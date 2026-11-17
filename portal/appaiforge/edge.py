@@ -84,34 +84,54 @@ def unpublish_app(slug: str) -> None:
     get_driver().unpublish(slug)
 
 
+def edge_auth_address(slug: str) -> str:
+    """Endpoint do portal que o forwardAuth do Traefik chama antes de cada requisição à app
+    (change add-oidc-sso, D8). Usa o endereço interno do portal (rede Docker / Service)."""
+    return f"{get_settings().portal_internal_url.rstrip('/')}/internal/edge/auth/{slug}"
+
+
+EDGE_AUTH_RESPONSE_HEADERS = ["X-AIDB-Identity"]
+
+
+def app_route_config(slug: str) -> dict:
+    """Config dinâmica do Traefik para `/apps/<slug>`: forwardAuth (verifica sessão e acesso e
+    injeta a identidade) ANTES do stripPrefix — o portal precisa ver o caminho original em
+    `X-Forwarded-Uri` para mandar o usuário de volta à app depois do login."""
+    return {
+        "http": {
+            "routers": {
+                f"app-{slug}": {
+                    "rule": f"PathPrefix(`/apps/{slug}`)",
+                    "entryPoints": ["web"],
+                    "service": f"app-{slug}",
+                    "priority": 100,
+                    "middlewares": [f"app-{slug}-auth", f"app-{slug}-strip"],
+                }
+            },
+            "middlewares": {
+                f"app-{slug}-auth": {
+                    "forwardAuth": {
+                        "address": edge_auth_address(slug),
+                        # authResponseHeaders sobrescreve o header vindo do cliente: uma
+                        # identidade forjada nunca chega à app (o 200 sempre o inclui).
+                        "authResponseHeaders": list(EDGE_AUTH_RESPONSE_HEADERS),
+                    }
+                },
+                f"app-{slug}-strip": {"stripPrefix": {"prefixes": [f"/apps/{slug}"]}},
+            },
+            "services": {
+                f"app-{slug}": {
+                    "loadBalancer": {"servers": [{"url": system_app_url(slug)}]}
+                }
+            },
+        }
+    }
+
+
 def publish_app_docker(system: System) -> None:
     """Implementação Docker de `publish_app` (WebSocket passa direto pelo file provider) —
     chamada por `DockerProvisioningDriver.publish`, nunca direto."""
-    slug = system.slug
-    _write(
-        f"apps-{slug}.yml",
-        {
-            "http": {
-                "routers": {
-                    f"app-{slug}": {
-                        "rule": f"PathPrefix(`/apps/{slug}`)",
-                        "entryPoints": ["web"],
-                        "service": f"app-{slug}",
-                        "priority": 100,
-                        "middlewares": [f"app-{slug}-strip"],
-                    }
-                },
-                "middlewares": {
-                    f"app-{slug}-strip": {"stripPrefix": {"prefixes": [f"/apps/{slug}"]}}
-                },
-                "services": {
-                    f"app-{slug}": {
-                        "loadBalancer": {"servers": [{"url": system_app_url(slug)}]}
-                    }
-                },
-            }
-        },
-    )
+    _write(f"apps-{system.slug}.yml", app_route_config(system.slug))
 
 
 def unpublish_app_docker(slug: str) -> None:

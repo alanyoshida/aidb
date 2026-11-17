@@ -35,8 +35,24 @@ def create_app() -> FastAPI:
     telemetry.configure("appaiforge-portal")
 
     application = FastAPI(title="AIDB", version=__version__)
+    from .auth_routes import router as auth_router
+
+    application.include_router(auth_router)
+    from .oidc import router as oidc_router  # também registra a revalidação de sessões oidc
+
+    application.include_router(oidc_router)
+    from .edge_auth import router as edge_auth_router
+
+    application.include_router(edge_auth_router)
     get_engine()
     Base.metadata.create_all(get_engine())  # Alembic é o caminho normal; create_all garante dev/boot
+    from .auth_mode import check_on_boot
+
+    # Antes de qualquer seed: o seed criaria usuários e mascararia uma base nova.
+    check_on_boot()
+    from .services.directory import sync_breakglass
+
+    sync_breakglass()
     _seed_demo_admin()
 
     from .services.catalog import ensure_presets
@@ -124,32 +140,6 @@ def create_app() -> FastAPI:
         except Exception:  # noqa: BLE001 - FK/uso não atribuível
             return JSONResponse({"error": "uso não registrado"}, status_code=422)
         return JSONResponse({"recorded": recorded})
-
-    @application.get("/entry/{slug}")
-    def app_entry(slug: str, request: Request) -> "RedirectResponse":
-        """Porta de entrada da app (fora do prefixo /apps, que é roteado
-        direto ao container pelo Traefik): valida acesso e assina o token."""
-        from fastapi.responses import RedirectResponse
-
-        from .config import get_settings
-        from .models import SystemStatus
-        from .rbac import can_access_system
-        from .services.systems import get_system_by_slug
-        from .ui.common import get_current_user
-
-        auth_cookie = request.cookies.get(auth.COOKIE_NAME)
-        user = auth.resolve_user(auth_cookie)
-        if user is None:
-            return RedirectResponse("/login", status_code=302)
-        system = get_system_by_slug(slug)
-        if system is None or system.status != SystemStatus.active or not can_access_system(user, system.id):
-            return RedirectResponse("/", status_code=302)
-        token = security.sign_identity_token(
-            system.identity_secret,
-            {"user_id": user.id, "user_type": user.type.value, "email": user.email},
-            ttl_seconds=get_settings().identity_token_ttl_seconds,
-        )
-        return RedirectResponse(f"/apps/{slug}/?t={token}", status_code=302)
 
     register_pages()
     write_portal_router()

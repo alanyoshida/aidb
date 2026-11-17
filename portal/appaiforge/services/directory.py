@@ -19,6 +19,7 @@ from ..models import (
     GroupMember,
     Guideline,
     ManagementAudit,
+    ObservedIdpGroup,
     Session as SessionModel,
     System,
     SystemGroup,
@@ -37,6 +38,69 @@ class NameTaken(Exception):
     pass
 
 
+class ManagedByIdp(PermissionError):
+    """Operação de usuário/pertença indisponível no modo oidc: pertence ao IdP."""
+
+
+class ProtectedUser(PermissionError):
+    """O admin break-glass é definido só por ENV e não é gerenciável pela UI."""
+
+
+def _require_local_mode() -> None:
+    from ..auth_mode import is_oidc
+
+    if is_oidc():
+        raise ManagedByIdp("no modo oidc, usuários e membros de grupo são geridos pelo IdP")
+
+
+def _reject_breakglass(user: User) -> None:
+    if user.break_glass:
+        raise ProtectedUser("o admin break-glass é definido por configuração e não pode ser alterado")
+
+
+def sync_breakglass() -> None:
+    """Aplica a configuração do break-glass no boot (D7).
+
+    Configurado -> upsert do usuário com `break_glass=True`, `type=admin`, ativo, sem
+    grupos e com o hash de senha da ENV. Qualquer outro usuário marcado como
+    break-glass (ENV removida ou e-mail trocado) é desativado e perde as sessões.
+    """
+    from ..config import get_settings
+
+    settings = get_settings()
+    email = settings.breakglass_email.strip().lower()
+    pw_hash = settings.breakglass_password_hash.strip()
+    with session_scope() as s:
+        if email and pw_hash:
+            user = s.execute(select(User).where(User.email == email)).scalar_one_or_none()
+            if user is None:
+                user = User(email=email, type=UserType.admin)
+                s.add(user)
+            user.password_hash = pw_hash
+            user.type = UserType.admin
+            user.active = True
+            user.break_glass = True
+            s.flush()
+            s.execute(delete(GroupMember).where(GroupMember.user_id == user.id))
+            keep_id = user.id
+        else:
+            keep_id = None
+        stale = s.execute(
+            select(User).where(User.break_glass.is_(True), User.id != (keep_id or ""))
+        ).scalars().all()
+        for old in stale:
+            old.active = False
+            s.execute(delete(SessionModel).where(SessionModel.user_id == old.id))
+
+
+def is_breakglass_email(email: str) -> bool:
+    """True se o e-mail é o do admin break-glass configurado por ENV."""
+    from ..config import get_settings
+
+    configured = get_settings().breakglass_email.strip().lower()
+    return bool(configured) and email.strip().lower() == configured
+
+
 def _require_admin(actor: User | None) -> None:
     if actor is not None and not actor.is_admin:
         raise PermissionError("operação restrita a administradores")
@@ -44,6 +108,7 @@ def _require_admin(actor: User | None) -> None:
 
 def create_user_as_admin(email: str, password: str, user_type: str, actor: User | None = None) -> User:
     _require_admin(actor)
+    _require_local_mode()
     user = _create_user(email, password, user_type)
     audit.record(
         actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
@@ -55,9 +120,11 @@ def create_user_as_admin(email: str, password: str, user_type: str, actor: User 
 
 def set_user_active(email: str, active: bool, actor: User | None = None) -> None:
     _require_admin(actor)
+    _require_local_mode()
     target = email.strip().lower()
     with session_scope() as s:
         user = s.execute(select(User).where(User.email == target)).scalar_one()
+        _reject_breakglass(user)
         user.active = active
     audit.record(
         actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
@@ -67,11 +134,13 @@ def set_user_active(email: str, active: bool, actor: User | None = None) -> None
 
 def update_user_type(email: str, user_type: str, actor: User) -> None:
     _require_admin(actor)
+    _require_local_mode()
     target = email.strip().lower()
     if user_type not in [t.value for t in UserType]:
         raise ValueError(f"tipo inválido: {user_type}")
     with session_scope() as s:
         user = s.execute(select(User).where(User.email == target)).scalar_one()
+        _reject_breakglass(user)
         old = user.type.value
         user.type = UserType(user_type)
     audit.record(
@@ -83,11 +152,13 @@ def update_user_type(email: str, user_type: str, actor: User) -> None:
 def delete_user(email: str, actor: User) -> None:
     """Exclui o usuário: transfere sistemas, limpa vínculos/sessões e desacopla o histórico."""
     _require_admin(actor)
+    _require_local_mode()
     target = email.strip().lower()
     with session_scope() as s:
         user = s.execute(select(User).where(User.email == target)).scalar_one_or_none()
         if user is None:
             raise KeyError("usuário não encontrado")
+        _reject_breakglass(user)
         systems = s.execute(select(System).where(System.owner_id == user.id)).scalars().all()
         transferred = [sys_.id for sys_ in systems]
         for sys_ in systems:
@@ -157,9 +228,11 @@ def delete_group(group_name: str, actor: User) -> None:
 
 def add_member(group_name: str, email: str, actor: User | None = None) -> None:
     _require_admin(actor)
+    _require_local_mode()
     with session_scope() as s:
         group = s.execute(select(Group).where(Group.name == group_name.strip())).scalar_one()
         user = s.execute(select(User).where(User.email == email.strip().lower())).scalar_one()
+        _reject_breakglass(user)
         exists = s.execute(
             select(GroupMember).where(GroupMember.group_id == group.id, GroupMember.user_id == user.id)
         ).scalar_one_or_none()
@@ -174,6 +247,7 @@ def add_member(group_name: str, email: str, actor: User | None = None) -> None:
 
 def remove_member(group_name: str, email: str, actor: User) -> None:
     _require_admin(actor)
+    _require_local_mode()
     with session_scope() as s:
         group = s.execute(select(Group).where(Group.name == group_name.strip())).scalar_one()
         user = s.execute(select(User).where(User.email == email.strip().lower())).scalar_one()
@@ -247,3 +321,57 @@ def owned_system_count(email: str) -> int:
         if user is None:
             return 0
         return len(s.execute(select(System.id).where(System.owner_id == user.id)).scalars().all())
+
+
+# --- Modo oidc: grupos casam pelo nome com o claim do token (change add-oidc-sso) ---
+
+OIDC_RENAME_WARNING = (
+    "No modo SSO, usuários só casam com o grupo se o nome for idêntico (inclusive "
+    "maiúsculas) ao do grupo no IdP. Renomear aqui sem renomear lá corta o acesso."
+)
+
+
+def rename_warning() -> str | None:
+    """Aviso exibido ao renomear grupo (só no modo oidc)."""
+    from ..auth_mode import is_oidc
+
+    return OIDC_RENAME_WARNING if is_oidc() else None
+
+
+def suggested_group_names() -> list[str]:
+    """Nomes vistos em tokens que ainda não são grupos cadastrados (mais recentes primeiro)."""
+    with session_scope() as s:
+        registered = set(s.execute(select(Group.name)).scalars())
+        seen = s.execute(
+            select(ObservedIdpGroup.name).order_by(ObservedIdpGroup.last_seen_at.desc())
+        ).scalars().all()
+    return [name for name in seen if name not in registered]
+
+
+def group_name_hint(name: str) -> str | None:
+    """Aviso ao cadastrar, no modo oidc, um nome de grupo nunca visto em token."""
+    from ..auth_mode import is_oidc
+
+    clean = (name or "").strip()
+    if not clean or not is_oidc():
+        return None
+    with session_scope() as s:
+        if s.get(ObservedIdpGroup, clean) is not None:
+            return None
+    return (
+        f"Nenhum usuário com o grupo '{clean}' entrou ainda. Confira se o nome é idêntico "
+        "ao do IdP — o cadastro é aceito mesmo assim."
+    )
+
+
+def list_users_overview() -> list[dict]:
+    """Usuários para a listagem do admin, com último login e marca de break-glass."""
+    with session_scope() as s:
+        users = s.execute(select(User).order_by(User.email)).scalars().all()
+        return [
+            {
+                "email": u.email, "type": u.type.value, "active": u.active,
+                "last_login_at": u.last_login_at, "break_glass": u.break_glass,
+            }
+            for u in users
+        ]

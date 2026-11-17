@@ -66,9 +66,38 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 SECRET = os.environ.get("APP_IDENTITY_SECRET", "")
+AUD = "aidb-app:" + os.environ.get("APPAIFORGE_SLUG", "")
+
+
+def _b64(s):
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
 
 def _identity(token):
-    """Espelho de app_template.identity.resolve_identity (spec app-serving)."""
+    """Espelho de app_template.identity.verify_identity (spec app-serving): JWT HS256
+    do header X-AIDB-Identity, emitido pelo portal para ESTA app."""
+    if not SECRET or not token:
+        return None
+    try:
+        h, p, sig = token.split(".")
+        if json.loads(_b64(h)).get("alg") != "HS256":
+            return None
+        expected = hmac.new(SECRET.encode(), (h + "." + p).encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, _b64(sig)):
+            return None
+        claims = json.loads(_b64(p))
+        aud = claims.get("aud")
+        if claims.get("iss") != "aidb-portal" or AUD not in (aud if isinstance(aud, list) else [aud]):
+            return None
+        if int(claims.get("exp", 0)) < time.time():
+            return None
+        return claims
+    except Exception:
+        return None
+
+
+def _legacy(token):
+    """Handoff legado ?t= (ADR 0006) — mantido para portais anteriores ao forwardAuth."""
     if not SECRET or not token:
         return None
     try:
@@ -76,20 +105,20 @@ def _identity(token):
         expected = hmac.new(SECRET.encode(), body_b64.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
-        padded = body_b64 + "=" * (-len(body_b64) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded))
+        payload = json.loads(_b64(body_b64))
         if int(payload.get("exp", 0)) < time.time():
             return None
         return payload
     except Exception:
         return None
 
+
 class R(BaseHTTPRequestHandler):
     def do_GET(self):
-        token = parse_qs(urlparse(self.path).query).get("t", [None])[0]
-        if _identity(token) is None:
+        legacy = parse_qs(urlparse(self.path).query).get("t", [None])[0]
+        if _identity(self.headers.get("X-AIDB-Identity")) is None and _legacy(legacy) is None:
             body = "AIDB: acesso restrito. Abra a app pelo portal.\\n".encode()
-            self.send_response(403)
+            self.send_response(401)
         else:
             body = "AIDB: app ainda nao gerada para este sistema.\\nUse o chat do portal.\\n".encode()
             self.send_response(200)

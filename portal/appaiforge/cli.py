@@ -16,6 +16,25 @@ def create_admin(args: argparse.Namespace) -> int:
     return 0
 
 
+def hash_password_cmd(args: argparse.Namespace) -> int:
+    """Gera o hash scrypt para APPAIFORGE_BREAKGLASS_PASSWORD_HASH (change add-oidc-sso)."""
+    import getpass
+
+    from .security import hash_password
+
+    password = args.password
+    if password is None:
+        password = getpass.getpass("senha: ")
+        if getpass.getpass("confirme: ") != password:
+            print("as senhas não conferem", file=sys.stderr)
+            return 1
+    if not password:
+        print("senha vazia", file=sys.stderr)
+        return 1
+    print(hash_password(password))
+    return 0
+
+
 def set_provider_key(args: argparse.Namespace) -> int:
     from sqlalchemy import select
 
@@ -54,6 +73,13 @@ def main(argv: list[str] | None = None) -> int:
     p_admin.add_argument("--email", required=True)
     p_admin.add_argument("--password", required=True)
     p_admin.set_defaults(func=create_admin)
+
+    p_hash = sub.add_parser(
+        "hash-password",
+        help="gera o hash de senha para APPAIFORGE_BREAKGLASS_PASSWORD_HASH (pede a senha se omitida)",
+    )
+    p_hash.add_argument("--password", default=None, help="evite em shells com histórico; omita para digitar")
+    p_hash.set_defaults(func=hash_password_cmd)
 
     p_key = sub.add_parser("set-provider-key", help="cadastra/atualiza a chave de um provedor de LLM (glm, anthropic, openai)")
     p_key.add_argument("--provider", required=True, help="id do provedor no portal (ex.: glm)")

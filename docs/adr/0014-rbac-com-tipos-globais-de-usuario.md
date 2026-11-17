@@ -1,6 +1,6 @@
 # 0014 — RBAC com tipos globais de usuário; só editor cria sistemas
 
-* Status: aceito
+* Status: aceito — emendado por [0027](0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md) (no modo OIDC, tipo e grupos vêm do IdP)
 * Data: 2026-11-01
 * Decidida em: exploração `appai-forge-mvp` (decisões interativas, com correção do usuário)
 

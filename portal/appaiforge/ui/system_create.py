@@ -4,7 +4,7 @@ from nicegui import ui
 
 from ..services import catalog
 from ..services.systems import InvalidSlug, NotPermitted, SlugTaken, create_system
-from .common import get_current_user, notify, render_header
+from .common import get_current_user, redirect_to_login, notify, render_header
 
 
 def register() -> None:
@@ -12,7 +12,7 @@ def register() -> None:
     def new_system_page() -> None:
         user = get_current_user()
         if user is None:
-            ui.navigate.to("/login")
+            redirect_to_login()
             return
         render_header(user)
         if not user.is_editor and not user.is_admin:

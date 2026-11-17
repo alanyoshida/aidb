@@ -69,6 +69,19 @@ services:
       APPAIFORGE_FAKE_DELAY: ${APPAIFORGE_FAKE_DELAY:-1.5}
       APPAIFORGE_MAX_SYSTEMS: ${APPAIFORGE_MAX_SYSTEMS:-50}
       APPAIFORGE_SEED_DEMO_ADMIN: "1"
+      # Autenticação (change add-oidc-sso): "local" (padrão) ou "oidc". O modo fica
+      # gravado na base no primeiro boot — trocar depois faz o portal recusar subir.
+      # No modo oidc, defina também a URL pública do portal e o client do IdP.
+      APPAIFORGE_AUTH_MODE: ${APPAIFORGE_AUTH_MODE:-local}
+      APPAIFORGE_PUBLIC_BASE_URL: ${APPAIFORGE_PUBLIC_BASE_URL:-}
+      APPAIFORGE_OIDC_ISSUER: ${APPAIFORGE_OIDC_ISSUER:-}
+      APPAIFORGE_OIDC_INTERNAL_BASE_URL: ${APPAIFORGE_OIDC_INTERNAL_BASE_URL:-}
+      APPAIFORGE_OIDC_CLIENT_ID: ${APPAIFORGE_OIDC_CLIENT_ID:-}
+      APPAIFORGE_OIDC_CLIENT_SECRET: ${APPAIFORGE_OIDC_CLIENT_SECRET:-}
+      # Admin break-glass (os dois modos): hash de `appaiforge hash-password`. Num
+      # .env, escape cada $ do hash como $$. Vazio = sem break-glass.
+      APPAIFORGE_BREAKGLASS_EMAIL: ${APPAIFORGE_BREAKGLASS_EMAIL:-}
+      APPAIFORGE_BREAKGLASS_PASSWORD_HASH: ${APPAIFORGE_BREAKGLASS_PASSWORD_HASH:-}
       # Telemetria OTel (change agent-telemetry-otel / agent-telemetry-backend-agnostic):
       # vazio por padrão — o SDK fica no-op. Aponta sempre para o Collector
       # (nunca direto para um backend específico) - a escolha de Tempo/Loki
