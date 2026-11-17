@@ -146,3 +146,7 @@ deploy/       docker-compose.yml (postgres, mysql, traefik, portal), docker-comp
 docs/         guias de uso, segurança, configuração etc. (acima) e docs/adr/ (decisões de arquitetura)
 openspec/     specs vigentes (specs/) e histórico de changes (changes/archive/)
 ```
+
+## Licença
+
+Distribuído sob a licença MIT: uso, modificação e redistribuição livres, inclusive para fins comerciais, desde que o aviso de copyright e o texto da licença acompanhem as cópias. Veja [`LICENSE`](LICENSE).
