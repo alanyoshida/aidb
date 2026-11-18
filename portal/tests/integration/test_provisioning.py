@@ -125,6 +125,13 @@ def test_exclusao_remove_container_e_workspace(system, docker_env):
     provision_system(system)
     archive_system(system)
     workspace = os.path.join(get_settings().workspaces_dir, system.slug)
+    config_dir = os.path.join(get_settings().configs_dir, system.slug)
+    assert os.path.isfile(os.path.join(config_dir, "opencode.json"))  # arquivar preserva a config
+    # config de outro sistema ao lado: a exclusão não pode tocá-la
+    vizinho = os.path.join(get_settings().configs_dir, f"{system.slug}-vizinho")
+    os.makedirs(vizinho)
+    with open(os.path.join(vizinho, "opencode.json"), "w") as f:
+        f.write("{}")
 
     delete_system(system)
 
@@ -133,6 +140,9 @@ def test_exclusao_remove_container_e_workspace(system, docker_env):
     with pytest.raises(docker.errors.NotFound):
         _client().containers.get(system_container_name(system.slug))
     assert not os.path.isdir(workspace)
+    # change fix-delete-system-config: sem pasta de config órfã
+    assert not os.path.exists(config_dir)
+    assert os.path.isfile(os.path.join(vizinho, "opencode.json"))
 
 
 def test_teto_de_sistemas_e_respeitado(docker_env, clean_db, monkeypatch):
