@@ -1,6 +1,15 @@
 # AIDB
 
 [![Licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![NiceGUI](https://img.shields.io/badge/NiceGUI-3.18-5898D4)](https://nicegui.io/)
+[![Bancos: PostgreSQL | MySQL | BigQuery](https://img.shields.io/badge/bancos-PostgreSQL%20%7C%20MySQL%20%7C%20BigQuery-4169E1?logo=postgresql&logoColor=white)](docs/guia-de-uso.md)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](#instalação)
+[![Kubernetes (Helm)](https://img.shields.io/badge/Kubernetes-Helm-326CE5?logo=kubernetes&logoColor=white)](docs/driver-kubernetes.md)
+[![Agente: opencode](https://img.shields.io/badge/agente-opencode%201.19-black)](https://opencode.ai/)
+[![Specs: OpenSpec](https://img.shields.io/badge/specs-OpenSpec-6E40C9)](openspec/specs/)
+[![Último commit](https://img.shields.io/github/last-commit/alanyoshida/aidb)](https://github.com/alanyoshida/aidb/commits/main)
 
 Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você cadastra um sistema, conecta um banco (PostgreSQL, MySQL ou BigQuery), conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
 
