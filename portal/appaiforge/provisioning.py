@@ -687,7 +687,7 @@ def archive_system(system: System, actor_id: str | None = None, actor_email: str
 
 
 def delete_system(system: System, actor_id: str | None = None, actor_email: str | None = None) -> None:
-    """Exclusão definitiva (somente admin): container + workspace (spec)."""
+    """Exclusão definitiva (somente admin): container + workspace + config do sistema (spec)."""
     _telemetry_log.info(
         "sistema excluído definitivamente",
         extra={"system_id": system.id, "slug": system.slug, "actor_id": actor_id, "actor_email": actor_email},
@@ -701,8 +701,15 @@ def delete_system(system: System, actor_id: str | None = None, actor_email: str 
         from .drivers.kubernetes_driver import delete_workspace_pvc
 
         delete_workspace_pvc(system.slug)
+    import shutil
+
     workspace = os.path.join(get_settings().workspaces_dir, system.slug)
     if os.path.isdir(workspace):
-        import shutil
-
         shutil.rmtree(workspace, ignore_errors=True)
+    # Config gerada pelo portal (config do agente + perfil de runtime). Nos dois drivers ela fica
+    # no diretório local do portal — no Kubernetes o ConfigMap já sai com `stop_and_remove`, a
+    # pasta não. Sem isto ela ficava órfã (change fix-delete-system-config). Só aqui: arquivar
+    # preserva a pasta, e o reprovisionamento a reescreve.
+    config_dir = os.path.join(get_settings().configs_dir, system.slug)
+    if os.path.isdir(config_dir):
+        shutil.rmtree(config_dir, ignore_errors=True)
