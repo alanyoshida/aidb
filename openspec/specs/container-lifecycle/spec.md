@@ -78,7 +78,7 @@ O portal SHALL manter os containers de sistemas sempre ativos com política de r
 - **THEN** o container é recriado com a mesma configuração e o workspace existente
 
 ### Requirement: Arquivamento e exclusão de sistema
-O portal SHALL permitir que o dono arquive seu sistema — desativando acessos e o container, preservando o workspace — e que somente administradores executem a exclusão definitiva, removendo container e workspace.
+O portal SHALL permitir que o dono arquive seu sistema — desativando acessos e o container, preservando o workspace — e que somente administradores executem a exclusão definitiva, removendo container, workspace e a config do sistema gerada pelo portal.
 
 #### Scenario: Dono arquiva sistema
 - **WHEN** o dono arquiva um sistema
@@ -87,3 +87,8 @@ O portal SHALL permitir que o dono arquive seu sistema — desativando acessos e
 #### Scenario: Admin exclui definitivamente
 - **WHEN** um admin exclui um sistema arquivado
 - **THEN** container e workspace são removidos permanentemente
+
+#### Scenario: Exclusão não deixa config órfã
+- **WHEN** um admin exclui definitivamente um sistema
+- **THEN** a pasta de config do sistema no portal (config do agente e perfil de runtime) também é removida
+- **AND** outro sistema não é afetado
