@@ -26,10 +26,10 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 - [x] 3.3 Estender o backend git por driver com exportar e importar pacote, em base64 no Kubernetes (design D1); verificar com teste de integração nos dois drivers que um pacote exportado e reimportado preserva os commits
 - [x] 3.4 Implementar a invocação remota: chave em diretório temporário em `tmpfs`, `GIT_SSH_COMMAND`, `known_hosts` temporário, `GIT_ALLOW_PROTOCOL=ssh`, tempo limite de 30 s, limpeza em sucesso e erro (design D2); verificar com teste de integração que nenhum arquivo de chave sobra após sucesso e após falha
 - [x] 3.5 Teste de conexão com obtenção e confirmação da impressão digital do servidor, e recusa quando a chave do servidor muda; verificar com teste de integração trocando a chave do servidor da fixture
-- [ ] 3.6 Repositório de retransmissão e envio por pacote, sem `--force`; verificar com teste de integração que o commit chega ao remoto com o editor como autor e que um push rejeitado não reescreve nada
-- [ ] 3.7 Vínculo inicial: criar a branch de trabalho quando ausente e recusar histórico não relacionado; verificar os dois casos com teste de integração
-- [ ] 3.8 Encaixar o envio depois do checkpoint em `agent_queue._execute`, no checkpoint manual e no rollback; falha vira estado `pending` com motivo e é reenviada no checkpoint seguinte e por "Enviar agora" (design D6); verificar com teste de integração derrubando o servidor da fixture durante uma execução
-- [ ] 3.9 Teste de integração provando que a chave privada não existe no sistema de arquivos, no ambiente nem nos processos do container do sistema após envios, nos dois drivers, e que o agente não alcança o servidor git
+- [x] 3.6 Repositório de retransmissão e envio por pacote, sem `--force`; verificar com teste de integração que o commit chega ao remoto com o editor como autor e que um push rejeitado não reescreve nada
+- [x] 3.7 Vínculo inicial: criar a branch de trabalho quando ausente e recusar histórico não relacionado; verificar os dois casos com teste de integração
+- [x] 3.8 Encaixar o envio depois do checkpoint em `agent_queue._execute`, no checkpoint manual e no rollback; falha vira estado `pending` com motivo e é reenviada no checkpoint seguinte e por "Enviar agora" (design D6); verificar com teste de integração derrubando o servidor da fixture durante uma execução
+- [x] 3.9 Teste de integração provando que a chave privada não existe no sistema de arquivos, no ambiente nem nos processos do container do sistema após envios, nos dois drivers, e que o agente não alcança o servidor git
 
 ## 4. Aba Repositório
 

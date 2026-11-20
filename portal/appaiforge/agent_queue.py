@@ -512,6 +512,11 @@ class AgentQueue:
                     checkpoints.record_checkpoint(fresh, run_id, run.summary or run.prompt[:80], author)
                 except Exception:
                     log.exception("checkpoint falhou para %s", fresh.slug)
+                # envio ao repositório remoto, quando o sistema tem um vínculo ativo (change
+                # add-system-git-remote); falha de remoto nunca derruba a execução
+                from . import git_sync
+
+                git_sync.after_checkpoint(fresh, author)
                 try:
                     from .edge import publish_app
 

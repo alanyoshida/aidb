@@ -680,6 +680,9 @@ def _render_checkpoints(system, user) -> None:
             return
         notify(f"Checkpoint {cp.git_sha[:8]} criado.", "positive")
         refresh_cps()
+        from .. import git_sync
+
+        git_sync.after_checkpoint(system, user)
 
     # mesmo peso de "Nova conexão"/"Adicionar" (as outras duas ações
     # primárias de "criar algo nesta aba") — "outline dense" ficava bem
@@ -729,6 +732,9 @@ def _render_checkpoints(system, user) -> None:
                             return
                         notify(f"workspace restaurado para {sha[:8]} (checkpoint {restored.git_sha[:8]})", "positive")
                         refresh_cps()
+                        from .. import git_sync
+
+                        git_sync.after_checkpoint(system, user)
 
                     origin_label, origin_icon = _CHECKPOINT_ORIGINS.get(cp.get("origin"), _CHECKPOINT_ORIGINS["run"])
                     with ui.timeline_entry(
