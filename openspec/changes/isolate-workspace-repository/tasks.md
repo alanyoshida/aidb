@@ -38,11 +38,9 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 5. Verificação integrada
 
-- [ ] 5.1 Rodar `uv run pytest tests/unit tests/bdd tests/integration` e as suítes `tests/e2e` e `tests/e2e_oidc`, cada uma no seu stack; verificar que todas passam
-  - Rodado em 2026-11-20: unitários + BDD 533/533; integração 78/81; `tests/e2e` 37/37; `tests/e2e_oidc` 8/8.
-  - Pendente: `test_https_proxy.py` (2 testes) exige saída real para `pypi.org` de dentro dos containers, indisponível nesta máquina na rodada (sem DNS IPv4 nem HTTPS a partir dos containers); o arquivo não usa código desta change. Repetir com a rede normal.
-  - `test_claude_code_e2e.py` passou com o stub no `node` 22 da imagem `appaiforge/claude-code` (registry inacessível para baixar `node:22-slim`); repetir sem o desvio quando o registry voltar.
-  - As stacks E2E rodaram com imagens montadas sobre as anteriores, só com o código desta change copiado por cima (sem `docker compose up --build`, que dependia do registry). Repetir com `--build`.
+- [x] 5.1 Rodar `uv run pytest tests/unit tests/bdd tests/integration` e as suítes `tests/e2e` e `tests/e2e_oidc`, cada uma no seu stack; verificar que todas passam
+  - Rodado em 2026-11-20: unitários + BDD 533/533; integração 81/81 (`test_https_proxy.py` 4/4 e `test_claude_code_e2e.py` 1/1 repetidos sem desvio depois que a rede voltou; as falhas anteriores eram de rede, confirmado rodando o mesmo arquivo no commit anterior à change nas mesmas condições); `tests/e2e` 37/37 e `tests/e2e_oidc` 8/8 com as duas stacks construídas por `docker compose up -d --build`.
+
 - [x] 5.2 Subir o stack de desenvolvimento com um sistema criado antes da change e verificar manualmente: histórico migrado, checkpoint antigo restaurável, chat e app funcionando
   - Feito na stack E2E (descartável), não na de desenvolvimento, para não migrar os sistemas reais: sistema criado pelo código anterior à change, depois trocado para o código novo. Ver design D3 (normalização de dono e restauração atômica, acrescentadas a partir desta verificação).
 - [x] 5.3 Rodar `openspec validate isolate-workspace-repository --strict` e verificar que passa
