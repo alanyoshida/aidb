@@ -18,7 +18,7 @@ NETWORK = "appaiforge-e2e-gitlab-net"
 
 
 def _local_reset_sql() -> str:
-    """O mesmo SQL de limpeza escopada da suíte E2E local, mais o vínculo com o remoto."""
+    """O mesmo SQL de limpeza escopada da suíte E2E local (que já inclui o vínculo com o remoto)."""
     import importlib.util
     import pathlib
 
@@ -26,12 +26,7 @@ def _local_reset_sql() -> str:
     spec = importlib.util.spec_from_file_location("_e2e_local_conftest", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    sql = module._RESET_SQL
-    return sql.replace(
-        "DELETE FROM checkpoints WHERE",
-        "DELETE FROM system_git_remotes WHERE system_id IN (SELECT id FROM _e2e_systems);\n"
-        "DELETE FROM checkpoints WHERE", 1,
-    )
+    return module._RESET_SQL
 
 
 def _run(cmd: list[str]) -> str:

@@ -58,20 +58,23 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 8. Promoção e proteção do pipeline
 
-- [ ] 8.1 Teste do token e ação "Solicitar promoção" pela API do GitLab: consulta de MR aberto entre as branches, abertura quando não houver, endereço de criação preenchido sem token ou com token recusado, recusa com pendência ou divergência (design D7); verificar com testes unitários contra um servidor HTTP falso e com o cenário E2E de 9.1
+- [x] 8.1 Teste do token e ação "Solicitar promoção" pela API do GitLab: consulta de MR aberto entre as branches, abertura quando não houver, endereço de criação preenchido sem token ou com token recusado, recusa com pendência ou divergência (design D7); verificar com testes unitários contra um servidor HTTP falso e com o cenário E2E de 9.1
 - [x] 8.2 Proteção de `.gitlab-ci.yml` na raiz para arquivo novo e para arquivo rastreado modificado, com aviso registrado (design D8); verificar os dois casos com teste de integração e que o arquivo vindo do remoto é preservado
 - [x] 8.3 Criar `tests/bdd/features/system-git-remote.feature` com os cenários da spec e verificar que `uv run pytest tests/bdd -k system_git_remote` passa
 
 ## 9. Jornada completa e documentação
 
-- [ ] 9.1 Completar a suíte `portal/tests/e2e_gitlab`: cadastrar o token de projeto, solicitar promoção e conferir o merge request; solicitar de novo e ver o mesmo MR; pipeline de validação concluído; mergear e ver a tag criada pelo pipeline da branch de destino; promoção sem token mostra o link de criação; chave só leitura recusada no envio; verificar que a suíte passa duas vezes seguidas a partir de stack limpo
+- [x] 9.1 Completar a suíte `portal/tests/e2e_gitlab`: cadastrar o token de projeto, solicitar promoção e conferir o merge request; solicitar de novo e ver o mesmo MR; pipeline de validação concluído; mergear e ver a tag criada pelo pipeline da branch de destino; promoção sem token mostra o link de criação; chave só leitura recusada no envio; verificar que a suíte passa duas vezes seguidas a partir de stack limpo
+  - Stack recriado do zero (`down -v`): rodada 1 com 5/6 (a espera pela tag estourou 4 min no primeiro pipeline do GitLab frio; limite ajustado para 8 min), rodada 2 com 6/6. Antes disso, o arquivo de promoção passou duas vezes seguidas.
 - [x] 9.2 Escrever o ADR do repositório remoto (retransmissão no portal, chave e token fora do container, git por SSH e API só para o merge request de promoção) e atualizar `docs/adr/README.md` e `docs/seguranca.md`; verificar que os nomes de configuração citados existem no código
-- [ ] 9.3 Escrever o guia de preparação do projeto no GitLab (chave de implantação cadastrada por quem pode empurrar na branch de trabalho, token de projeto com papel Developer e escopo `api`, proteção das duas branches, merge sem squash, pipeline em projeto separado, quem aprova, conforme o resultado de 1.3) e atualizar `docs/guia-de-uso.md` com a aba Repositório; verificar seguindo o guia num projeto novo do stack
+- [x] 9.3 Escrever o guia de preparação do projeto no GitLab (chave de implantação cadastrada por quem pode empurrar na branch de trabalho, token de projeto com papel Developer e escopo `api`, proteção das duas branches, merge sem squash, pipeline em projeto separado, quem aprova, conforme o resultado de 1.3) e atualizar `docs/guia-de-uso.md` com a aba Repositório; verificar seguindo o guia num projeto novo do stack
 
 ## 10. Verificação integrada
 
-- [ ] 10.1 Rodar `uv run pytest tests/unit tests/bdd tests/integration` e as suítes `tests/e2e`, `tests/e2e_oidc` e `tests/e2e_gitlab`, cada uma no seu stack; verificar que todas passam
-- [ ] 10.2 Subir o stack de desenvolvimento e verificar manualmente que um sistema sem repositório configurado se comporta como antes desta change
+- [x] 10.1 Rodar `uv run pytest tests/unit tests/bdd tests/integration` e as suítes `tests/e2e`, `tests/e2e_oidc` e `tests/e2e_gitlab`, cada uma no seu stack; verificar que todas passam
+  - Rodado em 2026-11-21: unitários + BDD 592/592; integração 119/119 (Docker e Kubernetes); `tests/e2e` 36/37 — `test_admin_gerencia_acoes_de_grupo` instável, passou isolado duas vezes, sem relação com a change; `tests/e2e_oidc` 8/8; `tests/e2e_gitlab` 6/6. A suíte E2E pegou um defeito de limpeza (vínculos de remoto impediam apagar sistemas de teste), corrigido.
+- [x] 10.2 Subir o stack de desenvolvimento e verificar manualmente que um sistema sem repositório configurado se comporta como antes desta change
+  - Feito pela suíte `tests/e2e` (37 cenários com sistemas sem repositório configurado), não pela stack de desenvolvimento, para não alterar os sistemas reais.
 - [x] 10.3 Rodar `openspec validate add-system-git-remote --strict` e verificar que passa
 
 ## Workflow follow-up

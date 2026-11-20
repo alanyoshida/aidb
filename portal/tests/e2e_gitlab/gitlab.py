@@ -108,7 +108,7 @@ def commit_file(pid: int, branch_name: str, path: str, content: str, message: st
     return branch(pid, branch_name)["commit"]["id"]
 
 
-def wait_pipeline(pid: int, sha: str, timeout: float = 240) -> dict:
+def wait_pipeline(pid: int, sha: str, timeout: float = 480) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         pipelines = api("GET", f"/projects/{pid}/pipelines?sha={sha}&per_page=5")
@@ -129,7 +129,7 @@ def human_merge_request(pid: int, target: str, path: str, content: str, title: s
     return merge_when_green(pid, mr["iid"], sha)
 
 
-def merge_when_green(pid: int, iid: int, sha: str | None = None, timeout: float = 240) -> dict:
+def merge_when_green(pid: int, iid: int, sha: str | None = None, timeout: float = 480) -> dict:
     deadline = time.time() + timeout
     while time.time() < deadline:
         mr = api("GET", f"/projects/{pid}/merge_requests/{iid}")
@@ -161,7 +161,7 @@ def open_mrs(pid: int, source: str = "homolog", target: str = "main") -> list[di
     return api("GET", f"/projects/{pid}/merge_requests?state=opened&source_branch={source}&target_branch={target}")
 
 
-def wait_tag(pid: int, sha: str, timeout: float = 240) -> dict:
+def wait_tag(pid: int, sha: str, timeout: float = 480) -> dict:
     """Tag criada pelo pipeline da main para o commit `sha` (pode já haver tags de pipelines
     anteriores, como o da criação da main)."""
     deadline = time.time() + timeout
