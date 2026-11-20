@@ -656,6 +656,14 @@ def _render_editor(system, user) -> None:
     ui.timer(2.0, refresh_tree)
 
 
+# Rótulo e ícone por origem do checkpoint (coluna `checkpoints.origin`).
+_CHECKPOINT_ORIGINS = {
+    "run": ("execução do agente", "smart_toy"),
+    "manual": ("criado manualmente", "commit"),
+    "restore": ("restauração", "restore"),
+}
+
+
 def _render_checkpoints(system, user) -> None:
     from .. import checkpoints as cp_service
 
@@ -664,7 +672,9 @@ def _render_checkpoints(system, user) -> None:
     def create_checkpoint() -> None:
         # record_checkpoint devolve None quando o git não tem nada para commitar;
         # sem aviso o botão parece quebrado.
-        cp = cp_service.record_checkpoint(system, None, "checkpoint manual", author=user)
+        cp = cp_service.record_checkpoint(
+            system, None, "checkpoint manual", author=user, origin=cp_service.ORIGIN_MANUAL,
+        )
         if cp is None:
             notify("Nada mudou no workspace desde o último checkpoint.", "info")
             return
@@ -711,10 +721,19 @@ def _render_checkpoints(system, user) -> None:
                 for cp in cps:
 
                     def do_rollback(sha=cp["git_sha"]) -> None:
-                        cp_service.rollback(system, sha)
-                        notify(f"workspace restaurado para {sha[:8]}", "positive")
+                        # a restauração vira um checkpoint novo e não apaga os posteriores
+                        # (change isolate-workspace-repository)
+                        restored = cp_service.rollback(system, sha, author=user)
+                        if restored is None:
+                            notify(f"Nada a restaurar: o workspace já está no checkpoint {sha[:8]}.", "info")
+                            return
+                        notify(f"workspace restaurado para {sha[:8]} (checkpoint {restored.git_sha[:8]})", "positive")
+                        refresh_cps()
 
-                    with ui.timeline_entry(title=cp["git_sha"][:8], subtitle=_stamp(cp["created_at"]), icon="commit"):
+                    origin_label, origin_icon = _CHECKPOINT_ORIGINS.get(cp.get("origin"), _CHECKPOINT_ORIGINS["run"])
+                    with ui.timeline_entry(
+                        title=cp["git_sha"][:8], subtitle=f"{_stamp(cp['created_at'])} · {origin_label}", icon=origin_icon,
+                    ).props(f"data-testid=checkpoint-entry:{cp.get('origin', 'run')}"):
                         ui.label(cp["message"][:140]).classes("text-sm")
                         with ui.row().classes("gap-2"):
                             ui.button("Restaurar", icon="restore", on_click=do_rollback).props("dense outline")

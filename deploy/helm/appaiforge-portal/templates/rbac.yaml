@@ -17,16 +17,19 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "create", "delete"]
-  # checkpoints.py:_git_via_exec -> connect_get_namespaced_pod_exec faz upgrade de
+  # git_backend (KubernetesGitBackend, exec no container `git` do pod) e
+  # write_workspace_files -> connect_get_namespaced_pod_exec faz upgrade de
   # WebSocket via GET (não a rota SPDY baseada em POST que `kubectl exec` usa) —
   # o apiserver autoriza pelo verbo HTTP real da requisição, por isso "get".
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["get"]
-  # _ensure_workspace_pvc: read_namespaced_persistent_volume_claim, create_namespaced_...
+  # _ensure_workspace_pvc / _ensure_gitdir_pvc: read_namespaced_persistent_volume_claim,
+  # create_namespaced_...; delete_workspace_pvc / delete_gitdir_pvc (exclusão definitiva):
+  # delete_namespaced_persistent_volume_claim.
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get", "create"]
+    verbs: ["get", "create", "delete"]
   # _upsert_config_map / remove(): delete_namespaced_config_map, create_namespaced_config_map.
   - apiGroups: [""]
     resources: ["configmaps"]

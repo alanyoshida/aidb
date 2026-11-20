@@ -186,3 +186,92 @@ def test_paridade_provisionar_publicar_e_reconciliar(driver, tmp_path, monkeypat
         driver_obj.reconcile_one(system.id, system.slug)  # existe de novo, não levanta
     finally:
         _cleanup(driver, system)
+
+
+def _write_workspace_file(driver: str, system, rel_path: str, content: str, mode: str = "644") -> None:
+    """Escreve no workspace como o AGENTE escreveria — par de `_read_workspace_file`."""
+    if driver == "kubernetes":
+        import subprocess
+
+        from appaiforge.edge import system_container_name
+
+        script = f'mkdir -p "$(dirname /workspace/{rel_path})" && cat > /workspace/{rel_path} && chmod {mode} /workspace/{rel_path}'
+        result = subprocess.run(
+            ["kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test", "exec", "-i",
+             system_container_name(system.slug), "-c", "agent", "--", "sh", "-c", script],
+            input=content, capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+        return
+    from appaiforge.config import get_settings
+
+    path = os.path.join(get_settings().workspaces_dir, system.slug, rel_path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(content)
+    os.chmod(path, int(mode, 8))
+
+
+@pytest.mark.parametrize("driver", DRIVERS)
+def test_paridade_checkpoint_hook_plantado_e_restauracao(driver, tmp_path, monkeypatch, clean_db):
+    """Change `isolate-workspace-repository` (requirement "Mesmo comportamento nos dois drivers de
+    provisionamento"): checkpoint, hook plantado no workspace e restauração que preserva o
+    histórico, com o mesmo resultado observável nos dois drivers."""
+    _setup_env(driver, tmp_path, monkeypatch)
+    monkeypatch.setenv("APPAIFORGE_GITDIRS_DIR", str(tmp_path / "gitdirs"))
+    from appaiforge.config import get_settings
+
+    get_settings.cache_clear()
+
+    from appaiforge import auth, checkpoints
+    from appaiforge.models import UserType
+    from appaiforge.provisioning import delete_system, provision_system
+    from appaiforge.services import catalog
+    from appaiforge.services.systems import create_system
+
+    catalog.ensure_presets()
+    editor = auth.create_user(f"parity-git-{driver}@t.local", "pw", UserType.editor.value)
+    system = create_system(editor, "ParidadeGit", f"parity-git-{driver}-{os.urandom(3).hex()}")
+    marker = "/tmp/aidb-parity-hook" if driver == "kubernetes" else str(tmp_path / "aidb-parity-hook")
+
+    try:
+        provision_system(system)
+        if driver == "kubernetes":
+            from appaiforge.drivers.kubernetes_driver import _wait_for_agent_container_started
+            from appaiforge.edge import system_container_name
+
+            _wait_for_agent_container_started(system_container_name(system.slug), "appaiforge-test", timeout=120)
+
+        _write_workspace_file(driver, system, "app.txt", "v1\n")
+        v1 = checkpoints.record_checkpoint(system, None, "v1", editor)
+        _write_workspace_file(driver, system, ".git/hooks/pre-commit", f"#!/bin/sh\ntouch {marker}\n", "755")
+        _write_workspace_file(driver, system, "app.txt", "v2\n")
+        v2 = checkpoints.record_checkpoint(system, None, "v2", editor)
+        assert v1 is not None and v2 is not None
+
+        restored = checkpoints.rollback(system, v1.git_sha, editor)
+        assert restored is not None and restored.origin == "restore"
+        assert _read_workspace_file(driver, system, "app.txt") == "v1\n"
+        again = checkpoints.rollback(system, v2.git_sha, editor)
+        assert again is not None
+        assert _read_workspace_file(driver, system, "app.txt") == "v2\n"
+        assert [c["origin"] for c in checkpoints.list_checkpoints(system)] == ["restore", "restore", "run", "run"]
+
+        # o hook plantado não executou em nenhum dos quatro commits
+        if driver == "kubernetes":
+            for container in ("agent", "git"):
+                import subprocess
+
+                from appaiforge.edge import system_container_name
+
+                result = subprocess.run(
+                    ["kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test", "exec",
+                     system_container_name(system.slug), "-c", container, "--", "test", "-e", marker],
+                    capture_output=True, text=True, timeout=30,
+                )
+                assert result.returncode != 0, f"hook executou no container {container}"
+        else:
+            assert not os.path.exists(marker)
+        delete_system(system)
+    finally:
+        _cleanup(driver, system)

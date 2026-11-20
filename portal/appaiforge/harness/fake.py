@@ -164,6 +164,12 @@ class FakeHarness(HarnessPort):
         app_file = os.path.join(app_dir, "main.py")
         with open(app_file, "w") as f:
             f.write(_SAMPLE_APP.replace("__SLUG__", slug))
+        # "anote <texto>" também grava notas.txt: dá à suíte E2E um segundo estado distinto do
+        # workspace, para restaurar um checkpoint anterior pela interface (change
+        # isolate-workspace-repository).
+        if prompt.strip().lower().startswith("anote "):
+            with open(os.path.join(workspace, "notas.txt"), "w") as f:
+                f.write(prompt.strip()[len("anote "):] + "\n")
         time.sleep(self.step_delay)
         on_event(RunEvent("file_edited", text="app/main.py", meta={"files": [app_file]}))
         on_event(RunEvent("command_run", text="python -m compileall .", meta={"command": "compileall"}))

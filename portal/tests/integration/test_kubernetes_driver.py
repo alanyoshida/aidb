@@ -70,7 +70,7 @@ def _cleanup(slug: str) -> None:
     from kubernetes import client as k8s
     from kubernetes.client.rest import ApiException
 
-    from appaiforge.drivers.kubernetes_driver import _config_map_name, _workspace_pvc_name
+    from appaiforge.drivers.kubernetes_driver import _config_map_name, _gitdir_pvc_name, _workspace_pvc_name
     from appaiforge.edge import system_container_name
 
     api = _k8s_api()
@@ -80,6 +80,7 @@ def _cleanup(slug: str) -> None:
         (lambda n: api.delete_namespaced_pod(n, namespace, grace_period_seconds=0), name),
         (lambda n: api.delete_namespaced_config_map(n, namespace), _config_map_name(slug)),
         (lambda n: api.delete_namespaced_persistent_volume_claim(n, namespace), _workspace_pvc_name(slug)),
+        (lambda n: api.delete_namespaced_persistent_volume_claim(n, namespace), _gitdir_pvc_name(slug)),
         (lambda n: api.delete_namespaced_service(n, namespace), name),
     ):
         try:
@@ -122,8 +123,9 @@ def test_provision_system_cria_pod_com_tres_containers(system):
     api = _k8s_api()
     pod = api.read_namespaced_pod(system_container_name(system.slug), "appaiforge-test")
     names = {c.name for c in pod.spec.containers}
-    # sem conexão de banco cadastrada, o sidecar dbgate não sobe (mesma regra do driver Docker)
-    assert names == {"agent", "httpsproxy"}
+    # sem conexão de banco cadastrada, o sidecar dbgate não sobe (mesma regra do driver Docker);
+    # `git` é o container auxiliar onde o portal executa git (change isolate-workspace-repository)
+    assert names == {"agent", "httpsproxy", "git"}
 
 
 def test_container_do_agente_roda_com_identidade_reduzida(system):
@@ -541,3 +543,146 @@ def test_checkpoint_via_exec_commita_e_sobrevive_a_recriacao(system):
     assert commit_all(system, "nada mudou") is None
 
 
+
+
+# --- change isolate-workspace-repository (capability workspace-repository) -------------------
+
+
+def _exec_agent(system, script: str) -> str:
+    import subprocess
+
+    from appaiforge.edge import system_container_name
+
+    result = subprocess.run(
+        ["kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test", "exec",
+         system_container_name(system.slug), "-c", "agent", "--", "sh", "-c", script],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    return result.stdout.strip()
+
+
+def test_repositorio_montado_so_no_container_git(system):
+    """Requirement "Repositório do sistema fora do alcance do agente": o PVC do repositório é
+    montado só no container `git`; o `agent` monta o workspace, mas não o repositório."""
+    from appaiforge.drivers.kubernetes_driver import _gitdir_pvc_name
+    from appaiforge.edge import system_container_name
+    from appaiforge.provisioning import provision_system
+
+    provision_system(system)
+    pod = _k8s_api().read_namespaced_pod(system_container_name(system.slug), "appaiforge-test")
+    gitdir_volumes = {
+        v.name for v in pod.spec.volumes
+        if v.persistent_volume_claim and v.persistent_volume_claim.claim_name == _gitdir_pvc_name(system.slug)
+    }
+    assert gitdir_volumes == {"gitdir"}
+    # o token da service account (`kube-api-access-*`) é injetado pelo próprio Kubernetes em todo
+    # container; não faz parte do que o driver monta
+    mounts = {
+        c.name: {m.name: m.mount_path for m in (c.volume_mounts or []) if not m.name.startswith("kube-api-access")}
+        for c in pod.spec.containers
+    }
+    assert mounts["git"] == {"workspace": "/workspace", "gitdir": "/gitdir"}
+    assert "gitdir" not in mounts["agent"]
+    for name, container_mounts in mounts.items():
+        if name != "git":
+            assert "gitdir" not in container_mounts, f"{name} não pode montar o repositório"
+    git = next(c for c in pod.spec.containers if c.name == "git")
+    agent = next(c for c in pod.spec.containers if c.name == "agent")
+    assert git.security_context == agent.security_context
+
+
+def test_historico_legado_migrado_no_kubernetes(system):
+    """Design D4 sob o driver Kubernetes: o histórico do `.git` antigo do workspace é trazido como
+    dado, e a branch aponta para o último checkpoint registrado, não para a ref adulterada."""
+    import time
+
+    from appaiforge import checkpoints
+    from appaiforge.db import session_scope
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import Checkpoint
+    from appaiforge.provisioning import provision_system
+
+    provision_system(system)
+    _wait_pod_running(system_container_name(system.slug), timeout_s=120)
+    git = ("env GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t "
+           "GIT_CONFIG_GLOBAL=/dev/null git -c safe.directory=* -C /workspace")
+    _exec_agent(system, f"{git} init -q -b main")
+    shas = []
+    for version in ("v1", "v2"):
+        sha = _exec_agent(system, f"echo {version} > /workspace/app.txt && {git} add -A && "
+                                  f"{git} commit -q -m {version} && {git} rev-parse HEAD")
+        shas.append(sha)
+        with session_scope() as s:
+            s.add(Checkpoint(system_id=system.id, run_id=None, git_sha=sha, message=version,
+                             author_id=system.owner_id, author_email=""))
+        time.sleep(0.01)
+    _exec_agent(system, f"echo agente > /workspace/app.txt && {git} add -A && {git} commit -q -m plantado "
+                        "&& echo v2 > /workspace/app.txt")
+
+    checkpoints.ensure_repo(system)
+    assert checkpoints._git(system, "rev-parse", "HEAD") == shas[-1]
+    checkpoints.rollback(system, shas[0])
+    assert _exec_agent(system, "cat /workspace/app.txt") == "v1"
+    # o agente continua dono do que o portal escreveu
+    _exec_agent(system, "echo editado >> /workspace/app.txt")
+
+
+def test_pod_sem_container_git_recusa_e_reconciliacao_recria(system, monkeypatch):
+    """Pod criado antes do container `git`: a operação git falha com mensagem clara (nunca cai no
+    container `agent`), e a reconciliação recria o pod com o container."""
+    from kubernetes import client as k8s
+
+    from appaiforge import checkpoints
+    from appaiforge.drivers import kubernetes_driver
+    from appaiforge.edge import system_container_name
+    from appaiforge.git_backend import GitError
+    from appaiforge.models import SystemStatus
+    from appaiforge.provisioning import provision_system, reconcile
+    from appaiforge.services.systems import set_status
+
+    original = kubernetes_driver._git_container
+    monkeypatch.setattr(
+        kubernetes_driver, "_git_container",
+        lambda system, settings: k8s.V1Container(name="antigo", image=settings.base_image, command=["sleep", "infinity"]),
+    )
+    provision_system(system)
+    pod_name = system_container_name(system.slug)
+    _wait_pod_running(pod_name, timeout_s=120)
+    set_status(system.id, SystemStatus.active, "")
+    _exec_agent(system, "echo x > /workspace/app.txt")
+
+    with pytest.raises(GitError, match="não tem o container 'git'"):
+        checkpoints.record_checkpoint(system, None, "pod antigo")
+    assert _exec_agent(system, "test -e /workspace/.git && echo sim || echo nao") == "nao", \
+        "nenhuma operação git pode ter caído no container agent"
+
+    monkeypatch.setattr(kubernetes_driver, "_git_container", original)
+    reconcile()
+    pod = _k8s_api().read_namespaced_pod(pod_name, "appaiforge-test")
+    assert "git" in {c.name for c in pod.spec.containers}
+    assert checkpoints.record_checkpoint(system, None, "depois da reconciliação") is not None
+
+
+def test_exclusao_definitiva_remove_a_pvc_do_repositorio(system):
+    from kubernetes.client.rest import ApiException
+
+    from appaiforge.drivers.kubernetes_driver import _gitdir_pvc_name
+    from appaiforge.provisioning import delete_system, provision_system
+
+    provision_system(system)
+    pvc_name = _gitdir_pvc_name(system.slug)
+    _k8s_api().read_namespaced_persistent_volume_claim(pvc_name, "appaiforge-test")
+    delete_system(system)
+    with pytest.raises(ApiException) as exc_info:
+        _k8s_api().read_namespaced_persistent_volume_claim(pvc_name, "appaiforge-test")
+    assert exc_info.value.status == 404
+
+
+def test_arquivamento_preserva_a_pvc_do_repositorio(system):
+    from appaiforge.drivers.kubernetes_driver import _gitdir_pvc_name
+    from appaiforge.provisioning import archive_system, provision_system
+
+    provision_system(system)
+    archive_system(system)
+    assert _k8s_api().read_namespaced_persistent_volume_claim(_gitdir_pvc_name(system.slug), "appaiforge-test")

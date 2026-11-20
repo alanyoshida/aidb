@@ -116,15 +116,17 @@ def test_system_state_informa_a_sessao_da_run_em_andamento(clean_db, fake_worksp
     assert state["running_session_id"] == run.chat_session_id
 
 
-def test_checkpoints_commit_e_rollback(fake_workspace):
+def test_checkpoints_commit_e_rollback(fake_workspace, clean_db):
     from appaiforge.config import get_settings
     from pathlib import Path
 
-    editor = None  # commit sem autor usa fallback
-    system = type("S", (), {"slug": "ckpt", "id": "sys1", "owner_id": "u1"})()
+    # sistema real: a restauração passou a registrar um checkpoint (change
+    # isolate-workspace-repository), então precisa existir no banco
+    owner = auth.create_user("ckpt-rb@t.local", "pw", UserType.editor.value)
+    system = create_system(owner, "Ckpt", "ckpt")
 
     ws = Path(get_settings().workspaces_dir) / "ckpt"
-    ws.mkdir(parents=True)
+    ws.mkdir(parents=True, exist_ok=True)
     (ws / "app").mkdir()
     (ws / "app" / "main.py").write_text("v1\n")
 

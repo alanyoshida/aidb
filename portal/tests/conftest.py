@@ -59,6 +59,15 @@ def live_pg(database_url):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_gitdirs(tmp_path_factory, monkeypatch):
+    """Repositórios git dos sistemas vivem fora do workspace (change
+    `isolate-workspace-repository`); o padrão `/gitdirs` não existe fora do container do portal.
+    Cada teste ganha um diretório próprio, separado do de workspaces — testes que definem o seu
+    (integração) sobrescrevem este valor depois."""
+    monkeypatch.setenv("APPAIFORGE_GITDIRS_DIR", str(tmp_path_factory.mktemp("gitdirs")))
+
+
+@pytest.fixture(autouse=True)
 def _no_lru_settings(database_url):
     from appaiforge.config import get_settings
 

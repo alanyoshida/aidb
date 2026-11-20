@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     configs_dir: str = "/configs"
     # Mesma raiz vista pelo host — usada para bind-mount (read-only) nos containers de sistema.
     host_config_dir: str = "/var/lib/appaiforge/configs"
+    # Raiz dos repositórios git dos sistemas sob o driver Docker (change
+    # `isolate-workspace-repository`): o workspace é só a árvore de trabalho e o repositório
+    # (objetos, refs, config, hooks) vive aqui, num volume montado SÓ no portal — nenhum
+    # container de sistema o monta, então nada que o agente escreve chega à config do git.
+    gitdirs_dir: str = "/gitdirs"
 
     # Traefik file provider: diretório compartilhado com o Traefik onde o portal
     # escreve a configuração dinâmica das rotas /apps/{slug}.

@@ -36,3 +36,25 @@ inferência, telemetria) ficam no [README do chart](../deploy/helm/appaiforge-po
 manifests antigos, aplicados manualmente com `kubectl apply`, continuam em
 `openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/` só como histórico da decisão — o
 chart é a forma recomendada de instalar hoje.
+
+## Composição do pod de cada sistema
+
+| Container | Para quê | Monta |
+|---|---|---|
+| `agent` | supervisor, agente e app gerada | workspace (`/workspace`), config do agente |
+| `dbgate` | proxy de gate de banco (só com conexão cadastrada) | — |
+| `httpsproxy` | proxy HTTP(S) de saída | — |
+| `git` | onde o portal executa git, por `exec` | workspace (`/workspace`) e repositório (`/gitdir`) |
+
+Cada sistema tem dois PVCs: `appaiforge-sys-<slug>-workspace` (árvore de trabalho) e
+`appaiforge-sys-<slug>-gitdir` (repositório git, 1 GiB). O container `agent` **não** monta o PVC do
+repositório: o histórico de checkpoints fica fora do alcance do agente, e o git do portal nunca roda
+no container dele ([segurança](seguranca.md#repositório-git-do-sistema-fora-do-workspace)). O
+container `git` usa a imagem base, fica ocioso (`sleep infinity`) e tem a mesma identidade e as
+mesmas restrições do `agent`, para os arquivos que uma restauração escreve continuarem do agente.
+
+Pods criados antes do container `git` são recriados pela reconciliação na primeira passada depois
+da atualização do portal; workspace e histórico ficam nos PVCs e sobrevivem à recriação. Até lá, uma
+operação de checkpoint nesse sistema falha com a mensagem "não tem o container 'git'". Arquivar um
+sistema preserva os dois PVCs; a exclusão definitiva remove os dois (o `Role` do chart precisa do
+verbo `delete` em `persistentvolumeclaims`).

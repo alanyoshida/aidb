@@ -1,6 +1,6 @@
 # 0009 — Git por sistema com checkpoints por execução
 
-* Status: aceito
+* Status: aceito; o local do repositório e o rollback foram substituídos pelo [0028](0028-repositorio-git-do-sistema-fora-do-workspace.md)
 * Data: 2026-11-01
 * Decidida em: change `appai-forge-mvp` (design D9)
 

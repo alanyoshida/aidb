@@ -9,6 +9,7 @@ de teste (e-mails @e2e.local), preservando sistemas reais do ambiente de dev.
 """
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -17,6 +18,7 @@ import pytest
 BASE_URL = os.environ.get("APPAIFORGE_E2E_BASE_URL", "http://localhost:8081").rstrip("/")
 PG_CONTAINER = os.environ.get("APPAIFORGE_E2E_PG_CONTAINER", "appaiforge-e2e-postgres-1")
 HOST_WORKSPACES = os.environ.get("APPAIFORGE_E2E_WORKSPACES_DIR", "/opt/appaiforge/workspaces-e2e")
+PORTAL_CONTAINER = os.environ.get("APPAIFORGE_E2E_PORTAL_CONTAINER", "appaiforge-e2e-portal-1")
 
 _RESET_SQL = """
 CREATE TEMP TABLE _e2e_users AS SELECT id FROM users WHERE email LIKE '%@e2e.local';
@@ -128,6 +130,15 @@ def clean_stack():
             path = os.path.join(HOST_WORKSPACES, entry)
             if entry not in slugs_vivos and os.path.isdir(path) and not os.path.islink(path):
                 shutil.rmtree(path, ignore_errors=True)
+
+    # repositórios git órfãos: vivem fora do workspace, num volume visível só ao portal (change
+    # isolate-workspace-repository). Sem isto, um slug reaproveitado herdaria o histórico antigo.
+    try:
+        for entry in _run(["docker", "exec", PORTAL_CONTAINER, "ls", "-1", "/gitdirs"]).split():
+            if entry not in slugs_vivos and re.fullmatch(r"[a-z0-9][a-z0-9-]*", entry):
+                _run(["docker", "exec", PORTAL_CONTAINER, "rm", "-rf", f"/gitdirs/{entry}"])
+    except RuntimeError:
+        pass
 
     yield
 

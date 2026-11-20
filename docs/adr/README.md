@@ -20,7 +20,7 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0006](0006-identidade-injetada-por-token-hmac.md) | Identidade do portal propagada às apps por token HMAC | substituído por 0027 |
 | [0007](0007-metadados-em-postgres-e-credenciais-cifradas.md) | Metadados em Postgres; credenciais cifradas em repouso | aceito |
 | [0008](0008-mcp-para-agente-driver-direto-para-app.md) | MCP para o agente analisar; driver direto para a app gerada | aceito |
-| [0009](0009-git-por-sistema-com-checkpoints.md) | Git por sistema com checkpoints por execução | aceito |
+| [0009](0009-git-por-sistema-com-checkpoints.md) | Git por sistema com checkpoints por execução | aceito (local do repositório e rollback: ver 0028) |
 | [0010](0010-app-unica-em-nicegui-em-pt-br.md) | App única em NiceGUI por sistema, interface em PT-BR | aceito |
 | [0011](0011-guidelines-de-geracao-editaveis-pelo-admin.md) | Guidelines de geração centralizadas, editáveis pelo admin | aceito |
 | [0012](0012-llm-via-api-externa-provedor-por-sistema.md) | LLM via API externa; provedor por sistema (default GLM); custo só com visibilidade | aceito |
@@ -39,3 +39,4 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0025](0025-telemetria-otel-agnostica-de-backend.md) | Telemetria OTel agnóstica de backend via Collector; Debug log em Postgres próprio; gate/auditoria continuam fora da telemetria | aceito |
 | [0026](0026-metricas-de-recursos-por-container-via-cadvisor.md) | Métricas de recursos por container via cAdvisor, rotuladas no scrape pra portabilidade futura a Kubernetes | aceito |
 | [0027](0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md) | SSO por OIDC opcional (modo por ENV, break-glass); acesso às apps verificado no edge e identidade por app em JWT | aceito |
+| [0028](0028-repositorio-git-do-sistema-fora-do-workspace.md) | Repositório git do sistema fora do workspace; restauração cria checkpoint novo em vez de reescrever o histórico | aceito |
