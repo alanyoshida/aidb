@@ -59,6 +59,8 @@ spec:
               value: {{ .Values.portal.harnessMode | quote }}
             - name: APPAIFORGE_CONFIGS_DIR
               value: {{ .Values.portal.configsDir | quote }}
+            - name: APPAIFORGE_GIT_RELAYS_DIR
+              value: /git-relays
             # Broker de inferência (ADR 0020) não é implantado por este chart —
             # mesmo default "false" dos manifests originais.
             - name: APPAIFORGE_INFERENCE_BROKER_ENABLED
@@ -123,6 +125,10 @@ spec:
           volumeMounts:
             - name: configs-scratch
               mountPath: /configs
+            # Cópias de retransmissão para o repositório remoto de cada sistema (change
+            # add-system-git-remote): cache reconstruível, só do portal.
+            - name: git-relays
+              mountPath: /git-relays
           readinessProbe:
             httpGet:
               path: /api/health
@@ -143,6 +149,8 @@ spec:
         # Staging local antes do ConfigMap (_upsert_config_map) — emptyDir,
         # efêmero de propósito.
         - name: configs-scratch
+          emptyDir: {}
+        - name: git-relays
           emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector:

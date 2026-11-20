@@ -279,6 +279,39 @@ class Checkpoint(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class SystemGitRemote(Base):
+    """Vínculo de um sistema com um repositório git remoto (change add-system-git-remote, D2).
+
+    A chave privada de implantação e o token de API ficam cifrados e nunca saem do portal: o
+    envio e a promoção partem do processo do portal, nunca do container do sistema."""
+
+    __tablename__ = "system_git_remotes"
+
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), primary_key=True)
+    url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    working_branch: Mapped[str] = mapped_column(String(200), default="homolog", server_default="homolog")
+    target_branch: Mapped[str] = mapped_column(String(200), default="main", server_default="main")
+    public_key: Mapped[str] = mapped_column(Text)
+    private_key_encrypted: Mapped[str] = mapped_column(Text)
+    # Chave do servidor confirmada por quem gerencia o sistema (linha de known_hosts sem o host).
+    host_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Vazio = derivado do host do endereço SSH (https://<host>).
+    api_url: Mapped[str] = mapped_column(String(500), default="", server_default="")
+    api_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # synced | pending | diverged | error
+    state: Mapped[str] = mapped_column(String(20), default="synced", server_default="synced")
+    state_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    last_pushed_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    conflict_files: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    merge_in_progress: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    unsaved_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    last_mr_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class TokenUsage(Base):
     __tablename__ = "token_usage"
 

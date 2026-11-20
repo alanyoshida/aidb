@@ -59,6 +59,7 @@ services:
       APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_E2E_CONFIGS_DIR:-/opt/appaiforge/configs-e2e}
       APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
       APPAIFORGE_GITDIRS_DIR: /gitdirs
+      APPAIFORGE_GIT_RELAYS_DIR: /git-relays
       APPAIFORGE_HARNESS_MODE: fake
       APPAIFORGE_INFERENCE_BROKER_ENABLED: ${APPAIFORGE_INFERENCE_BROKER_ENABLED:-false}
       APPAIFORGE_LITELLM_BASE_URL: http://litellm:4000
@@ -82,6 +83,7 @@ services:
       - ${APPAIFORGE_E2E_CONFIGS_DIR:-/opt/appaiforge/configs-e2e}:/configs
       # Repositórios git dos sistemas: só o portal monta (change isolate-workspace-repository).
       - gitdirs:/gitdirs
+      - git-relays:/git-relays
       - dynamic:/dynamic
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -135,5 +137,6 @@ networks:
 
 volumes:
   gitdirs:
+  git-relays:
   pgdata:
   dynamic:

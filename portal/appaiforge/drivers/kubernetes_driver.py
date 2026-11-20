@@ -720,7 +720,8 @@ exit 0
 """
 
 
-def _exec(system: System, container: str, command: list[str], *, timeout: int = 60) -> tuple[int, str, str]:
+def _exec(system: System, container: str, command: list[str], *, timeout: int = 60,
+          stdin: bytes | None = None) -> tuple[int, str, str]:
     """Executa `command` num container do pod do sistema e devolve (código, stdout, stderr).
     Pod sem o container pedido (criado antes dele existir) vira `WorkspaceWriteError` com
     mensagem clara, em vez de cair em outro container."""
@@ -748,11 +749,15 @@ def _exec(system: System, container: str, command: list[str], *, timeout: int = 
         container=container,
         command=command,
         stderr=True,
-        stdin=False,
+        stdin=stdin is not None,
         stdout=True,
         tty=False,
         _preload_content=False,
     )
+    if stdin is not None:
+        # O cliente não sinaliza fim de entrada de forma portável: quem lê consome exatamente
+        # len(stdin) bytes (ex.: `head -c`), nunca espera pelo fim do fluxo.
+        resp.write_stdin(stdin)
     resp.run_forever(timeout=timeout)
     stdout = resp.read_stdout() or ""
     stderr = resp.read_stderr() or ""
@@ -816,6 +821,45 @@ class KubernetesGitBackend:
     def prepare_work_tree(self, system: System) -> None:
         """Nada a fazer: neste driver o git sempre rodou com o uid do agente (exec no pod), então
         o workspace não tem arquivos do root deixados pelo portal."""
+
+    def export_bundle(self, system: System, revs: list[str]) -> bytes:
+        """O canal de exec não é seguro para binário: o pacote volta em base64."""
+        import base64
+        import shlex
+
+        from ..git_backend import GitError
+
+        git = " ".join(shlex.quote(a) for a in self._git_command(("bundle", "create", "-", *revs), False))
+        script = f"set -o pipefail 2>/dev/null; {git} | base64 -w0"
+        try:
+            code, stdout, stderr = _exec(system, GIT_CONTAINER, ["bash", "-c", script], timeout=120)
+        except WorkspaceWriteError as exc:
+            raise GitError(str(exc)) from None
+        if code != 0:
+            raise GitError(f"git bundle create: {stderr.strip()}")
+        return base64.b64decode(stdout.strip())
+
+    def import_bundle(self, system: System, data: bytes, refspec: str) -> None:
+        import base64
+        import shlex
+
+        from ..git_backend import BUNDLE_FETCH_OPTIONS, GitError
+
+        bundle = f"{GITDIR_MOUNT}/incoming-{os.getpid()}-{time.monotonic_ns()}.bundle"
+        args = ("fetch", "-q", bundle, refspec)
+        git = " ".join(shlex.quote(a) for a in self._git_command(args, False))
+        # opções de fetch de pacote entram logo depois de "git" e das opções seguras
+        git = git.replace(" git ", " git " + " ".join(shlex.quote(o) for o in BUNDLE_FETCH_OPTIONS) + " ", 1)
+        encoded = base64.b64encode(data)
+        script = (f"head -c {len(encoded)} | base64 -d > {bundle} && {git}; "
+                  f"rc=$?; rm -f {bundle}; exit $rc")
+        try:
+            code, _, stderr = _exec(system, GIT_CONTAINER, ["sh", "-c", script], timeout=120,
+                                    stdin=encoded)
+        except WorkspaceWriteError as exc:
+            raise GitError(str(exc)) from None
+        if code != 0:
+            raise GitError(f"git fetch (pacote): {stderr.strip()}")
 
     def remove(self, system: System) -> None:
         delete_gitdir_pvc(system.slug)

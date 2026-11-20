@@ -13,19 +13,19 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 2. Vínculo com o remoto e chave de implantação
 
-- [ ] 2.1 Migração Alembic e modelo `system_git_remotes` (design D2); verificar com `alembic upgrade head` e `alembic downgrade -1` num banco efêmero
-- [ ] 2.2 Serviço de configuração: validação do endereço SSH, padrões de branch, restrição a quem gerencia o sistema, ativar e desativar o vínculo, com registro de auditoria; verificar com testes unitários de URL aceita e recusada (`ext::`, `file://`, HTTP) e de permissão
-- [ ] 2.3 Geração do par ed25519, cifra da chave privada e troca de chave; verificar com teste unitário que a privada nunca aparece em retorno de serviço nem em detalhe de auditoria e que dois sistemas recebem chaves diferentes
-- [ ] 2.4 Token de API opcional: cadastro, troca e remoção cifrados, endereço da API derivado do host do repositório ou informado, nunca exibido nem em auditoria (design D7); verificar com testes unitários de derivação de endereço e de que o token não aparece em retorno de serviço nem em detalhe de auditoria
-- [ ] 2.5 Remover o vínculo, a chave, o token e a retransmissão na exclusão definitiva do sistema; verificar com teste de integração
+- [x] 2.1 Migração Alembic e modelo `system_git_remotes` (design D2); verificar com `alembic upgrade head` e `alembic downgrade -1` num banco efêmero
+- [x] 2.2 Serviço de configuração: validação do endereço SSH, padrões de branch, restrição a quem gerencia o sistema, ativar e desativar o vínculo, com registro de auditoria; verificar com testes unitários de URL aceita e recusada (`ext::`, `file://`, HTTP) e de permissão
+- [x] 2.3 Geração do par ed25519, cifra da chave privada e troca de chave; verificar com teste unitário que a privada nunca aparece em retorno de serviço nem em detalhe de auditoria e que dois sistemas recebem chaves diferentes
+- [x] 2.4 Token de API opcional: cadastro, troca e remoção cifrados, endereço da API derivado do host do repositório ou informado, nunca exibido nem em auditoria (design D7); verificar com testes unitários de derivação de endereço e de que o token não aparece em retorno de serviço nem em detalhe de auditoria
+- [x] 2.5 Remover o vínculo, a chave, o token e a retransmissão na exclusão definitiva do sistema; verificar com teste de integração
 
 ## 3. Retransmissão, conexão e envio
 
-- [ ] 3.1 Adicionar `openssh-client` a `deploy/portal.Dockerfile`, a configuração `git_relays_dir` em `config.py` e o volume do portal nos arquivos compose e no chart Helm; verificar com `docker build`, `ssh -V` na imagem e `helm template`
-- [ ] 3.2 Criar a fixture de integração com servidor git por SSH efêmero (container com `sshd` e repositório bare); verificar com um teste que clona e empurra usando uma chave gerada na fixture
-- [ ] 3.3 Estender o backend git por driver com exportar e importar pacote, em base64 no Kubernetes (design D1); verificar com teste de integração nos dois drivers que um pacote exportado e reimportado preserva os commits
-- [ ] 3.4 Implementar a invocação remota: chave em diretório temporário em `tmpfs`, `GIT_SSH_COMMAND`, `known_hosts` temporário, `GIT_ALLOW_PROTOCOL=ssh`, tempo limite de 30 s, limpeza em sucesso e erro (design D2); verificar com teste de integração que nenhum arquivo de chave sobra após sucesso e após falha
-- [ ] 3.5 Teste de conexão com obtenção e confirmação da impressão digital do servidor, e recusa quando a chave do servidor muda; verificar com teste de integração trocando a chave do servidor da fixture
+- [x] 3.1 Adicionar `openssh-client` a `deploy/portal.Dockerfile`, a configuração `git_relays_dir` em `config.py` e o volume do portal nos arquivos compose e no chart Helm; verificar com `docker build`, `ssh -V` na imagem e `helm template`
+- [x] 3.2 Criar a fixture de integração com servidor git por SSH efêmero (container com `sshd` e repositório bare); verificar com um teste que clona e empurra usando uma chave gerada na fixture
+- [x] 3.3 Estender o backend git por driver com exportar e importar pacote, em base64 no Kubernetes (design D1); verificar com teste de integração nos dois drivers que um pacote exportado e reimportado preserva os commits
+- [x] 3.4 Implementar a invocação remota: chave em diretório temporário em `tmpfs`, `GIT_SSH_COMMAND`, `known_hosts` temporário, `GIT_ALLOW_PROTOCOL=ssh`, tempo limite de 30 s, limpeza em sucesso e erro (design D2); verificar com teste de integração que nenhum arquivo de chave sobra após sucesso e após falha
+- [x] 3.5 Teste de conexão com obtenção e confirmação da impressão digital do servidor, e recusa quando a chave do servidor muda; verificar com teste de integração trocando a chave do servidor da fixture
 - [ ] 3.6 Repositório de retransmissão e envio por pacote, sem `--force`; verificar com teste de integração que o commit chega ao remoto com o editor como autor e que um push rejeitado não reescreve nada
 - [ ] 3.7 Vínculo inicial: criar a branch de trabalho quando ausente e recusar histórico não relacionado; verificar os dois casos com teste de integração
 - [ ] 3.8 Encaixar o envio depois do checkpoint em `agent_queue._execute`, no checkpoint manual e no rollback; falha vira estado `pending` com motivo e é reenviada no checkpoint seguinte e por "Enviar agora" (design D6); verificar com teste de integração derrubando o servidor da fixture durante uma execução

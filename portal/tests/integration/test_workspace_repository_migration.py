@@ -156,3 +156,29 @@ def test_arquivamento_preserva_o_repositorio(docker_env, clean_db):
     archive_system(system)
     assert os.path.isfile(os.path.join(DockerGitBackend().git_dir(system), "HEAD"))
     assert len(checkpoints.list_checkpoints(system)) == 1
+
+
+def test_exclusao_definitiva_remove_vinculo_chave_token_e_retransmissao(docker_env, clean_db, monkeypatch):
+    """change add-system-git-remote, requirement "Exclusão definitiva remove vínculo e chave"."""
+    from appaiforge.config import get_settings
+    from appaiforge.provisioning import delete_system
+    from appaiforge.services import git_remote
+
+    monkeypatch.setenv("APPAIFORGE_GIT_RELAYS_DIR", str(docker_env / "relays"))
+    get_settings.cache_clear()
+    system = _system_with_checkpoint("excl-remoto@t.local")
+    from appaiforge.db import session_scope
+    from appaiforge.models import User
+    with session_scope() as s:
+        owner = s.get(User, system.owner_id)
+        s.expunge(owner)
+    git_remote.configure(system, owner, url="git@gitlab.exemplo.com:time/app.git")
+    git_remote.set_api_token(system, owner, "tok-teste-exclusao")
+    relay = os.path.join(get_settings().git_relays_dir, system.slug)
+    os.makedirs(os.path.join(relay, "objects"))
+
+    delete_system(system)
+
+    assert git_remote.get_view(system) is None
+    assert git_remote.load_secrets(system.id) is None
+    assert not os.path.exists(relay)

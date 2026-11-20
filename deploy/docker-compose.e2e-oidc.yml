@@ -77,6 +77,7 @@ services:
       APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_E2E_OIDC_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-oidc}
       APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
       APPAIFORGE_GITDIRS_DIR: /gitdirs
+      APPAIFORGE_GIT_RELAYS_DIR: /git-relays
       APPAIFORGE_PORTAL_INTERNAL_URL: http://portal:8080
       APPAIFORGE_HARNESS_MODE: fake
       APPAIFORGE_FAKE_DELAY: "1.5"
@@ -97,6 +98,7 @@ services:
       - ${APPAIFORGE_E2E_OIDC_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-oidc}:/configs
       # Repositórios git dos sistemas: só o portal monta (change isolate-workspace-repository).
       - gitdirs:/gitdirs
+      - git-relays:/git-relays
       - dynamic:/dynamic
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
@@ -117,5 +119,6 @@ networks:
 
 volumes:
   gitdirs:
+  git-relays:
   pgdata:
   dynamic:
