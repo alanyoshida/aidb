@@ -36,6 +36,14 @@ log = logging.getLogger(__name__)
 AGENT_UID = 1000
 AGENT_GID = 1000
 
+# Container auxiliar de git e onde o PVC do repositório é montado nele (change
+# `isolate-workspace-repository`). O repositório fica num subdiretório: a raiz de um PVC pode
+# trazer `lost+found`.
+GIT_CONTAINER = "git"
+GITDIR_MOUNT = "/gitdir"
+GIT_DIR = "/gitdir/repo"
+GITDIR_PVC_GB = 1
+
 _auth_mode_logged = False
 
 
@@ -95,12 +103,14 @@ class KubernetesProvisioningDriver:
 
         _delete_pod_if_exists(api, namespace, name)
         _ensure_workspace_pvc(api, namespace, system.slug, settings.container_disk_gb)
+        _ensure_gitdir_pvc(api, namespace, system.slug)
         _upsert_config_map(api, namespace, system.slug, settings.configs_dir)
 
         containers = [_agent_container(system, profile, env, settings)]
         if manifest:
             containers.append(_dbgate_container(system, manifest, settings))
         containers.append(_httpsproxy_container(system, settings))
+        containers.append(_git_container(system, settings))
 
         pod = k8s.V1Pod(
             metadata=k8s.V1ObjectMeta(
@@ -125,6 +135,14 @@ class KubernetesProvisioningDriver:
                     k8s.V1Volume(
                         name="config",
                         config_map=k8s.V1ConfigMapVolumeSource(name=_config_map_name(system.slug)),
+                    ),
+                    # repositório git do sistema, montado SÓ no container `git` (change
+                    # `isolate-workspace-repository`, design D2)
+                    k8s.V1Volume(
+                        name="gitdir",
+                        persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
+                            claim_name=_gitdir_pvc_name(system.slug)
+                        ),
                     ),
                 ],
             ),
@@ -158,11 +176,16 @@ class KubernetesProvisioningDriver:
         name = _p.system_container_name(slug)
         api = _api()
         try:
-            api.read_namespaced_pod(name, namespace)
+            pod = api.read_namespaced_pod(name, namespace)
         except ApiException as exc:
             if exc.status == 404:
                 raise ComputeUnitNotFound(slug) from None
             raise
+        # Pod criado antes do container auxiliar `git` (change `isolate-workspace-repository`):
+        # recriado pela reconciliação, como se estivesse ausente — o workspace e o histórico
+        # ficam nos PVCs e sobrevivem à recriação.
+        if GIT_CONTAINER not in {c.name for c in (pod.spec.containers or [])}:
+            raise ComputeUnitNotFound(slug)
         # Os sidecars vivem no MESMO Pod que o container do agente — não há "sidecar sumiu mas o
         # Pod continua" como existe no driver Docker (containers independentes). Se o Pod existe,
         # os três containers existem; divergência de container individual dentro do Pod (ex.: um
@@ -349,17 +372,31 @@ def _workspace_pvc_name(slug: str) -> str:
     return f"{_p.system_container_name(slug)}-workspace"
 
 
+def _gitdir_pvc_name(slug: str) -> str:
+    from .. import provisioning as _p
+
+    return f"{_p.system_container_name(slug)}-gitdir"
+
+
+def delete_gitdir_pvc(slug: str, *, timeout: float = 60.0, interval: float = 1.0) -> None:
+    """Remove o PVC do repositório git do sistema — só na exclusão definitiva, como o do
+    workspace (change `isolate-workspace-repository`)."""
+    _delete_pvc_and_wait(_gitdir_pvc_name(slug), timeout=timeout, interval=interval)
+
+
 def delete_workspace_pvc(slug: str, *, timeout: float = 60.0, interval: float = 1.0) -> None:
     """Remove a PVC do workspace do sistema — chamado só por `provisioning.delete_system`
     (exclusão definitiva, agnóstica de driver; change `fix-k8s-workspace-materialize-delete`).
     `remove()` desta classe (arquivamento/parada) deliberadamente NÃO chama isto, pra preservar o
     workspace entre reprovisionamentos (docstring de `_ensure_workspace_pvc`). 404 é sucesso
     (idempotente), mesmo padrão já usado para o Service e as CRDs do Traefik em `unpublish()`."""
+    _delete_pvc_and_wait(_workspace_pvc_name(slug), timeout=timeout, interval=interval)
+
+
+def _delete_pvc_and_wait(name: str, *, timeout: float, interval: float) -> None:
     from .. import provisioning as _p
 
-    settings = _p.get_settings()
-    namespace = settings.k8s_namespace
-    name = _workspace_pvc_name(slug)
+    namespace = _p.get_settings().k8s_namespace
     api = _api()
     try:
         api.delete_namespaced_persistent_volume_claim(name, namespace)
@@ -495,6 +532,26 @@ def _ensure_workspace_pvc(api: k8s.CoreV1Api, namespace: str, slug: str, disk_gb
     api.create_namespaced_persistent_volume_claim(namespace, pvc)
 
 
+def _ensure_gitdir_pvc(api: k8s.CoreV1Api, namespace: str, slug: str) -> None:
+    """PVC do repositório git do sistema, criado uma vez e nunca recriado (mesma regra do PVC do
+    workspace). Pequeno: guarda só o histórico do código gerado."""
+    name = _gitdir_pvc_name(slug)
+    try:
+        api.read_namespaced_persistent_volume_claim(name, namespace)
+        return
+    except ApiException as exc:
+        if exc.status != 404:
+            raise
+    pvc = k8s.V1PersistentVolumeClaim(
+        metadata=k8s.V1ObjectMeta(name=name),
+        spec=k8s.V1PersistentVolumeClaimSpec(
+            access_modes=["ReadWriteOnce"],
+            resources=k8s.V1VolumeResourceRequirements(requests={"storage": f"{GITDIR_PVC_GB}Gi"}),
+        ),
+    )
+    api.create_namespaced_persistent_volume_claim(namespace, pvc)
+
+
 def _upsert_config_map(api: k8s.CoreV1Api, namespace: str, slug: str, configs_dir: str) -> None:
     """Lê os arquivos que `provisioning.py` já escreveu em `configs_dir/<slug>` (config_writer +
     write_agent_profile, agnósticos de driver) e os publica como ConfigMap — substitui o papel do
@@ -566,6 +623,25 @@ def _agent_container(system: System, profile: dict, env: dict[str, str], setting
     )
 
 
+def _git_container(system: System, settings) -> k8s.V1Container:
+    """Container auxiliar onde o portal executa git (change `isolate-workspace-repository`,
+    design D2): monta o workspace (árvore de trabalho) e o PVC do repositório, que o container
+    `agent` NÃO monta. Fica ocioso; só executa o que o portal pede por exec. Mesma identidade e
+    mesmas restrições do container do agente, para os arquivos escritos continuarem dele."""
+    return k8s.V1Container(
+        name=GIT_CONTAINER,
+        image=settings.base_image,
+        command=["sleep", "infinity"],
+        working_dir="/workspace",
+        security_context=_container_security_context(system.execution_mode),
+        resources=k8s.V1ResourceRequirements(limits={"cpu": "500m", "memory": "256Mi"}),
+        volume_mounts=[
+            k8s.V1VolumeMount(name="workspace", mount_path="/workspace"),
+            k8s.V1VolumeMount(name="gitdir", mount_path=GITDIR_MOUNT),
+        ],
+    )
+
+
 def _health_probe(app_port: int) -> k8s.V1Probe:
     """Mesmo critério que `health_monitor` usava por HTTP direto do portal (driver Docker):
     qualquer resposta <500 no `app_port` conta como vivo — o gate de identidade responde 403 sem
@@ -615,3 +691,131 @@ def _httpsproxy_container(system: System, settings) -> k8s.V1Container:
         command=["python", "/opt/httpproxy/sidecar.py"],
         env=[k8s.V1EnvVar(name=k, value=v) for k, v in env.items()],
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Backend git (change `isolate-workspace-repository`, design D2): todo git do portal roda por
+# exec no container auxiliar `git` do pod — nunca no container `agent` —, contra o repositório
+# no PVC próprio, com o mesmo ambiente limpo e as mesmas opções do backend Docker.
+# ---------------------------------------------------------------------------------------------
+
+# Copia, como dado, só os arquivos de objeto do `.git` antigo do workspace (design D4): `find`
+# sem seguir links simbólicos, só arquivos regulares em `xx/` hexadecimais e `pack/pack-*`;
+# `objects/info/alternates` e o resto do `.git` antigo nunca são lidos.
+_IMPORT_LEGACY_OBJECTS = r"""
+old=/workspace/.git; src=/workspace/.git/objects; dst="$1/objects"
+[ -d "$old" ] && [ ! -L "$old" ] && [ -d "$src" ] && [ ! -L "$src" ] || exit 0
+cd "$src" || exit 0
+find . -mindepth 2 -maxdepth 2 -type f | while IFS= read -r f; do
+  d=${f%/*}; n=${f##*/}
+  case "$d" in
+    ./pack) case "$n" in pack-*.pack|pack-*.idx|pack-*.rev) ;; *) continue ;; esac ;;
+    ./[0-9a-f][0-9a-f]) case "$n" in *[!0-9a-f]*) continue ;; esac ;;
+    *) continue ;;
+  esac
+  [ -e "$dst/$f" ] && continue
+  mkdir -p "$dst/$d" && cp "$f" "$dst/$f" && chmod 444 "$dst/$f"
+done
+exit 0
+"""
+
+
+def _exec(system: System, container: str, command: list[str], *, timeout: int = 60) -> tuple[int, str, str]:
+    """Executa `command` num container do pod do sistema e devolve (código, stdout, stderr).
+    Pod sem o container pedido (criado antes dele existir) vira `WorkspaceWriteError` com
+    mensagem clara, em vez de cair em outro container."""
+    from kubernetes.stream import stream
+
+    from .. import provisioning as _p
+
+    namespace = _p.get_settings().k8s_namespace
+    pod_name = _p.system_container_name(system.slug)
+    try:
+        pod = _api().read_namespaced_pod(pod_name, namespace)
+    except ApiException as exc:
+        if exc.status == 404:
+            raise WorkspaceWriteError(f"Pod {pod_name!r} não existe") from None
+        raise
+    if container not in {c.name for c in (pod.spec.containers or [])}:
+        raise WorkspaceWriteError(
+            f"Pod {pod_name!r} não tem o container {container!r}; aguarde a reconciliação recriá-lo"
+        )
+    _wait_for_container_started(pod_name, namespace, container)
+    resp = stream(
+        _api().connect_get_namespaced_pod_exec,
+        pod_name,
+        namespace,
+        container=container,
+        command=command,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+        _preload_content=False,
+    )
+    resp.run_forever(timeout=timeout)
+    stdout = resp.read_stdout() or ""
+    stderr = resp.read_stderr() or ""
+    returncode = resp.returncode
+    return (0 if returncode is None else returncode), stdout, stderr
+
+
+def _wait_for_container_started(pod_name: str, namespace: str, container: str, *, timeout: float = 60.0) -> None:
+    api = _api()
+    deadline = time.monotonic() + timeout
+    while True:
+        pod = api.read_namespaced_pod(pod_name, namespace)
+        status = next((cs for cs in (pod.status.container_statuses or []) if cs.name == container), None)
+        if status is not None and status.started:
+            return
+        if time.monotonic() >= deadline:
+            raise WorkspaceWriteError(f"container {container!r} do Pod {pod_name!r} não iniciou em {timeout}s")
+        time.sleep(1)
+
+
+class KubernetesGitBackend:
+    """Implementação Kubernetes de `git_backend.GitBackend`."""
+
+    def _git_command(self, args: tuple[str, ...], work_tree: bool) -> list[str]:
+        from ..git_backend import SAFE_OPTIONS, git_env
+
+        env = git_env(GIT_DIR, "/workspace" if work_tree else None)
+        return ["env", "-i", *(f"{k}={v}" for k, v in env.items()), "git", *SAFE_OPTIONS, *args]
+
+    def run(self, system: System, *args: str, work_tree: bool = True) -> str:
+        from ..git_backend import GitError
+
+        try:
+            code, stdout, stderr = _exec(system, GIT_CONTAINER, self._git_command(args, work_tree))
+        except WorkspaceWriteError as exc:
+            raise GitError(str(exc)) from None
+        if code != 0:
+            raise GitError(f"git {' '.join(args[:2])}: {stderr.strip()}")
+        return stdout.strip()
+
+    def _sh(self, system: System, script: str, *argv: str) -> int:
+        from ..git_backend import GitError
+
+        try:
+            code, _, stderr = _exec(system, GIT_CONTAINER, ["sh", "-c", script, "sh", *argv])
+        except WorkspaceWriteError as exc:
+            raise GitError(str(exc)) from None
+        if code not in (0, 1):
+            raise GitError(f"{script.strip().splitlines()[0]}: {stderr.strip()}")
+        return code
+
+    def is_initialized(self, system: System) -> bool:
+        return self._sh(system, 'test -f "$1/HEAD"', GIT_DIR) == 0
+
+    def create(self, system: System) -> None:
+        self._sh(system, 'mkdir -p "$1" && chmod 700 "$1"', GIT_DIR)
+
+    def import_legacy_objects(self, system: System) -> None:
+        self._sh(system, _IMPORT_LEGACY_OBJECTS, GIT_DIR)
+
+    def prepare_work_tree(self, system: System) -> None:
+        """Nada a fazer: neste driver o git sempre rodou com o uid do agente (exec no pod), então
+        o workspace não tem arquivos do root deixados pelo portal."""
+
+    def remove(self, system: System) -> None:
+        delete_gitdir_pvc(system.slug)

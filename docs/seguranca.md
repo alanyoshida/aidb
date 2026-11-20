@@ -90,6 +90,43 @@ endpoint é legítimo, o agente pode mandar conteúdo do workspace por ele). Nen
 Landlock cobre a app gerada, que roda sem confinamento desde sempre. Sistemas em `legacy`/`reduced`
 não têm nenhuma (ou só a de filesystem) dessas garantias.
 
+### Repositório git do sistema fora do workspace
+
+O histórico de checkpoints de cada sistema vive **fora** do workspace (change
+`isolate-workspace-repository`): o workspace é só a árvore de trabalho, e o repositório (objetos,
+refs, config, hooks) fica onde o agente e a app gerada não alcançam:
+
+| Driver | Onde fica o repositório | Quem monta |
+|---|---|---|
+| Docker | `APPAIFORGE_GITDIRS_DIR/<slug>` (volume `gitdirs`, padrão `/gitdirs`) | só o portal |
+| Kubernetes | PVC `appaiforge-sys-<slug>-gitdir` | só o container auxiliar `git` do pod |
+
+Toda operação git do portal (`appaiforge/git_backend.py`) roda com `GIT_DIR`/`GIT_WORK_TREE`
+explícitos, ambiente construído do zero (`HOME` inexistente, `GIT_CONFIG_GLOBAL=/dev/null`,
+`GIT_CONFIG_NOSYSTEM=1`) e com `core.hooksPath=/dev/null` e `core.fsmonitor=false` na linha de
+comando. Por isso **nada que o agente escreva no workspace é executado pelo portal**: um hook,
+um `core.fsmonitor`, um filtro declarado em `.gitattributes` ou um `.git` inteiro plantado não
+são lidos — o git nunca rastreia um caminho `.git` da árvore de trabalho, e `.gitattributes` só
+ativa um filtro que a config do repositório defina, o que a config escrita pelo portal nunca faz.
+
+Antes dessa mudança, o portal rodava git dentro do `/workspace/.git` gravável pelo agente: hooks,
+`core.fsmonitor` e filtros plantados ali executavam no processo do portal (driver Docker, como
+root) ou por `exec` fora do Landlock (driver Kubernetes) — confirmado por
+`tests/integration/test_workspace_repository_isolation.py` contra o código anterior.
+
+O git roda com o uid do dono do workspace (o do agente em `reduced`/`sandboxed`, root em
+`legacy`), então arquivos que o portal escreve numa restauração continuam editáveis pelo agente.
+No driver Docker, antes de migrar o histórico e antes de cada restauração, o portal passa ao uid
+do agente o que estiver com o root dentro do workspace (deixado por versões antigas ou pelo
+`materialize` das guidelines), exceto o `.git` antigo. A varredura nunca segue link simbólico
+(`os.fwalk` e `chown` relativo ao descritor do diretório), então um link plantado pelo agente não
+leva a troca de dono para fora do workspace.
+
+Sistemas anteriores à mudança têm o histórico migrado na primeira operação git: só os arquivos
+de objeto do `.git` antigo são copiados, como dado, e a branch passa a apontar para o último
+checkpoint **registrado pelo portal** — nunca para o que as refs do `.git` antigo dizem. O
+`.git` antigo fica no workspace, intocado e sem uso pelo portal; o agente continua podendo lê-lo.
+
 ### Migrar um sistema de `legacy` para `sandboxed`
 
 Não existe CLI/UI para isso (modo é "fixado na criação e imutável" por desenho) — foi feito uma
@@ -104,7 +141,11 @@ corrigir isso prende o agente (agora uid 1000) fora dos próprios arquivos. A or
 docker run --rm --user root -v /opt/appaiforge/workspaces/<slug>:/workspace \
   appaiforge/base:0.1.0 chown -R 1000:1000 /workspace
 
-# 2. troca o modo no banco e recria o container (dentro do container do portal)
+# 2. dono do repositório git do sistema (fora do workspace) para o mesmo uid —
+#    o portal passa a rodar o git como o agente depois da troca de modo
+docker exec appaiforge-portal-1 chown -R 1000:1000 /gitdirs/<slug>
+
+# 3. troca o modo no banco e recria o container (dentro do container do portal)
 docker exec appaiforge-portal-1 python -c "
 from appaiforge.db import session_scope
 from appaiforge.models import System, ExecutionMode

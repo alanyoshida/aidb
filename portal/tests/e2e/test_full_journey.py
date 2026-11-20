@@ -179,7 +179,9 @@ def test_jornada_completa(page, suffix):
     page.get_by_text("Sistema Jornada").first.click()
     page.get_by_role("tab", name="Checkpoints").click()
     page.get_by_role("button", name="Restaurar").first.click()
-    page.get_by_text("workspace restaurado").wait_for(timeout=30_000)
+    # só há um checkpoint, igual ao estado atual: a restauração não cria checkpoint novo
+    # (change isolate-workspace-repository; restaurar um ponto anterior está em test_checkpoints.py)
+    page.get_by_text("Nada a restaurar").wait_for(timeout=30_000)
 
     # a app continua no ar após o rollback (supervisor reinicia no estado restaurado)
     for _ in range(20):

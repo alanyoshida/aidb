@@ -2,7 +2,6 @@
 add-openspec-to-system-container, D4; spec system-openspec — "Checkpoint inclui os artefatos")."""
 
 import os
-import subprocess
 
 from appaiforge import auth, checkpoints
 from appaiforge.models import UserType
@@ -29,7 +28,8 @@ def test_checkpoint_inclui_openspec_e_comandos_do_agente(clean_db, tmp_path, mon
 
     cp = checkpoints.record_checkpoint(system, None, "change criada pelo /opsx-propose", editor)
     assert cp is not None
-    tracked = subprocess.run(["git", "-C", ws, "ls-tree", "-r", "--name-only", "HEAD"],
-                             capture_output=True, text=True, check=True).stdout.split()
+    # o repositório vive fora do workspace (change isolate-workspace-repository): consulta pelo
+    # mesmo caminho que o portal usa, não por `git -C <workspace>`
+    tracked = checkpoints._git(system, "ls-tree", "-r", "--name-only", "HEAD").split()
     assert "openspec/changes/filtro-por-data/proposal.md" in tracked
     assert ".opencode/commands/opsx-propose.md" in tracked

@@ -273,6 +273,9 @@ class Checkpoint(Base):
     message: Mapped[str] = mapped_column(Text)
     author_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     author_email: Mapped[str] = mapped_column(String(255), default="")
+    # De onde veio o checkpoint (change isolate-workspace-repository): `run`, `manual` ou
+    # `restore`. Texto livre — a change add-system-git-remote acrescenta `remote`.
+    origin: Mapped[str] = mapped_column(String(20), default="run", server_default="run")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

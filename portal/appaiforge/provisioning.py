@@ -706,6 +706,12 @@ def delete_system(system: System, actor_id: str | None = None, actor_email: str 
     workspace = os.path.join(get_settings().workspaces_dir, system.slug)
     if os.path.isdir(workspace):
         shutil.rmtree(workspace, ignore_errors=True)
+    # Repositório git do sistema, que vive fora do workspace (change
+    # `isolate-workspace-repository`): diretório do portal no Docker, PVC próprio no Kubernetes.
+    # Só aqui — arquivar preserva o repositório junto com o workspace.
+    from .git_backend import get_backend
+
+    get_backend().remove(system)
     # Config gerada pelo portal (config do agente + perfil de runtime). Nos dois drivers ela fica
     # no diretório local do portal — no Kubernetes o ConfigMap já sai com `stop_and_remove`, a
     # pasta não. Sem isto ela ficava órfã (change fix-delete-system-config). Só aqui: arquivar

@@ -14,6 +14,7 @@ sistema têm nome global. A limpeza de início é escopada: só sistemas de usu�
 import importlib.util
 import os
 import pathlib
+import re
 import subprocess
 
 import pytest
@@ -21,6 +22,7 @@ import pytest
 BASE_URL = os.environ.get("APPAIFORGE_E2E_OIDC_BASE_URL", "http://localhost:8082").rstrip("/")
 PG_CONTAINER = os.environ.get("APPAIFORGE_E2E_OIDC_PG_CONTAINER", "appaiforge-e2e-oidc-postgres-1")
 NETWORK = "appaiforge-e2e-oidc-net"
+PORTAL_CONTAINER = os.environ.get("APPAIFORGE_E2E_OIDC_PORTAL_CONTAINER", "appaiforge-e2e-oidc-portal-1")
 
 
 def _local_reset_sql() -> str:
@@ -68,6 +70,14 @@ def clean_stack():
             for suffix in ("", "-dbgate", "-httpsproxy"):
                 subprocess.run(["docker", "rm", "-f", f"appaiforge-sys-{slug}{suffix}"],
                                capture_output=True, timeout=60)
+    # repositórios git órfãos, fora do workspace (change isolate-workspace-repository): sem isto
+    # um slug reaproveitado herdaria o histórico antigo
+    try:
+        for entry in _run(["docker", "exec", PORTAL_CONTAINER, "ls", "-1", "/gitdirs"]).split():
+            if entry not in restantes and re.fullmatch(r"[a-z0-9][a-z0-9-]*", entry):
+                _run(["docker", "exec", PORTAL_CONTAINER, "rm", "-rf", f"/gitdirs/{entry}"])
+    except RuntimeError:
+        pass
     del slugs_vivos
     yield
 
