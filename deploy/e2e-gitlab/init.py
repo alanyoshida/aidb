@@ -10,7 +10,8 @@
   `pipeline.yml@aidb/ci-templates`, merge commit sem squash, merge só com pipeline verde,
   `main` protegida (ninguém faz push, developers fazem merge), `homolog` protegida
   (maintainers fazem push, developers fazem merge), tags `v*` protegidas;
-- token de projeto `RELEASE_TOKEN` (variável de CI mascarada), usado pelo job que cria a tag.
+- token `RELEASE_TOKEN` (variável de CI mascarada) no grupo e no projeto de exemplo, usado pelo job
+  que cria a tag. Os testes E2E criam um projeto vazio por cenário (`tests/e2e_gitlab/gitlab.py`).
 
 Credenciais e tokens daqui valem só para esta stack de teste.
 """
@@ -182,12 +183,27 @@ def ensure_release_token(pid: int) -> None:
         {"key": "RELEASE_TOKEN", "value": RELEASE_TOKEN, "masked": True, "protected": True})
 
 
+def ensure_group_release_token(group: dict) -> None:
+    """Token de grupo (Maintainer, api) na variável RELEASE_TOKEN do grupo: o job de release de
+    qualquer projeto do grupo cria a tag com ele. Os testes E2E criam um projeto por cenário."""
+    if api("GET", f"/groups/{group['id']}/variables/RELEASE_TOKEN", ok404=True) is not None:
+        return
+    log("criando o token de grupo usado pelo job de release")
+    token = api("POST", f"/groups/{group['id']}/access_tokens", {
+        "name": "aidb-release", "scopes": ["api"], "access_level": 40,
+        "expires_at": time.strftime("%Y-%m-%d", time.gmtime(time.time() + 300 * 86400)),
+    })["token"]
+    api("POST", f"/groups/{group['id']}/variables",
+        {"key": "RELEASE_TOKEN", "value": token, "masked": True, "protected": True})
+
+
 def main() -> None:
     wait_api()
     ensure_root_token()
     ensure_runner()
     group = ensure_group()
     ensure_templates(group)
+    ensure_group_release_token(group)
     system = ensure_system(group)
     ensure_release_token(system["id"])
     log(f"pronto: {API.removesuffix('/api/v4')}/{GROUP}/{SYSTEM} (token do root: {ROOT_TOKEN})")

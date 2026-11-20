@@ -107,6 +107,7 @@ def register() -> None:
             conn_tab = ui.tab("conn", label="Conexões", icon="storage")
             net_tab = ui.tab("net", label="Domínios", icon="public").props("data-testid=tab-domains")
             ckpt_tab = ui.tab("ckpt", label="Checkpoints", icon="history")
+            repo_tab = ui.tab("repo", label="Repositório", icon="cloud_upload").props("data-testid=tab-repository")
             cfg_tab = ui.tab("cfg", label="Configurações", icon="settings")
             audit_tab = ui.tab("audit", label="Auditoria", icon="shield")
 
@@ -129,6 +130,8 @@ def register() -> None:
                 _render_network(system, user)
             with ui.tab_panel(ckpt_tab):
                 _render_checkpoints(system, user)
+            with ui.tab_panel(repo_tab):
+                _render_repository(system, user)
             with ui.tab_panel(cfg_tab):
                 _render_configuration(system, user, name_label, breadcrumb_label, provider_label)
             with ui.tab_panel(audit_tab):
@@ -747,6 +750,224 @@ def _render_checkpoints(system, user) -> None:
 
     refresh_cps()
     ui.timer(2.0, refresh_cps)
+
+
+# Estado do vínculo com o repositório remoto, como aparece para o editor.
+_REPO_STATES = {
+    "synced": ("sincronizado", "positive"),
+    "pending": ("envio pendente", "warning"),
+    "diverged": ("divergente", "negative"),
+    "error": ("erro", "negative"),
+}
+
+
+def _render_repository(system, user) -> None:
+    """Aba Repositório (change add-system-git-remote): vínculo do sistema com um repositório git
+    remoto. Chave privada e token nunca aparecem aqui; só a chave pública e o fato de haver token."""
+    from nicegui import run as _run
+
+    from .. import git_sync
+    from ..services import git_remote
+
+    ui.label(
+        "Envia os checkpoints deste sistema para uma branch de trabalho num repositório GitLab, "
+        "de onde a promoção segue por merge request."
+    ).classes("text-sm text-gray-500 mb-2")
+
+    view = git_remote.ensure_remote(system, user)
+    state: dict = {"pending_host": None}
+
+    def _error(exc: Exception) -> None:
+        notify(str(exc), "negative")
+
+    # --- chave de implantação ---------------------------------------------------------------
+    with ui.card().classes("w-full max-w-3xl"):
+        ui.label("Chave de implantação").classes("font-semibold")
+        ui.label(
+            "Cadastre esta chave pública no projeto do GitLab (Configurações > Repositório > Chaves "
+            "de implantação), com permissão de escrita, por alguém que pode enviar à branch de trabalho."
+        ).classes("text-sm text-gray-500")
+        key_area = ui.textarea(value=view["public_key"]).props("readonly outlined autogrow data-testid=repo-public-key").classes("w-full font-mono text-xs")
+        fp_label = ui.label(f"Impressão digital: {view['fingerprint']}").classes("text-xs text-gray-500 font-mono")
+        with ui.row().classes("gap-2"):
+            ui.button("Copiar chave", icon="content_copy",
+                      on_click=lambda: (ui.clipboard.write(key_area.value), notify("Chave pública copiada.", "info"))
+                      ).props("outline data-testid=repo-copy-key")
+
+            with ui.dialog() as rotate_dialog, ui.card().classes("w-96"):
+                ui.label("Gerar nova chave").classes("font-semibold text-lg")
+                ui.label("A chave atual deixa de ser usada. Cadastre a nova no GitLab antes do próximo envio.").classes("text-sm")
+
+                def do_rotate() -> None:
+                    new = git_remote.rotate_key(system, user)
+                    key_area.set_value(new["public_key"])
+                    fp_label.set_text(f"Impressão digital: {new['fingerprint']}")
+                    rotate_dialog.close()
+                    notify("Nova chave gerada.", "positive")
+
+                with ui.row().classes("w-full justify-end gap-2"):
+                    ui.button("Cancelar", on_click=rotate_dialog.close).props("flat")
+                    ui.button("Gerar", on_click=do_rotate).props("color=warning data-testid=repo-rotate-confirm")
+            ui.button("Gerar nova chave", icon="autorenew", on_click=rotate_dialog.open).props("outline data-testid=repo-rotate-key")
+
+    # --- endereço e branches ----------------------------------------------------------------
+    with ui.card().classes("w-full max-w-3xl mt-2"):
+        ui.label("Repositório").classes("font-semibold")
+        url_input = ui.input("Endereço SSH do repositório", value=view["url"],
+                             placeholder="git@gitlab.exemplo.com:time/app.git").classes("w-full").props("data-testid=repo-url")
+        with ui.row().classes("w-full gap-2"):
+            working_input = ui.input("Branch de trabalho", value=view["working_branch"]).classes("w-56").props("data-testid=repo-working-branch")
+            target_input = ui.input("Branch de destino", value=view["target_branch"]).classes("w-56").props("data-testid=repo-target-branch")
+        api_input = ui.input("Endereço da API do GitLab (opcional)", value=view["api_url"],
+                             placeholder="derivado do endereço: https://<host>").classes("w-full").props("data-testid=repo-api-url")
+
+        def save() -> None:
+            try:
+                git_remote.configure(system, user, url=url_input.value, working_branch=working_input.value,
+                                     target_branch=target_input.value, api_url=api_input.value)
+            except (git_remote.InvalidRemote, git_remote.NotPermitted) as exc:
+                _error(exc)
+                return
+            notify("Repositório salvo. Teste a conexão para confirmar o servidor.", "positive")
+            refresh()
+
+        ui.button("Salvar", icon="save", on_click=save).props("data-testid=repo-save")
+
+    # --- conexão, identidade do servidor e ativação -----------------------------------------
+    with ui.dialog() as host_dialog, ui.card().classes("w-[32rem]"):
+        ui.label("Confirmar o servidor").classes("font-semibold text-lg")
+        ui.label("Confira se a impressão digital abaixo é a do seu GitLab antes de continuar.").classes("text-sm")
+        host_fp = ui.label("").classes("font-mono text-xs").props("data-testid=repo-host-fingerprint")
+
+        async def confirm_host() -> None:
+            git_remote.confirm_host_key(system, user, state["pending_host"])
+            host_dialog.close()
+            await _check_access()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=host_dialog.close).props("flat")
+            ui.button("Confirmar", on_click=confirm_host).props("data-testid=repo-confirm-host")
+
+    async def _check_access() -> None:
+        secrets = git_remote.load_secrets(system.id)
+        try:
+            branches = await _run.io_bound(git_sync.check_access, system.slug, secrets)
+        except git_sync.RemoteError as exc:
+            _error(exc)
+            return
+        notify("Conexão válida. Branches no remoto: " + (", ".join(branches) or "nenhuma"), "positive")
+        refresh()
+
+    async def test_connection() -> None:
+        current = git_remote.get_view(system)
+        if not current or not current["url"]:
+            notify("Salve o endereço do repositório antes de testar.", "warning")
+            return
+        try:
+            scanned = await _run.io_bound(git_sync.scan_host_key, git_remote.parse_remote_url(current["url"]))
+        except git_sync.RemoteError as exc:
+            _error(exc)
+            return
+        secrets = git_remote.load_secrets(system.id)
+        if secrets.host_key and set(secrets.host_key.splitlines()) & set(scanned.key.splitlines()):
+            await _check_access()
+            return
+        state["pending_host"] = scanned.key
+        host_fp.set_text("\n".join(scanned.fingerprints))
+        host_dialog.open()
+
+    async def activate() -> None:
+        try:
+            await _run.io_bound(git_sync.activate, system, user)
+        except (git_remote.InvalidRemote, git_remote.NotPermitted, git_sync.RemoteError) as exc:
+            _error(exc)
+            return
+        notify("Vínculo ativado.", "positive")
+        refresh()
+
+    def deactivate() -> None:
+        git_remote.set_enabled(system, user, False)
+        notify("Vínculo desativado. Nada foi alterado no remoto.", "info")
+        refresh()
+
+    async def push_now() -> None:
+        result = await _run.io_bound(git_sync.push_now, system, user)
+        if result and result.get("error"):
+            notify(result["error"], "warning")
+        elif result and result.get("sent"):
+            notify(f"Enviado: {result['sent'][:8]}", "positive")
+        else:
+            notify("Nada a enviar.", "info")
+        refresh()
+
+    # --- token de API -------------------------------------------------------------------------
+    with ui.card().classes("w-full max-w-3xl mt-2"):
+        ui.label("Token de API do GitLab (opcional)").classes("font-semibold")
+        ui.label(
+            "Usado só para abrir o merge request de promoção. Recomendado: token de projeto com papel "
+            "Developer e escopo api. Sem token, a promoção mostra o link de criação."
+        ).classes("text-sm text-gray-500")
+        token_status = ui.label("").classes("text-sm").props("data-testid=repo-token-status")
+        with ui.row().classes("items-center gap-2"):
+            token_input = ui.input("Token", password=True, password_toggle_button=False).classes("w-80").props("data-testid=repo-token")
+
+            def save_token() -> None:
+                try:
+                    git_remote.set_api_token(system, user, token_input.value)
+                except git_remote.InvalidRemote as exc:
+                    _error(exc)
+                    return
+                token_input.set_value("")
+                notify("Token cadastrado.", "positive")
+                refresh()
+
+            def remove_token() -> None:
+                try:
+                    git_remote.remove_api_token(system, user)
+                except git_remote.InvalidRemote as exc:
+                    _error(exc)
+                    return
+                notify("Token removido.", "info")
+                refresh()
+
+            ui.button("Salvar token", on_click=save_token).props("data-testid=repo-token-save")
+            remove_token_btn = ui.button("Remover", on_click=remove_token).props("outline color=negative data-testid=repo-token-remove")
+
+    # --- estado ------------------------------------------------------------------------------
+    with ui.card().classes("w-full max-w-3xl mt-2"):
+        ui.label("Estado").classes("font-semibold")
+        with ui.row().classes("items-center gap-2"):
+            state_badge = ui.badge("").props("data-testid=repo-state")
+            state_detail = ui.label("").classes("text-sm").props("data-testid=repo-state-detail")
+        last_sent = ui.label("").classes("text-xs text-gray-500 font-mono").props("data-testid=repo-last-sent")
+        with ui.row().classes("gap-2 mt-1"):
+            ui.button("Testar conexão", icon="lan", on_click=test_connection).props("outline data-testid=repo-test")
+            enable_btn = ui.button("Ativar vínculo", icon="link", on_click=activate).props("data-testid=repo-enable")
+            disable_btn = ui.button("Desativar vínculo", icon="link_off", on_click=deactivate).props("outline data-testid=repo-disable")
+            push_btn = ui.button("Enviar agora", icon="upload", on_click=push_now).props("outline data-testid=repo-push-now")
+
+    def refresh() -> None:
+        current = git_remote.get_view(system)
+        if current is None:
+            return
+        token_status.set_text("Token configurado." if current["has_api_token"] else "Nenhum token configurado.")
+        remove_token_btn.set_visibility(current["has_api_token"])
+        if not current["enabled"]:
+            state_badge.set_text("desativado")
+            state_badge.props("color=grey")
+            state_detail.set_text("" if current["url"] else "Configure o endereço do repositório.")
+        else:
+            label, color = _REPO_STATES.get(current["state"], (current["state"], "grey"))
+            state_badge.set_text(label)
+            state_badge.props(f"color={color}")
+            state_detail.set_text(current["state_detail"])
+        last_sent.set_text(f"Último commit enviado: {current['last_pushed_sha'][:12]}" if current["last_pushed_sha"] else "")
+        enable_btn.set_visibility(not current["enabled"] and bool(current["url"]))
+        disable_btn.set_visibility(current["enabled"])
+        push_btn.set_visibility(current["enabled"] and current["state"] in ("pending", "error"))
+
+    refresh()
+    ui.timer(3.0, refresh)
 
 
 def _render_management_audit(system) -> None:

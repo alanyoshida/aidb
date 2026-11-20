@@ -33,9 +33,9 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 4. Aba Repositório
 
-- [ ] 4.1 Criar a aba em `ui/system_detail.py`, visível a quem gerencia o sistema: endereço, branches, chave pública com botão de copiar, teste de conexão com confirmação da impressão digital, ativar, desativar e gerar nova chave; seguir os tokens de `ui/theme.py`; verificar com teste E2E de visibilidade para dono e para usuário sem gestão
-- [ ] 4.2 Exibir o estado do vínculo (sincronizado, envio pendente, divergente, erro) com motivo, último commit enviado e avisos; verificar com teste E2E no stack com GitLab
-- [ ] 4.3 Primeiro cenário da suíte `portal/tests/e2e_gitlab`: configurar o repositório, cadastrar a chave pela API, testar a conexão, pedir algo no chat e ver o commit na branch de trabalho do GitLab; verificar que passa duas vezes seguidas a partir de stack limpo
+- [x] 4.1 Criar a aba em `ui/system_detail.py`, visível a quem gerencia o sistema: endereço, branches, chave pública com botão de copiar, teste de conexão com confirmação da impressão digital, ativar, desativar e gerar nova chave; seguir os tokens de `ui/theme.py`; verificar com teste E2E de visibilidade para dono e para usuário sem gestão
+- [x] 4.2 Exibir o estado do vínculo (sincronizado, envio pendente, divergente, erro) com motivo, último commit enviado e avisos; verificar com teste E2E no stack com GitLab
+- [x] 4.3 Primeiro cenário da suíte `portal/tests/e2e_gitlab`: configurar o repositório, cadastrar a chave pela API, testar a conexão, pedir algo no chat e ver o commit na branch de trabalho do GitLab; verificar que passa duas vezes seguidas a partir de stack limpo
 
 ## 5. Sincronização
 
