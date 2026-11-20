@@ -28,8 +28,8 @@ Restrições vindas da exploração com o usuário: dois portais isolados (homol
 **Non-Goals:**
 
 - Sistema "só implantação" e tudo do portal de produção (change seguinte).
-- Uso da API do GitLab pelo portal. O portal só fala git por SSH.
-- HTTPS com token, GitHub e outras forjas.
+- Status de pipeline no portal. A API do GitLab é usada só para abrir e consultar o merge request de promoção (D7).
+- git por HTTPS com token, GitHub e outras forjas.
 - Submódulos e Git LFS.
 
 ## Decisions
@@ -56,7 +56,7 @@ Por que não empurrar direto do repositório do sistema: no Kubernetes ele vive 
 ### D2 — Chave, identidade do servidor e invocação do SSH
 
 - Par ed25519 gerado pelo portal (biblioteca `cryptography`, já usada para a cifra de segredos) na primeira abertura da aba. Privada guardada com `encrypt_secret`; pública em claro.
-- Nova tabela `system_git_remotes` (uma linha por sistema): `url`, `working_branch`, `target_branch`, `public_key`, `private_key_encrypted`, `host_key`, `enabled`, `state` (`synced`, `pending`, `diverged`, `error`), `state_detail`, `last_pushed_sha`, `last_synced_at`, `conflict_files`, `merge_in_progress`, `unsaved_blocked`.
+- Nova tabela `system_git_remotes` (uma linha por sistema): `url`, `working_branch`, `target_branch`, `public_key`, `private_key_encrypted`, `host_key`, `api_url` (vazio = derivado), `api_token_encrypted` (opcional), `enabled`, `state` (`synced`, `pending`, `diverged`, `error`), `state_detail`, `last_pushed_sha`, `last_synced_at`, `conflict_files`, `merge_in_progress`, `unsaved_blocked`, `last_mr_url`.
 - Identidade do servidor: no teste de conexão o portal obtém a chave do servidor, mostra a impressão digital SHA256 e grava `host_key` só depois da confirmação. As operações usam `StrictHostKeyChecking=yes` com um `known_hosts` temporário contendo só essa chave.
 - Cada operação remota escreve a chave privada num diretório temporário `0700` em `tmpfs`, usa `GIT_SSH_COMMAND` com `-i`, `IdentitiesOnly=yes`, `BatchMode=yes`, `UserKnownHostsFile`, e apaga o diretório ao terminar, inclusive em erro.
 - O endereço aceito é `ssh://[user@]host[:porta]/caminho` ou `user@host:caminho`. Protocolos `ext::`, `file://` e HTTP são recusados, e as chamadas usam `GIT_ALLOW_PROTOCOL=ssh`.
@@ -102,13 +102,32 @@ Em `agent_queue._execute`, para sistemas com remoto ativo:
 
 As operações remotas têm tempo limite de 30 s e rodam na thread de trabalho do sistema. Como a fila é serial por sistema, uma sincronização nunca coincide com uma execução; as ações da aba Repositório verificam `system_state` e recusam quando há execução em andamento. Checkpoint manual e rollback pela aba Checkpoints seguem o mesmo passo de envio.
 
-### D7 — Solicitação de promoção pelas opções de push do GitLab
+### D7 — Solicitação de promoção pela API do GitLab, com token por sistema
 
-"Solicitar promoção" faz um push da branch de trabalho com `-o merge_request.create -o merge_request.target=<destino> -o merge_request.title=<título>` e extrai o endereço do merge request da resposta do servidor. O portal não usa a API do GitLab.
+**Decisão revista depois da tarefa 1.3** (escolha do usuário). O desenho original usava `-o merge_request.create` no push, sem API. A verificação mostrou que, sem commit novo a enviar — o caso comum ao solicitar promoção —, o git nem contacta o servidor; o portal não conseguiria abrir o MR nem saber se já existe um.
 
-Se a resposta não trouxer o endereço de um merge request, o portal exibe o endereço de criação preenchido: `<base do projeto>/-/merge_requests/new?merge_request[source_branch]=<trabalho>&merge_request[target_branch]=<destino>`, derivado da URL SSH. Isso cobre o caso de o GitLab ignorar opções de push quando não há commits novos a enviar. A tarefa 1.3 verifica esse comportamento antes da implementação; o requisito da spec aceita os dois desfechos.
+- **Token opcional por sistema**, cifrado com `encrypt_secret` (`api_token_encrypted`), nunca exibido nem entregue ao container. Recomendação no guia: token de projeto com papel Developer e escopo `api` — o mínimo que abre merge request.
+- **Endereço da API**: `https://<host do endereço SSH>` por padrão; o editor pode informar outro (`api_url`), necessário quando o SSH e o HTTP do GitLab têm hosts ou esquemas diferentes, como na stack E2E (`gitlab:22` e `http://gitlab`).
+- **Projeto**: o caminho do endereço SSH sem `.git`, codificado na URL (`/projects/time%2Fapp`).
+- **Promoção**: `GET /projects/:id/merge_requests?state=opened&source_branch=<trabalho>&target_branch=<destino>`; havendo um, mostra o endereço dele; senão, `POST /projects/:id/merge_requests` com título e descrição gerados pelo portal (sistema, branches, últimos checkpoints). O endereço fica em `last_mr_url`.
+- **Teste do token**: `GET /projects/:id` e verificação de que o nível de acesso permite abrir MR; nada é escrito.
+- **Sem token ou token recusado**: o portal exibe o endereço de criação preenchido: `<base do projeto>/-/merge_requests/new?merge_request[source_branch]=<trabalho>&merge_request[target_branch]=<destino>`.
+- As chamadas saem do processo do portal (cliente HTTP já usado pelo portal, tempo limite de 30 s), nunca do container do sistema; a rede do agente não muda.
 
-Alternativa descartada: token de API por sistema. Dá mais alcance do que o necessário para o portal de homologação e cria um segundo segredo a rotacionar.
+Alternativas consideradas: só o link de criação mais o último MR visto nas respostas de push (sem segredo novo, mas sem como saber se o MR ainda está aberto); commit vazio de promoção para forçar o push (polui o histórico a cada solicitação).
+
+**Verificado contra o GitLab CE 19.4.5 (tarefa 1.3), com a chave cadastrada por um mantenedor comum:**
+
+| Comportamento | Resultado |
+|---|---|
+| Push na branch de trabalho protegida ("mantenedores fazem push") | aceito |
+| Push direto na branch de destino protegida ("ninguém faz push") | recusado |
+| Autor do push, do merge request e do pipeline | quem cadastrou a chave no GitLab; o commit mantém o editor como autor |
+| `-o merge_request.create` num push **com** commit novo | abre o merge request e a resposta traz o endereço |
+| A mesma opção num push **sem** commit novo | não funciona: o git responde "Everything up-to-date" e nem contacta o servidor |
+| Push com merge request já aberto para a branch | a resposta traz "View merge request for <branch>" com o endereço |
+
+Consequências: a chave de implantação deve ser cadastrada por alguém com permissão de push na branch de trabalho e sem permissão de push na de destino; o GitLab trata o push como dessa pessoa. A proteção da branch de destino (ninguém faz push) é o que obriga o merge request, independentemente de quem cadastrou a chave.
 
 ### D8 — Proteção de `.gitlab-ci.yml`
 
@@ -127,9 +146,9 @@ O stack com GitLab é a primeira entrega, porque três comportamentos do GitLab 
 
 ## Risks / Trade-offs
 
-- [O GitLab pode ignorar opções de push sem commits novos] → Verificado na tarefa 1.3; D7 já prevê o endereço preenchido como desfecho alternativo.
-- [Autor do merge request e do pipeline quando o push vem de chave de implantação é incerto] → Verificado na tarefa 1.3 e documentado no guia de preparação, porque define quem fica impedido de aprovar.
-- [Chave de implantação pode não conseguir empurrar em branch protegida que também aceita merges] → Verificado na tarefa 1.3; o script do stack e o guia registram a configuração de proteção que funciona.
+- [O GitLab pode ignorar opções de push sem commits novos] → **Confirmado na tarefa 1.3**: sem commit novo o git nem contacta o servidor. Ver a tabela em D7.
+- [Autor do merge request e do pipeline quando o push vem de chave de implantação] → **Verificado na tarefa 1.3**: é quem cadastrou a chave. No GitLab Free a aprovação é opcional, então a garantia é a branch de destino protegida.
+- [Chave de implantação em branch protegida que também aceita merges] → **Verificado na tarefa 1.3**: funciona com "mantenedores fazem push / developers fazem merge" na branch de trabalho, desde que a chave seja cadastrada por um mantenedor.
 - [O bloqueio por alterações não salvas para o chat até alguém decidir] → Escolha do usuário. Só ocorre quando há commits a trazer; a mensagem no chat leva direto à decisão.
 - [Adotar o remoto deixa de lado trabalho local com um clique] → Confirmação lista os checkpoints; eles continuam restauráveis; a ação é auditada.
 - [Quem tem permissão de merge na branch de trabalho consegue instruir o agente, via `AGENTS.md` e `openspec/` trazidos pela sincronização] → Aceito: é código revisado. O guia orienta proteger a branch de trabalho com o mesmo rigor da de destino.

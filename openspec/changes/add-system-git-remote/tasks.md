@@ -6,17 +6,18 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 1. Stack E2E com GitLab local e verificação do GitLab
 
-- [ ] 1.1 Criar `deploy/docker-compose.e2e-gitlab.yml` com GitLab CE e GitLab Runner em versão fixada e o portal na porta 8083 com harness fake; verificar que o stack sobe do zero e que o GitLab responde ao healthcheck
-- [ ] 1.2 Escrever o script de inicialização: token de root, runner com executor shell, projeto de modelos de CI com job de validação e job de tag na branch de destino, projeto do sistema com configuração de CI apontando para o primeiro, branches protegidas, merge sem squash; verificar disparando um pipeline pela API e vendo-o concluir
-- [ ] 1.3 Verificar manualmente contra o stack, com uma chave de implantação e git por SSH, os três comportamentos incertos: opção de criar merge request em push sem commits novos, autor do merge request e do pipeline com chave de implantação, push de chave de implantação em branch protegida que aceita merges; registrar os resultados em `design.md` (D7 e Riscos) e ajustar o script de 1.2 e as tarefas 8.1 e 9.3 se algum resultado contrariar o desenho
-- [ ] 1.4 Documentar o stack em `docs/testes.md` (como subir, memória necessária, não rodar junto das outras suítes E2E); verificar que os comandos documentados funcionam como escritos
+- [x] 1.1 Criar `deploy/docker-compose.e2e-gitlab.yml` com GitLab CE e GitLab Runner em versão fixada e o portal na porta 8083 com harness fake; verificar que o stack sobe do zero e que o GitLab responde ao healthcheck
+- [x] 1.2 Escrever o script de inicialização: token de root, runner com executor shell, projeto de modelos de CI com job de validação e job de tag na branch de destino, projeto do sistema com configuração de CI apontando para o primeiro, branches protegidas, merge sem squash; verificar disparando um pipeline pela API e vendo-o concluir
+- [x] 1.3 Verificar manualmente contra o stack, com uma chave de implantação e git por SSH, os três comportamentos incertos: opção de criar merge request em push sem commits novos, autor do merge request e do pipeline com chave de implantação, push de chave de implantação em branch protegida que aceita merges; registrar os resultados em `design.md` (D7 e Riscos) e ajustar o script de 1.2 e as tarefas 8.1 e 9.3 se algum resultado contrariar o desenho
+- [x] 1.4 Documentar o stack em `docs/testes.md` (como subir, memória necessária, não rodar junto das outras suítes E2E); verificar que os comandos documentados funcionam como escritos
 
 ## 2. Vínculo com o remoto e chave de implantação
 
 - [ ] 2.1 Migração Alembic e modelo `system_git_remotes` (design D2); verificar com `alembic upgrade head` e `alembic downgrade -1` num banco efêmero
 - [ ] 2.2 Serviço de configuração: validação do endereço SSH, padrões de branch, restrição a quem gerencia o sistema, ativar e desativar o vínculo, com registro de auditoria; verificar com testes unitários de URL aceita e recusada (`ext::`, `file://`, HTTP) e de permissão
 - [ ] 2.3 Geração do par ed25519, cifra da chave privada e troca de chave; verificar com teste unitário que a privada nunca aparece em retorno de serviço nem em detalhe de auditoria e que dois sistemas recebem chaves diferentes
-- [ ] 2.4 Remover o vínculo, a chave e a retransmissão na exclusão definitiva do sistema; verificar com teste de integração
+- [ ] 2.4 Token de API opcional: cadastro, troca e remoção cifrados, endereço da API derivado do host do repositório ou informado, nunca exibido nem em auditoria (design D7); verificar com testes unitários de derivação de endereço e de que o token não aparece em retorno de serviço nem em detalhe de auditoria
+- [ ] 2.5 Remover o vínculo, a chave, o token e a retransmissão na exclusão definitiva do sistema; verificar com teste de integração
 
 ## 3. Retransmissão, conexão e envio
 
@@ -57,15 +58,15 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 8. Promoção e proteção do pipeline
 
-- [ ] 8.1 Ação "Solicitar promoção": push com as opções de merge request, extração do endereço da resposta do servidor, endereço de criação preenchido como alternativa, recusa com pendência ou divergência (design D7, conforme o resultado de 1.3); verificar com testes unitários de extração e derivação de endereço
+- [ ] 8.1 Teste do token e ação "Solicitar promoção" pela API do GitLab: consulta de MR aberto entre as branches, abertura quando não houver, endereço de criação preenchido sem token ou com token recusado, recusa com pendência ou divergência (design D7); verificar com testes unitários contra um servidor HTTP falso e com o cenário E2E de 9.1
 - [ ] 8.2 Proteção de `.gitlab-ci.yml` na raiz para arquivo novo e para arquivo rastreado modificado, com aviso registrado (design D8); verificar os dois casos com teste de integração e que o arquivo vindo do remoto é preservado
 - [ ] 8.3 Criar `tests/bdd/features/system-git-remote.feature` com os cenários da spec e verificar que `uv run pytest tests/bdd -k system_git_remote` passa
 
 ## 9. Jornada completa e documentação
 
-- [ ] 9.1 Completar a suíte `portal/tests/e2e_gitlab`: solicitar promoção e conferir o merge request; pipeline de validação concluído; mergear e ver a tag criada pelo pipeline da branch de destino; chave só leitura recusada no envio; verificar que a suíte passa duas vezes seguidas a partir de stack limpo
-- [ ] 9.2 Escrever o ADR do repositório remoto (retransmissão no portal, chave fora do container, SSH sem API) e atualizar `docs/adr/README.md` e `docs/seguranca.md`; verificar que os nomes de configuração citados existem no código
-- [ ] 9.3 Escrever o guia de preparação do projeto no GitLab (chave de implantação, proteção das duas branches, merge sem squash, pipeline em projeto separado, quem aprova, conforme o resultado de 1.3) e atualizar `docs/guia-de-uso.md` com a aba Repositório; verificar seguindo o guia num projeto novo do stack
+- [ ] 9.1 Completar a suíte `portal/tests/e2e_gitlab`: cadastrar o token de projeto, solicitar promoção e conferir o merge request; solicitar de novo e ver o mesmo MR; pipeline de validação concluído; mergear e ver a tag criada pelo pipeline da branch de destino; promoção sem token mostra o link de criação; chave só leitura recusada no envio; verificar que a suíte passa duas vezes seguidas a partir de stack limpo
+- [ ] 9.2 Escrever o ADR do repositório remoto (retransmissão no portal, chave e token fora do container, git por SSH e API só para o merge request de promoção) e atualizar `docs/adr/README.md` e `docs/seguranca.md`; verificar que os nomes de configuração citados existem no código
+- [ ] 9.3 Escrever o guia de preparação do projeto no GitLab (chave de implantação cadastrada por quem pode empurrar na branch de trabalho, token de projeto com papel Developer e escopo `api`, proteção das duas branches, merge sem squash, pipeline em projeto separado, quem aprova, conforme o resultado de 1.3) e atualizar `docs/guia-de-uso.md` com a aba Repositório; verificar seguindo o guia num projeto novo do stack
 
 ## 10. Verificação integrada
 

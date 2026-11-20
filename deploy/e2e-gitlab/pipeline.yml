@@ -1,0 +1,33 @@
+# Pipeline dos sistemas na stack E2E com GitLab (change add-system-git-remote).
+#
+# Fica num projeto separado (aidb/ci-templates) e os projetos dos sistemas apontam para ele em
+# "CI/CD configuration file" — o agente edita o repositório do sistema, mas não este arquivo.
+# No ambiente real, os jobs de validação rodam SAST, SCA etc.; aqui são simbólicos: o que o
+# AIDB testa é a sequência (validação no merge request, tag criada no merge para a main).
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages: [validacao, release]
+
+validacao:
+  stage: validacao
+  script:
+    - echo "validação simbólica (no ambiente real, SAST/SCA)"
+    - git log -1 --format='%h %an %s'
+    # Falha de propósito quando o commit pede, para testar que pipeline vermelho impede o merge.
+    - if git log -1 --format=%B | grep -q '\[falhar-pipeline\]'; then echo "falha pedida pelo commit"; exit 1; fi
+
+release:
+  stage: release
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE != "merge_request_event"
+  script:
+    - >
+      curl --fail --silent --show-error --request POST
+      --header "PRIVATE-TOKEN: $RELEASE_TOKEN"
+      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/repository/tags?tag_name=v1.0.$CI_PIPELINE_IID&ref=$CI_COMMIT_SHA"
