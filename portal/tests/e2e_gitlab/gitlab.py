@@ -97,3 +97,67 @@ def delete_project(pid: int) -> None:
             return
         except AssertionError:
             time.sleep(5)
+
+
+def commit_file(pid: int, branch_name: str, path: str, content: str, message: str) -> str:
+    """Commit direto numa branch pela API (o root pode empurrar na homolog protegida)."""
+    exists = api("GET", f"/projects/{pid}/repository/files/{q(path)}?ref={q(branch_name)}", ok404=True)
+    method = "PUT" if exists else "POST"
+    api(method, f"/projects/{pid}/repository/files/{q(path)}",
+        {"branch": branch_name, "content": content, "commit_message": message})
+    return branch(pid, branch_name)["commit"]["id"]
+
+
+def wait_pipeline(pid: int, sha: str, timeout: float = 240) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        pipelines = api("GET", f"/projects/{pid}/pipelines?sha={sha}&per_page=5")
+        for p in pipelines:
+            if p["status"] in ("success", "failed", "canceled"):
+                return p
+        time.sleep(3)
+    raise AssertionError(f"pipeline do commit {sha[:8]} não terminou")
+
+
+def human_merge_request(pid: int, target: str, path: str, content: str, title: str) -> dict:
+    """Um merge request humano completo: branch nova, commit, MR, pipeline verde e merge."""
+    source = f"humano-{time.time_ns()}"
+    api("POST", f"/projects/{pid}/repository/branches", {"branch": source, "ref": target})
+    sha = commit_file(pid, source, path, content, title)
+    mr = api("POST", f"/projects/{pid}/merge_requests",
+             {"source_branch": source, "target_branch": target, "title": title, "remove_source_branch": True})
+    return merge_when_green(pid, mr["iid"], sha)
+
+
+def merge_when_green(pid: int, iid: int, sha: str | None = None, timeout: float = 240) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        mr = api("GET", f"/projects/{pid}/merge_requests/{iid}")
+        pipeline = mr.get("head_pipeline")
+        if pipeline and pipeline["status"] == "success" and mr.get("detailed_merge_status") in ("mergeable", "can_be_merged", None):
+            return api("PUT", f"/projects/{pid}/merge_requests/{iid}/merge", {})
+        if pipeline and pipeline["status"] in ("failed", "canceled"):
+            raise AssertionError(f"pipeline do MR !{iid} terminou {pipeline['status']}")
+        time.sleep(3)
+    raise AssertionError(f"MR !{iid} não ficou pronto para merge")
+
+
+def project_token(pid: int, access_level: int = 30) -> str:
+    """Token de projeto (papel Developer por padrão, escopo api), como o guia recomenda."""
+    expires = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 30 * 86400))
+    return api("POST", f"/projects/{pid}/access_tokens",
+               {"name": "aidb-promocao", "scopes": ["api"], "access_level": access_level, "expires_at": expires})["token"]
+
+
+def open_mrs(pid: int, source: str = "homolog", target: str = "main") -> list[dict]:
+    return api("GET", f"/projects/{pid}/merge_requests?state=opened&source_branch={source}&target_branch={target}")
+
+
+def wait_tag(pid: int, timeout: float = 240) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        tags = api("GET", f"/projects/{pid}/repository/tags")
+        if tags:
+            return tags[0]
+        time.sleep(3)
+    raise AssertionError("nenhuma tag criada pelo pipeline da main")

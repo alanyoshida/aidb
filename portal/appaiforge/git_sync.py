@@ -410,6 +410,419 @@ def after_checkpoint(system: System, user: User | None = None) -> None:
     import logging
 
     try:
+        try:
+            sync(system, user)
+        except (UnsavedChanges, Diverged, RemoteError, GitError):
+            pass  # estado já gravado; o envio abaixo respeita divergência e pendência
         push_now(system, user)
     except Exception:
         logging.getLogger(__name__).exception("envio ao remoto falhou para %s", system.slug)
+
+
+# ---------------------------------------------------------------------------------------------
+# Sincronização (design D3, D4) e divergência (design D5)
+# ---------------------------------------------------------------------------------------------
+
+_CONFLICT_MARKERS = r"^(<<<<<<<|>>>>>>>)( |$)|^=======$"
+PIPELINE_FILE = ".gitlab-ci.yml"
+
+
+class UnsavedChanges(RemoteError):
+    def __init__(self):
+        super().__init__(
+            "há alterações no workspace sem checkpoint e o repositório remoto tem alterações novas; "
+            "salve ou descarte as alterações na aba Repositório antes de continuar",
+            "unsaved",
+        )
+
+
+class Diverged(RemoteError):
+    def __init__(self, files: list[str]):
+        super().__init__("o remoto e o sistema alteraram os mesmos trechos: " + ", ".join(files), "diverged")
+        self.files = files
+
+
+def _git(system: System, *args: str) -> str:
+    return get_backend().run(system, *args)
+
+
+def merge_in_progress(system: System) -> bool:
+    try:
+        get_backend().run(system, "rev-parse", "-q", "--verify", "MERGE_HEAD", work_tree=False)
+        return True
+    except GitError:
+        return False
+
+
+def files_with_conflict_markers(system: System) -> list[str]:
+    remote = _remote_row(system.id)
+    candidates = list(remote.conflict_files or []) if remote is not None else []
+    if not candidates:
+        return []
+    try:
+        out = _git(system, "grep", "--no-index", "-l", "-E", _CONFLICT_MARKERS, "--", *candidates)
+    except GitError as exc:
+        if exc.returncode == 1:
+            return []
+        raise
+    return [line for line in out.splitlines() if line]
+
+
+def merge_concluded(system: System) -> None:
+    """Chamado depois do commit que conclui uma resolução: o sistema deixa de estar divergente
+    e o resultado pode ser enviado."""
+    _update_remote(system.id, state="synced", state_detail="", conflict_files=None, merge_in_progress=False)
+
+
+def protect_pipeline_file(system: System) -> None:
+    """Design D8: com o vínculo ativo, alterações do workspace em `.gitlab-ci.yml` na raiz nunca
+    vão para o remoto. Arquivo novo: fica fora do repositório (`info/exclude`, no GIT_DIR). Arquivo
+    já rastreado e alterado ou apagado: volta à versão do último commit. Os dois casos geram aviso."""
+    remote = _remote_row(system.id)
+    if remote is None or not remote.enabled:
+        return
+    backend = get_backend()
+    try:
+        backend.run(system, "cat-file", "-e", f"HEAD:{PIPELINE_FILE}", work_tree=False)
+        tracked = True
+    except GitError:
+        tracked = False
+    if tracked:
+        try:
+            _git(system, "diff", "--quiet", "HEAD", "--", PIPELINE_FILE)
+            return
+        except GitError as exc:
+            if exc.returncode != 1:
+                raise
+        _git(system, "checkout", "HEAD", "--", PIPELINE_FILE)
+        _pipeline_warning(system, "alteração do agente em .gitlab-ci.yml desfeita: a definição do pipeline vem do repositório")
+        return
+    # só arquivo não rastreado e ainda não excluído: depois de excluído, nada a avisar de novo
+    if _git(system, "ls-files", "--others", "--exclude-standard", "--", PIPELINE_FILE):
+        backend.add_exclude(system, f"/{PIPELINE_FILE}")
+        _pipeline_warning(system, ".gitlab-ci.yml criado no workspace foi deixado de fora do repositório")
+
+
+def _pipeline_warning(system: System, message: str) -> None:
+    _update_remote(system.id, state_detail=message)
+    _audit(system, None, "git_remote.pipeline_file_ignored", {"aviso": message})
+
+
+def _is_dirty(system: System) -> bool:
+    return bool(_git(system, "status", "--porcelain"))
+
+
+def _has_unsent(system: System, branch: str) -> bool:
+    local = system_tip(system)
+    try:
+        remote = get_backend().run(system, "rev-parse", "-q", "--verify", remote_ref(branch), work_tree=False)
+    except GitError:
+        return local is not None
+    return local is not None and not is_ancestor(system, local, remote)
+
+
+def _integrate(system: System, branch: str, remote_tip: str, user: User | None) -> dict:
+    """Integra `remote_tip` na branch local (design D3). Chamar com o lock do sistema."""
+    from . import checkpoints
+
+    local = system_tip(system)
+    if local is not None and is_ancestor(system, remote_tip, local):
+        return {"integrated": False}
+    if _is_dirty(system):
+        _update_remote(system.id, unsaved_blocked=True,
+                       state_detail="alterações sem checkpoint aguardando decisão")
+        raise UnsavedChanges()
+    get_backend().prepare_work_tree(system)
+    ref = remote_ref(branch)
+    if local is None or is_ancestor(system, local, remote_tip):
+        _git(system, "merge", "-q", "--ff-only", ref)
+        message = f"sincroniza {branch} do repositório remoto"
+    else:
+        try:
+            _git(system, "-c", "user.name=AIDB", "-c", "user.email=appaiforge@portal",
+                 "merge", "-q", "--no-ff", "--no-edit", "-m", f"integra {branch} do repositório remoto", ref)
+        except GitError:
+            conflicted = [f for f in _git(system, "diff", "--name-only", "--diff-filter=U").splitlines() if f]
+            _git(system, "merge", "--abort")
+            _update_remote(system.id, state="diverged", conflict_files=conflicted, merge_in_progress=False,
+                           state_detail="conflito com alterações do repositório remoto")
+            raise Diverged(conflicted) from None
+        message = f"integra {branch} do repositório remoto"
+    head = system_tip(system)
+    checkpoints.register_commit(system, head, message, checkpoints.ORIGIN_REMOTE, user)
+    return {"integrated": True, "sha": head}
+
+
+def sync(system: System, user: User | None = None) -> dict:
+    """Traz para o workspace o que entrou na branch de trabalho remota. Divergente: só busca,
+    não integra sozinho. Levanta `UnsavedChanges`, `Diverged` ou `RemoteError`."""
+    from datetime import datetime, timezone
+
+    from .services import git_remote
+
+    remote = _remote_row(system.id)
+    if remote is None or not remote.enabled:
+        return {"integrated": False}
+    secrets = git_remote.load_secrets(system.id)
+    with system_lock(system.id):
+        remote_tip = fetch_remote(system, secrets)
+        if remote_tip is None or remote.state == "diverged":
+            return {"integrated": False}
+        result = _integrate(system, secrets.working_branch, remote_tip, user)
+    _update_remote(system.id, unsaved_blocked=False, last_synced_at=datetime.now(timezone.utc),
+                   **({"state_detail": ""} if remote.state != "pending" else {}))
+    if result.get("integrated"):
+        _audit(system, user, "git_remote.sync", {"commit": result["sha"][:12]})
+    return result
+
+
+def before_run(system: System, user: User | None = None) -> str | None:
+    """Antes de acionar o agente (design D6): sincroniza. Devolve a mensagem que impede a execução
+    (alterações não salvas) ou None. Remoto fora do ar ou divergente não impedem a execução."""
+    try:
+        sync(system, user)
+    except UnsavedChanges as exc:
+        return str(exc)
+    except Diverged:
+        _audit(system, user, "git_remote.diverged", {})
+        return None
+    except (RemoteError, GitError) as exc:
+        _update_remote(system.id, state_detail=f"sincronização antes da execução falhou: {exc}")
+        return None
+    return None
+
+
+def save_unsaved(system: System, user: User) -> dict:
+    """Ação "Salvar como checkpoint": registra as alterações não salvas e sincroniza."""
+    from . import checkpoints
+
+    checkpoints.record_checkpoint(system, None, "alterações não salvas antes de sincronizar", user,
+                                  origin=checkpoints.ORIGIN_MANUAL)
+    _audit(system, user, "git_remote.unsaved_saved", {})
+    result = sync(system, user)
+    push_now(system, user)
+    return result
+
+
+def discard_unsaved(system: System, user: User) -> dict:
+    """Ação "Descartar alterações não salvas": volta ao último checkpoint e sincroniza."""
+    with system_lock(system.id):
+        get_backend().prepare_work_tree(system)
+        if system_tip(system) is not None:
+            _git(system, "reset", "-q", "--hard", "HEAD")
+        _git(system, "clean", "-fdq")
+    _audit(system, user, "git_remote.unsaved_discarded", {})
+    result = sync(system, user)
+    push_now(system, user)
+    return result
+
+
+def resolve_in_workspace(system: System, user: User) -> list[str]:
+    """Leva o conflito para os arquivos do workspace (marcas de conflito) para o agente ou o
+    editor resolverem; o merge conclui no checkpoint seguinte sem marcas (design D5)."""
+    from .services import git_remote
+
+    remote = _remote_row(system.id)
+    if remote is None or remote.state != "diverged":
+        raise git_remote.InvalidRemote("o sistema não está divergente")
+    branch = remote.working_branch
+    with system_lock(system.id):
+        if merge_in_progress(system):
+            return list(remote.conflict_files or [])
+        get_backend().prepare_work_tree(system)
+        try:
+            _git(system, "-c", "user.name=AIDB", "-c", "user.email=appaiforge@portal",
+                 "merge", "-q", "--no-ff", "--no-commit", remote_ref(branch))
+        except GitError:
+            pass  # conflito esperado: as marcas ficam nos arquivos
+        conflicted = [f for f in _git(system, "diff", "--name-only", "--diff-filter=U").splitlines() if f]
+    _update_remote(system.id, merge_in_progress=True, conflict_files=conflicted or list(remote.conflict_files or []),
+                   state_detail="resolução em andamento no workspace")
+    _audit(system, user, "git_remote.resolution_started", {"arquivos": conflicted})
+    return conflicted
+
+
+def cancel_resolution(system: System, user: User) -> None:
+    with system_lock(system.id):
+        if merge_in_progress(system):
+            _git(system, "merge", "--abort")
+    _update_remote(system.id, merge_in_progress=False, state_detail="conflito com alterações do repositório remoto")
+    _audit(system, user, "git_remote.resolution_cancelled", {})
+
+
+def unsent_checkpoints(system: System) -> list[dict]:
+    """Checkpoints locais que não estão na branch remota (o que "adotar o remoto" deixa de lado)."""
+    from . import checkpoints
+
+    remote = _remote_row(system.id)
+    if remote is None:
+        return []
+    try:
+        shas = set(_git(system, "rev-list", f"{remote_ref(remote.working_branch)}..refs/heads/{LOCAL_BRANCH}").split())
+    except GitError:
+        return []
+    return [cp for cp in checkpoints.list_checkpoints(system) if cp["git_sha"] in shas]
+
+
+def adopt_remote(system: System, user: User) -> str:
+    """Ação "Adotar a versão do remoto" (design D5): o workspace passa a ter o conteúdo da branch
+    remota; os checkpoints locais deixados de lado continuam restauráveis (referência de
+    proteção); nada é enviado ao remoto."""
+    from . import checkpoints
+    from .services import git_remote
+
+    remote = _remote_row(system.id)
+    if remote is None or remote.state != "diverged":
+        raise git_remote.InvalidRemote("o sistema não está divergente")
+    ref = remote_ref(remote.working_branch)
+    with system_lock(system.id):
+        if merge_in_progress(system):
+            _git(system, "merge", "--abort")
+        local = system_tip(system)
+        if local:
+            get_backend().run(system, "update-ref", f"refs/aidb/set-aside/{local}", local, work_tree=False)
+        get_backend().prepare_work_tree(system)
+        _git(system, "reset", "-q", "--hard", ref)
+        _git(system, "clean", "-fdq")
+        head = system_tip(system)
+        checkpoints.register_commit(system, head, "adota a versão do repositório remoto", checkpoints.ORIGIN_REMOTE, user)
+    _update_remote(system.id, state="synced", state_detail="", conflict_files=None, merge_in_progress=False,
+                   last_pushed_sha=head)
+    _audit(system, user, "git_remote.adopt_remote", {"commit": head[:12], "deixado_de_lado": (local or "")[:12]})
+    return head
+
+
+class RunInProgress(RemoteError):
+    def __init__(self):
+        super().__init__("há uma execução do agente em andamento; tente de novo quando ela terminar", "busy")
+
+
+def _run_in_progress(system_id: str) -> bool:
+    from sqlalchemy import select
+
+    from .db import session_scope
+    from .models import AgentRun, RunStatus
+
+    with session_scope() as s:
+        return s.execute(
+            select(AgentRun.id).where(
+                AgentRun.system_id == system_id,
+                AgentRun.status.in_([RunStatus.running, RunStatus.awaiting_approval]),
+            )
+        ).first() is not None
+
+
+def sync_now(system: System, user: User) -> dict:
+    """Ação "Sincronizar agora": recusada com execução em andamento (o workspace não muda durante
+    uma execução); com alterações não salvas, levanta `UnsavedChanges` como antes de uma execução."""
+    if _run_in_progress(system.id):
+        raise RunInProgress()
+    result = sync(system, user)
+    push_now(system, user)
+    return result
+
+
+# ---------------------------------------------------------------------------------------------
+# Promoção pela API do GitLab (design D7)
+# ---------------------------------------------------------------------------------------------
+
+DEVELOPER_ACCESS = 30
+
+
+def _gitlab(secrets: RemoteSecrets, method: str, path: str, **kwargs):
+    import httpx
+
+    url = f"{secrets.api_url.rstrip('/')}/api/v4{path}"
+    with httpx.Client(timeout=REMOTE_TIMEOUT, follow_redirects=False) as client:
+        response = client.request(method, url, headers={"PRIVATE-TOKEN": secrets.api_token}, **kwargs)
+    if response.status_code in (401, 403):
+        raise RemoteError("o GitLab recusou o token de API do sistema", "access_denied")
+    if response.status_code == 404:
+        raise RemoteError("o token de API não alcança o projeto do repositório", "access_denied")
+    if response.status_code >= 400:
+        raise RemoteError(f"erro da API do GitLab: {response.status_code} {response.text[:200]}")
+    return response.json()
+
+
+def _project_path(secrets: RemoteSecrets) -> str:
+    from .services.git_remote import project_api_path
+
+    return f"/projects/{project_api_path(secrets.address)}"
+
+
+def check_api_token(system: System) -> str:
+    """Teste do token: o projeto é alcançável e o acesso permite abrir merge request. Não escreve
+    nada no GitLab. Devolve uma mensagem para o editor; levanta `RemoteError` em falha."""
+    from .services import git_remote
+
+    secrets = git_remote.load_secrets(system.id)
+    if secrets is None or not secrets.api_token:
+        raise RemoteError("cadastre um token de API antes de testar", "access_denied")
+    try:
+        project = _gitlab(secrets, "GET", _project_path(secrets))
+    except OSError as exc:
+        raise RemoteError(f"API do GitLab inacessível: {exc}", "unreachable") from None
+    permissions = project.get("permissions") or {}
+    levels = [(permissions.get(k) or {}).get("access_level") or 0 for k in ("project_access", "group_access")]
+    if max(levels) < DEVELOPER_ACCESS:
+        raise RemoteError("o token alcança o projeto, mas sem permissão para abrir merge request "
+                          "(é preciso papel Developer ou maior)", "access_denied")
+    return f"Token válido para {project.get('path_with_namespace', secrets.address.path)}."
+
+
+def request_promotion(system: System, user: User) -> dict:
+    """Ação "Solicitar promoção": mostra o MR aberto entre as branches ou abre um. Sem token, ou
+    com o token recusado, devolve o endereço de criação preenchido sem abrir nada."""
+    from .services import git_remote
+
+    if not git_remote.can_manage_system(user, system):
+        raise git_remote.NotPermitted("somente o dono do sistema ou um admin gerenciam o repositório remoto")
+    remote = _remote_row(system.id)
+    if remote is None or not remote.enabled:
+        raise git_remote.InvalidRemote("ative o vínculo com o repositório antes de solicitar promoção")
+    if remote.state == "diverged":
+        raise git_remote.InvalidRemote("resolva a divergência com o repositório remoto antes de solicitar promoção")
+    if remote.state == "pending" or _has_unsent(system, remote.working_branch):
+        raise git_remote.InvalidRemote("há checkpoints ainda não enviados; use \"Enviar agora\" antes de solicitar promoção")
+    secrets = git_remote.load_secrets(system.id)
+    fallback = git_remote.create_mr_url(remote)
+    if not secrets.api_token:
+        _audit(system, user, "git_remote.promotion_link", {})
+        return {"url": fallback, "created": False, "existing": False, "fallback": True,
+                "message": "Sem token de API: abra o merge request pelo link."}
+    base = _project_path(secrets)
+    params = {"state": "opened", "source_branch": secrets.working_branch, "target_branch": secrets.target_branch}
+    try:
+        found = _gitlab(secrets, "GET", f"{base}/merge_requests", params=params)
+        if found:
+            url, created = found[0]["web_url"], False
+        else:
+            mr = _gitlab(secrets, "POST", f"{base}/merge_requests", json={
+                "source_branch": secrets.working_branch, "target_branch": secrets.target_branch,
+                "title": f"Promove {secrets.working_branch} para {secrets.target_branch} — {system.name}",
+                "description": _promotion_description(system),
+                "remove_source_branch": False,
+            })
+            url, created = mr["web_url"], True
+    except RemoteError as exc:
+        if exc.kind != "access_denied":
+            raise
+        _audit(system, user, "git_remote.promotion_link", {"motivo": "token recusado"})
+        return {"url": fallback, "created": False, "existing": False, "fallback": True,
+                "message": f"{exc}: abra o merge request pelo link."}
+    except OSError as exc:
+        raise RemoteError(f"API do GitLab inacessível: {exc}", "unreachable") from None
+    _update_remote(system.id, last_mr_url=url)
+    _audit(system, user, "git_remote.promotion", {"merge_request": url, "aberto_agora": created})
+    return {"url": url, "created": created, "existing": not created, "fallback": False,
+            "message": "Merge request aberto." if created else "Já existe um merge request aberto."}
+
+
+def _promotion_description(system: System) -> str:
+    from . import checkpoints
+
+    lines = [f"Solicitado pelo AIDB a partir do sistema **{system.name}** (`{system.slug}`).", "",
+             "Últimos checkpoints:"]
+    for cp in checkpoints.list_checkpoints(system)[:10]:
+        lines.append(f"- `{cp['git_sha'][:8]}` {cp['message'][:120]}")
+    return "\n".join(lines)

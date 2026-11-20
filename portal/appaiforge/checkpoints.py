@@ -75,23 +75,68 @@ def ensure_repo(system: System) -> None:
         break
 
 
+class MergeIncomplete(GitError):
+    """Há uma resolução de conflito em andamento e algum arquivo ainda tem marcas de conflito."""
+
+    def __init__(self, files: list[str]):
+        super().__init__("ainda há marcas de conflito em: " + ", ".join(files))
+        self.files = files
+
+
 def commit_all(system: System, message: str, author: User | None = None) -> str | None:
-    """Commita tudo; devolve o sha ou None se nada mudou."""
+    """Commita tudo; devolve o sha ou None se nada mudou.
+
+    Com uma resolução de conflito em andamento (change add-system-git-remote, design D5), o
+    commit conclui o merge — mas só quando nenhum arquivo em conflito ainda tem marcas; senão
+    levanta `MergeIncomplete` e nada é registrado."""
+    from . import git_sync
+
     ensure_repo(system)
+    merging = git_sync.merge_in_progress(system)
+    if merging:
+        leftover = git_sync.files_with_conflict_markers(system)
+        if leftover:
+            raise MergeIncomplete(leftover)
+    git_sync.protect_pipeline_file(system)
     _git(system, "add", "-A")
     status = _git(system, "status", "--porcelain")
-    if not status:
+    if not status and not merging:
         return None
     name = author.email if author else "appaiforge@portal"
     _git(system, "-c", f"user.name={name}", "-c", f"user.email={name}", "commit", "-q", "-m", message)
     sha = _git(system, "rev-parse", "HEAD")
+    if merging:
+        git_sync.merge_concluded(system)
     return sha
+
+
+def register_commit(
+    system: System, sha: str, message: str, origin: str, author: User | None = None,
+) -> Checkpoint:
+    """Registra como checkpoint um commit que já existe no repositório (ex.: o que veio do
+    remoto numa sincronização), sem criar commit novo."""
+    with session_scope() as s:
+        cp = Checkpoint(
+            system_id=system.id, run_id=None, git_sha=sha, message=message,
+            author_id=author.id if author else system.owner_id,
+            author_email=author.email if author else "", origin=origin,
+        )
+        s.add(cp)
+        s.flush()
+        s.expunge(cp)
+    audit.record(
+        actor_id=author.id if author else None, actor_email=author.email if author else None,
+        action="checkpoint.create", resource_type="checkpoint",
+        resource_id=cp.id, system_id=system.id, details={"git_sha": sha[:8], "origin": origin},
+    )
+    return cp
 
 
 # Origens de um checkpoint (coluna `checkpoints.origin`, change isolate-workspace-repository).
 ORIGIN_RUN = "run"
 ORIGIN_MANUAL = "manual"
 ORIGIN_RESTORE = "restore"
+ORIGIN_REMOTE = "remote"
 
 
 def record_checkpoint(

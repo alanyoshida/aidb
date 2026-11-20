@@ -39,33 +39,33 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 5. Sincronização
 
-- [ ] 5.1 Recebimento do remoto pela retransmissão e importação do pacote no repositório do sistema; verificar com teste de integração que commits feitos direto no remoto chegam ao repositório do sistema
-- [ ] 5.2 Integração por avanço rápido e por merge sem conflito, com checkpoint `origin = remote` (design D3, casos 1 e 2); verificar cada caso com teste de integração, incluindo que a app reflete a mudança
-- [ ] 5.3 Encaixar a sincronização antes do harness em `agent_queue._execute`, não bloqueante em erro de rede, e a ação "Sincronizar agora" que recusa com execução em andamento (design D6); verificar com teste de integração que a execução parte do código mergeado
-- [ ] 5.4 Cenário E2E no stack com GitLab: mergear um merge request "humano" na branch de trabalho pela API e ver a execução seguinte partir do código novo, com envio aceito
+- [x] 5.1 Recebimento do remoto pela retransmissão e importação do pacote no repositório do sistema; verificar com teste de integração que commits feitos direto no remoto chegam ao repositório do sistema
+- [x] 5.2 Integração por avanço rápido e por merge sem conflito, com checkpoint `origin = remote` (design D3, casos 1 e 2); verificar cada caso com teste de integração, incluindo que a app reflete a mudança
+- [x] 5.3 Encaixar a sincronização antes do harness em `agent_queue._execute`, não bloqueante em erro de rede, e a ação "Sincronizar agora" que recusa com execução em andamento (design D6); verificar com teste de integração que a execução parte do código mergeado
+- [x] 5.4 Cenário E2E no stack com GitLab: mergear um merge request "humano" na branch de trabalho pela API e ver a execução seguinte partir do código novo, com envio aceito
 
 ## 6. Alterações não salvas
 
-- [ ] 6.1 Bloqueio da integração quando há alterações sem checkpoint e commits a trazer: execução encerrada sem chamar o harness, com mensagem no chat, e recusa em "Sincronizar agora" (design D4); verificar com teste de integração que o workspace não muda e o harness não é chamado, e que sem commits a trazer nada é bloqueado
-- [ ] 6.2 Ações "Salvar como checkpoint" e "Descartar alterações não salvas" na aba Repositório, a segunda com confirmação, ambas seguidas da integração; verificar os dois desfechos com teste de integração e teste E2E
+- [x] 6.1 Bloqueio da integração quando há alterações sem checkpoint e commits a trazer: execução encerrada sem chamar o harness, com mensagem no chat, e recusa em "Sincronizar agora" (design D4); verificar com teste de integração que o workspace não muda e o harness não é chamado, e que sem commits a trazer nada é bloqueado
+- [x] 6.2 Ações "Salvar como checkpoint" e "Descartar alterações não salvas" na aba Repositório, a segunda com confirmação, ambas seguidas da integração; verificar os dois desfechos com teste de integração e teste E2E
 
 ## 7. Divergência
 
-- [ ] 7.1 Caso de conflito: `merge --abort`, estado `diverged`, lista de arquivos, envios suspensos, chat disponível, sem nova tentativa automática de integração (design D3, caso 3); verificar com teste de integração que a árvore de trabalho fica sem marcas de conflito
-- [ ] 7.2 Ações "Resolver no workspace" e "Cancelar resolução", e conclusão do merge no checkpoint seguinte só sem marcas de conflito (design D5); verificar os três desfechos (concluída, incompleta, cancelada) com teste de integração
-- [ ] 7.3 Ação "Adotar a versão do remoto" com confirmação listando os checkpoints não enviados, referência de proteção e checkpoint `origin = remote` (design D5); verificar com teste de integração que o workspace reflete o remoto, que um checkpoint deixado de lado é restaurável e que nada muda no remoto
-- [ ] 7.4 Exibir a divergência e suas duas saídas na aba Repositório, e registrar sincronizações, divergências, resoluções e adoções na auditoria; verificar com teste E2E e teste de integração das entradas de auditoria
+- [x] 7.1 Caso de conflito: `merge --abort`, estado `diverged`, lista de arquivos, envios suspensos, chat disponível, sem nova tentativa automática de integração (design D3, caso 3); verificar com teste de integração que a árvore de trabalho fica sem marcas de conflito
+- [x] 7.2 Ações "Resolver no workspace" e "Cancelar resolução", e conclusão do merge no checkpoint seguinte só sem marcas de conflito (design D5); verificar os três desfechos (concluída, incompleta, cancelada) com teste de integração
+- [x] 7.3 Ação "Adotar a versão do remoto" com confirmação listando os checkpoints não enviados, referência de proteção e checkpoint `origin = remote` (design D5); verificar com teste de integração que o workspace reflete o remoto, que um checkpoint deixado de lado é restaurável e que nada muda no remoto
+- [x] 7.4 Exibir a divergência e suas duas saídas na aba Repositório, e registrar sincronizações, divergências, resoluções e adoções na auditoria; verificar com teste E2E e teste de integração das entradas de auditoria
 
 ## 8. Promoção e proteção do pipeline
 
 - [ ] 8.1 Teste do token e ação "Solicitar promoção" pela API do GitLab: consulta de MR aberto entre as branches, abertura quando não houver, endereço de criação preenchido sem token ou com token recusado, recusa com pendência ou divergência (design D7); verificar com testes unitários contra um servidor HTTP falso e com o cenário E2E de 9.1
-- [ ] 8.2 Proteção de `.gitlab-ci.yml` na raiz para arquivo novo e para arquivo rastreado modificado, com aviso registrado (design D8); verificar os dois casos com teste de integração e que o arquivo vindo do remoto é preservado
-- [ ] 8.3 Criar `tests/bdd/features/system-git-remote.feature` com os cenários da spec e verificar que `uv run pytest tests/bdd -k system_git_remote` passa
+- [x] 8.2 Proteção de `.gitlab-ci.yml` na raiz para arquivo novo e para arquivo rastreado modificado, com aviso registrado (design D8); verificar os dois casos com teste de integração e que o arquivo vindo do remoto é preservado
+- [x] 8.3 Criar `tests/bdd/features/system-git-remote.feature` com os cenários da spec e verificar que `uv run pytest tests/bdd -k system_git_remote` passa
 
 ## 9. Jornada completa e documentação
 
 - [ ] 9.1 Completar a suíte `portal/tests/e2e_gitlab`: cadastrar o token de projeto, solicitar promoção e conferir o merge request; solicitar de novo e ver o mesmo MR; pipeline de validação concluído; mergear e ver a tag criada pelo pipeline da branch de destino; promoção sem token mostra o link de criação; chave só leitura recusada no envio; verificar que a suíte passa duas vezes seguidas a partir de stack limpo
-- [ ] 9.2 Escrever o ADR do repositório remoto (retransmissão no portal, chave e token fora do container, git por SSH e API só para o merge request de promoção) e atualizar `docs/adr/README.md` e `docs/seguranca.md`; verificar que os nomes de configuração citados existem no código
+- [x] 9.2 Escrever o ADR do repositório remoto (retransmissão no portal, chave e token fora do container, git por SSH e API só para o merge request de promoção) e atualizar `docs/adr/README.md` e `docs/seguranca.md`; verificar que os nomes de configuração citados existem no código
 - [ ] 9.3 Escrever o guia de preparação do projeto no GitLab (chave de implantação cadastrada por quem pode empurrar na branch de trabalho, token de projeto com papel Developer e escopo `api`, proteção das duas branches, merge sem squash, pipeline em projeto separado, quem aprova, conforme o resultado de 1.3) e atualizar `docs/guia-de-uso.md` com a aba Repositório; verificar seguindo o guia num projeto novo do stack
 
 ## 10. Verificação integrada

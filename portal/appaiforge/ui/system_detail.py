@@ -675,9 +675,13 @@ def _render_checkpoints(system, user) -> None:
     def create_checkpoint() -> None:
         # record_checkpoint devolve None quando o git não tem nada para commitar;
         # sem aviso o botão parece quebrado.
-        cp = cp_service.record_checkpoint(
-            system, None, "checkpoint manual", author=user, origin=cp_service.ORIGIN_MANUAL,
-        )
+        try:
+            cp = cp_service.record_checkpoint(
+                system, None, "checkpoint manual", author=user, origin=cp_service.ORIGIN_MANUAL,
+            )
+        except cp_service.MergeIncomplete as exc:
+            notify(f"Checkpoint não criado: {exc}", "warning")
+            return
         if cp is None:
             notify("Nada mudou no workspace desde o último checkpoint.", "info")
             return
@@ -900,6 +904,31 @@ def _render_repository(system, user) -> None:
             notify("Nada a enviar.", "info")
         refresh()
 
+    async def _guarded(fn, *args, ok: str) -> None:
+        try:
+            await _run.io_bound(fn, *args)
+        except (git_remote.InvalidRemote, git_remote.NotPermitted, git_sync.RemoteError) as exc:
+            _error(exc)
+            refresh()
+            return
+        notify(ok, "positive")
+        refresh()
+
+    async def sync_now() -> None:
+        try:
+            result = await _run.io_bound(git_sync.sync_now, system, user)
+        except git_sync.UnsavedChanges as exc:
+            notify(str(exc), "warning")
+            refresh()
+            return
+        except (git_remote.InvalidRemote, git_sync.RemoteError) as exc:
+            _error(exc)
+            refresh()
+            return
+        notify("Alterações do remoto trazidas para o workspace." if result.get("integrated")
+               else "Nada novo no remoto.", "positive" if result.get("integrated") else "info")
+        refresh()
+
     # --- token de API -------------------------------------------------------------------------
     with ui.card().classes("w-full max-w-3xl mt-2"):
         ui.label("Token de API do GitLab (opcional)").classes("font-semibold")
@@ -931,6 +960,16 @@ def _render_repository(system, user) -> None:
                 refresh()
 
             ui.button("Salvar token", on_click=save_token).props("data-testid=repo-token-save")
+
+            async def test_token() -> None:
+                try:
+                    message = await _run.io_bound(git_sync.check_api_token, system)
+                except git_sync.RemoteError as exc:
+                    _error(exc)
+                    return
+                notify(message, "positive")
+
+            test_token_btn = ui.button("Testar token", on_click=test_token).props("outline data-testid=repo-token-test")
             remove_token_btn = ui.button("Remover", on_click=remove_token).props("outline color=negative data-testid=repo-token-remove")
 
     # --- estado ------------------------------------------------------------------------------
@@ -945,6 +984,97 @@ def _render_repository(system, user) -> None:
             enable_btn = ui.button("Ativar vínculo", icon="link", on_click=activate).props("data-testid=repo-enable")
             disable_btn = ui.button("Desativar vínculo", icon="link_off", on_click=deactivate).props("outline data-testid=repo-disable")
             push_btn = ui.button("Enviar agora", icon="upload", on_click=push_now).props("outline data-testid=repo-push-now")
+            sync_btn = ui.button("Sincronizar agora", icon="sync", on_click=lambda: sync_now()).props("outline data-testid=repo-sync-now")
+
+    # --- promoção (design D7) ----------------------------------------------------------------
+    with ui.card().classes("w-full max-w-3xl mt-2") as promote_card:
+        ui.label("Promoção").classes("font-semibold")
+        ui.label("Abre (ou mostra) o merge request da branch de trabalho para a de destino, onde a revisão "
+                 "e os pipelines acontecem. Nada é aberto sem esta ação.").classes("text-sm text-gray-500")
+
+        async def request_promotion() -> None:
+            try:
+                result = await _run.io_bound(git_sync.request_promotion, system, user)
+            except (git_remote.InvalidRemote, git_remote.NotPermitted, git_sync.RemoteError) as exc:
+                _error(exc)
+                return
+            mr_link.set_text(result["url"])
+            mr_link.props(f"href={result['url']}")
+            mr_link.set_visibility(True)
+            notify(result["message"], "warning" if result["fallback"] else "positive")
+
+        ui.button("Solicitar promoção", icon="merge_type", on_click=request_promotion).props("data-testid=repo-promote")
+        mr_link = ui.link("", "#", new_tab=True).classes("text-sm font-mono break-all").props("data-testid=repo-mr-url")
+        mr_link.set_visibility(False)
+
+    # --- alterações não salvas (design D4) ---------------------------------------------------
+    with ui.dialog() as discard_dialog, ui.card().classes("w-96"):
+        ui.label("Descartar alterações não salvas").classes("font-semibold text-lg")
+        ui.label("O workspace volta ao último checkpoint. As alterações sem checkpoint são perdidas.").classes("text-sm")
+
+        async def confirm_discard() -> None:
+            discard_dialog.close()
+            await _guarded(git_sync.discard_unsaved, system, user, ok="Alterações descartadas e repositório sincronizado.")
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=discard_dialog.close).props("flat")
+            ui.button("Descartar", on_click=confirm_discard).props("color=negative data-testid=repo-discard-confirm")
+
+    unsaved_card = ui.card().classes("w-full max-w-3xl mt-2").props("data-testid=repo-unsaved")
+    with unsaved_card:
+        ui.label("Alterações não salvas").classes("font-semibold")
+        ui.label(
+            "O repositório remoto tem alterações novas e o workspace tem alterações sem checkpoint. "
+            "O agente só volta a executar depois que você decidir o que fazer com elas."
+        ).classes("text-sm")
+        with ui.row().classes("gap-2"):
+            ui.button("Salvar como checkpoint", icon="save",
+                      on_click=lambda: _guarded(git_sync.save_unsaved, system, user, ok="Alterações salvas e repositório sincronizado.")
+                      ).props("data-testid=repo-save-unsaved")
+            ui.button("Descartar alterações não salvas", icon="delete_sweep", on_click=discard_dialog.open
+                      ).props("outline color=negative data-testid=repo-discard-unsaved")
+
+    # --- divergência (design D5) -------------------------------------------------------------
+    with ui.dialog() as adopt_dialog, ui.card().classes("w-[32rem]"):
+        ui.label("Adotar a versão do remoto").classes("font-semibold text-lg")
+        ui.label("O workspace passa a ter o conteúdo da branch remota. Estes checkpoints locais, não enviados, "
+                 "ficam de lado (continuam restauráveis na aba Checkpoints):").classes("text-sm")
+        adopt_list = ui.column().classes("gap-0").props("data-testid=repo-adopt-list")
+
+        async def confirm_adopt() -> None:
+            adopt_dialog.close()
+            await _guarded(git_sync.adopt_remote, system, user, ok="Versão do remoto adotada.")
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=adopt_dialog.close).props("flat")
+            ui.button("Adotar", on_click=confirm_adopt).props("color=warning data-testid=repo-adopt-confirm")
+
+    def open_adopt() -> None:
+        adopt_list.clear()
+        with adopt_list:
+            pending = git_sync.unsent_checkpoints(system)
+            if not pending:
+                ui.label("(nenhum)").classes("text-sm text-gray-500")
+            for cp in pending:
+                ui.label(f"{cp['git_sha'][:8]} — {cp['message'][:80]}").classes("text-sm font-mono")
+        adopt_dialog.open()
+
+    diverged_card = ui.card().classes("w-full max-w-3xl mt-2").props("data-testid=repo-diverged")
+    with diverged_card:
+        ui.label("Divergência com o repositório remoto").classes("font-semibold")
+        diverged_text = ui.label("").classes("text-sm")
+        conflict_list = ui.label("").classes("text-sm font-mono").props("data-testid=repo-conflict-files")
+        with ui.row().classes("gap-2"):
+            resolve_btn = ui.button("Resolver no workspace", icon="merge",
+                                    on_click=lambda: _guarded(git_sync.resolve_in_workspace, system, user,
+                                                              ok="Conflito levado ao workspace: peça ao agente para resolver os arquivos marcados.")
+                                    ).props("data-testid=repo-resolve")
+            cancel_resolve_btn = ui.button("Cancelar resolução", icon="undo",
+                                           on_click=lambda: _guarded(git_sync.cancel_resolution, system, user,
+                                                                     ok="Resolução cancelada.")
+                                           ).props("outline data-testid=repo-cancel-resolve")
+            ui.button("Adotar a versão do remoto", icon="cloud_download", on_click=open_adopt
+                      ).props("outline color=warning data-testid=repo-adopt")
 
     def refresh() -> None:
         current = git_remote.get_view(system)
@@ -952,6 +1082,8 @@ def _render_repository(system, user) -> None:
             return
         token_status.set_text("Token configurado." if current["has_api_token"] else "Nenhum token configurado.")
         remove_token_btn.set_visibility(current["has_api_token"])
+        test_token_btn.set_visibility(current["has_api_token"])
+        promote_card.set_visibility(current["enabled"])
         if not current["enabled"]:
             state_badge.set_text("desativado")
             state_badge.props("color=grey")
@@ -965,6 +1097,19 @@ def _render_repository(system, user) -> None:
         enable_btn.set_visibility(not current["enabled"] and bool(current["url"]))
         disable_btn.set_visibility(current["enabled"])
         push_btn.set_visibility(current["enabled"] and current["state"] in ("pending", "error"))
+        sync_btn.set_visibility(current["enabled"] and current["state"] != "diverged")
+        unsaved_card.set_visibility(current["enabled"] and current["unsaved_blocked"])
+        diverged = current["enabled"] and current["state"] == "diverged"
+        diverged_card.set_visibility(diverged)
+        if diverged:
+            conflict_list.set_text("Arquivos em conflito: " + ", ".join(current["conflict_files"]))
+            diverged_text.set_text(
+                "Resolução em andamento: os arquivos estão com marcas de conflito. O próximo checkpoint "
+                "sem marcas conclui a integração." if current["merge_in_progress"] else
+                "O remoto e o sistema alteraram os mesmos trechos. Os envios estão suspensos; o chat continua disponível."
+            )
+            resolve_btn.set_visibility(not current["merge_in_progress"])
+            cancel_resolve_btn.set_visibility(current["merge_in_progress"])
 
     refresh()
     ui.timer(3.0, refresh)

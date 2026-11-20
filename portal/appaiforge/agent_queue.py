@@ -302,10 +302,26 @@ class AgentQueue:
         # WorkspaceWriteError (timeout de prontidão do container, falha do exec) — subclasse de
         # OSError (change `fix-k8s-workspace-materialize-delete`), então já cai aqui, degradando
         # a run exatamente como uma falha de escrita local sob o driver Docker.
-        try:
-            guidelines.materialize(system)
-        except OSError:
-            log.warning("não foi possível materializar AGENTS.md para %s", system.slug)
+        # Repositório remoto (change add-system-git-remote, design D6): traz para o workspace o que
+        # entrou na branch de trabalho antes de acionar o agente. Roda ANTES de materializar as
+        # guidelines, que o portal reescreve no workspace a cada execução e que senão contariam
+        # como alteração não salva. Com alterações sem checkpoint e commits a trazer, a execução
+        # não começa e o chat explica o motivo.
+        from . import git_sync
+
+        with session_scope() as s:
+            fresh_system = s.get(System, system_id)
+            run_user = s.get(User, run.user_id) if run.user_id else None
+            s.expunge(fresh_system)
+            if run_user is not None:
+                s.expunge(run_user)
+        blocked = git_sync.before_run(fresh_system, run_user)
+
+        if not blocked:
+            try:
+                guidelines.materialize(system)
+            except OSError:
+                log.warning("não foi possível materializar AGENTS.md para %s", system.slug)
 
         buffer = RunBuffer()
         self.buffers[run_id] = buffer
@@ -423,7 +439,11 @@ class AgentQueue:
         harness = self.harness_for(system_dict)
         final: RunEvent | None = None
         try:
-            harness.run(system_dict, session_id, run.prompt, on_event)
+            if blocked:
+                # motivo escrito para o editor (não é detalhe técnico): aparece no chat
+                buffer.push(RunEvent("run_blocked", text=blocked))
+            else:
+                harness.run(system_dict, session_id, run.prompt, on_event)
         except SessionExpiredError:
             # sessão morta detectada ao enviar: reinicia com nova sessão e reexecuta
             log.warning("sessão opencode expirada na run %s; criando nova sessão", run_id)
@@ -444,7 +464,7 @@ class AgentQueue:
             log.exception("run %s falhou no harness", run_id)
             buffer.push(RunEvent("run_error", text=str(exc)))
         for event in reversed(buffer.snapshot()):
-            if event.kind in ("run_error", "run_interrupted"):
+            if event.kind in ("run_error", "run_interrupted", "run_blocked"):
                 final = event
                 break
         if final is None:
@@ -465,7 +485,7 @@ class AgentQueue:
                 return  # run apagada sob o worker (reset) — nada a persistir
             if final is not None and final.kind == "run_interrupted":
                 run.status = RunStatus.interrupted
-            elif final is not None and final.kind == "run_error":
+            elif final is not None and final.kind in ("run_error", "run_blocked"):
                 run.status = RunStatus.failed
                 run.summary = final.text
             elif final is not None:

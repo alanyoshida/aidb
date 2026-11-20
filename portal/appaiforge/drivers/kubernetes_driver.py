@@ -795,7 +795,7 @@ class KubernetesGitBackend:
         except WorkspaceWriteError as exc:
             raise GitError(str(exc)) from None
         if code != 0:
-            raise GitError(f"git {' '.join(args[:2])}: {stderr.strip()}")
+            raise GitError(f"git {' '.join(args[:2])}: {stderr.strip()}", code)
         return stdout.strip()
 
     def _sh(self, system: System, script: str, *argv: str) -> int:
@@ -860,6 +860,10 @@ class KubernetesGitBackend:
             raise GitError(str(exc)) from None
         if code != 0:
             raise GitError(f"git fetch (pacote): {stderr.strip()}")
+
+    def add_exclude(self, system: System, pattern: str) -> None:
+        self._sh(system, 'mkdir -p "$1/info" && (grep -qxF "$2" "$1/info/exclude" 2>/dev/null || echo "$2" >> "$1/info/exclude")',
+                 GIT_DIR, pattern)
 
     def remove(self, system: System) -> None:
         delete_gitdir_pvc(system.slug)

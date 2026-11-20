@@ -127,6 +127,27 @@ de objeto do `.git` antigo são copiados, como dado, e a branch passa a apontar 
 checkpoint **registrado pelo portal** — nunca para o que as refs do `.git` antigo dizem. O
 `.git` antigo fica no workspace, intocado e sem uso pelo portal; o agente continua podendo lê-lo.
 
+### Repositório remoto (GitLab)
+
+Quando um sistema é vinculado a um repositório GitLab (aba **Repositório**, [ADR 0029](adr/0029-repositorio-remoto-por-retransmissao-no-portal.md)),
+quem fala com o GitLab é o **portal**, nunca o container do sistema:
+
+- A chave de implantação (ed25519, uma por sistema) e o token de API opcional ficam cifrados no
+  banco do portal e nunca aparecem na interface, em respostas nem na auditoria. A chave só existe em
+  arquivo durante a operação, num diretório temporário `0700` (em `tmpfs` quando há), apagado em
+  seguida. Testes verificam que ela não aparece no sistema de arquivos, no ambiente nem nos
+  processos dos containers do sistema.
+- O envio sai de uma cópia bare de retransmissão do portal (`APPAIFORGE_GIT_RELAYS_DIR`), que troca
+  pacotes git com o repositório do sistema. O `ssh` roda sem a config do portal (`-F /dev/null`),
+  com `known_hosts` só com a chave do servidor que o editor confirmou; se o servidor apresentar outra
+  chave, nada é enviado nem recebido. O git só aceita SSH como transporte.
+- A rede do agente não muda: o agente confinado não alcança o servidor git.
+- O portal nunca reescreve o histórico remoto (envio sem `--force`) e nunca envia `.gitlab-ci.yml`
+  criado ou alterado no workspace — a definição do pipeline vem de um projeto separado.
+- O GitLab registra push, merge request e pipeline em nome de quem cadastrou a chave e o token. A
+  revisão humana é garantida pela branch de destino protegida, não pelo AIDB. Ver o
+  [guia de preparação](gitlab.md).
+
 ### Migrar um sistema de `legacy` para `sandboxed`
 
 Não existe CLI/UI para isso (modo é "fixado na criação e imutável" por desenho) — foi feito uma

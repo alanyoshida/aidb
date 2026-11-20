@@ -40,3 +40,4 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0026](0026-metricas-de-recursos-por-container-via-cadvisor.md) | Métricas de recursos por container via cAdvisor, rotuladas no scrape pra portabilidade futura a Kubernetes | aceito |
 | [0027](0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md) | SSO por OIDC opcional (modo por ENV, break-glass); acesso às apps verificado no edge e identidade por app em JWT | aceito |
 | [0028](0028-repositorio-git-do-sistema-fora-do-workspace.md) | Repositório git do sistema fora do workspace; restauração cria checkpoint novo em vez de reescrever o histórico | aceito |
+| [0029](0029-repositorio-remoto-por-retransmissao-no-portal.md) | Repositório remoto do sistema: envio pelo portal por cópia de retransmissão, chave e token fora do container, API só para a promoção | aceito |

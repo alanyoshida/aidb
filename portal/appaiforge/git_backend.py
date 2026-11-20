@@ -31,7 +31,9 @@ from .models import ExecutionMode, System
 
 
 class GitError(Exception):
-    pass
+    def __init__(self, message: str = "", returncode: int | None = None):
+        super().__init__(message)
+        self.returncode = returncode
 
 
 # Opções passadas em TODA chamada, além da config do repositório (que é escrita só pelo portal):
@@ -121,6 +123,8 @@ class GitBackend(Protocol):
 
     def export_bundle(self, system: System, revs: list[str]) -> bytes: ...
 
+    def add_exclude(self, system: System, pattern: str) -> None: ...
+
     def import_bundle(self, system: System, data: bytes, refspec: str) -> None: ...
 
     def remove(self, system: System) -> None: ...
@@ -160,7 +164,7 @@ class DockerGitBackend:
             **self._identity_kwargs(system),
         )
         if result.returncode != 0:
-            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.strip()}")
+            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.strip()}", result.returncode)
         return result.stdout.strip()
 
     def is_initialized(self, system: System) -> bool:
@@ -174,8 +178,19 @@ class DockerGitBackend:
             input=stdin, capture_output=True, timeout=120, **self._identity_kwargs(system),
         )
         if result.returncode != 0:
-            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.decode(errors='replace').strip()}")
+            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.decode(errors='replace').strip()}", result.returncode)
         return result.stdout
+
+    def add_exclude(self, system: System, pattern: str) -> None:
+        """Acrescenta um padrão ao `info/exclude` do repositório (no GIT_DIR, fora do workspace)."""
+        path = os.path.join(self.git_dir(system), "info", "exclude")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing = open(path).read().splitlines() if os.path.exists(path) else []
+        if pattern not in existing:
+            with open(path, "a") as f:
+                f.write(pattern + "\n")
+            self._chown(path, system)
+            self._chown(os.path.dirname(path), system)
 
     def export_bundle(self, system: System, revs: list[str]) -> bytes:
         """Pacote git (`git bundle`) com `revs` (ex.: ["main", "^<sha já no remoto>"])."""
