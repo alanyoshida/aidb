@@ -145,19 +145,29 @@ def merge_when_green(pid: int, iid: int, sha: str | None = None, timeout: float 
 def project_token(pid: int, access_level: int = 30) -> str:
     """Token de projeto (papel Developer por padrão, escopo api), como o guia recomenda."""
     expires = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 30 * 86400))
-    return api("POST", f"/projects/{pid}/access_tokens",
-               {"name": "aidb-promocao", "scopes": ["api"], "access_level": access_level, "expires_at": expires})["token"]
+    token = api("POST", f"/projects/{pid}/access_tokens",
+                {"name": "aidb-promocao", "scopes": ["api"], "access_level": access_level, "expires_at": expires})["token"]
+    # o token recém-criado leva um instante para enxergar o projeto; um usuário real o cola no
+    # portal depois de criá-lo na tela do GitLab
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if api("GET", f"/projects/{pid}", token=token, ok404=True) is not None:
+            return token
+        time.sleep(2)
+    raise AssertionError("o token de projeto não passou a enxergar o projeto")
 
 
 def open_mrs(pid: int, source: str = "homolog", target: str = "main") -> list[dict]:
     return api("GET", f"/projects/{pid}/merge_requests?state=opened&source_branch={source}&target_branch={target}")
 
 
-def wait_tag(pid: int, timeout: float = 240) -> dict:
+def wait_tag(pid: int, sha: str, timeout: float = 240) -> dict:
+    """Tag criada pelo pipeline da main para o commit `sha` (pode já haver tags de pipelines
+    anteriores, como o da criação da main)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        tags = api("GET", f"/projects/{pid}/repository/tags")
-        if tags:
-            return tags[0]
+        for tag in api("GET", f"/projects/{pid}/repository/tags"):
+            if tag["commit"]["id"] == sha:
+                return tag
         time.sleep(3)
-    raise AssertionError("nenhuma tag criada pelo pipeline da main")
+    raise AssertionError(f"nenhuma tag criada pelo pipeline da main para {sha[:8]}")

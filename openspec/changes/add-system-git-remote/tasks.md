@@ -72,7 +72,7 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 - [ ] 10.1 Rodar `uv run pytest tests/unit tests/bdd tests/integration` e as suítes `tests/e2e`, `tests/e2e_oidc` e `tests/e2e_gitlab`, cada uma no seu stack; verificar que todas passam
 - [ ] 10.2 Subir o stack de desenvolvimento e verificar manualmente que um sistema sem repositório configurado se comporta como antes desta change
-- [ ] 10.3 Rodar `openspec validate add-system-git-remote --strict` e verificar que passa
+- [x] 10.3 Rodar `openspec validate add-system-git-remote --strict` e verificar que passa
 
 ## Workflow follow-up
 

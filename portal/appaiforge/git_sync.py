@@ -299,6 +299,9 @@ def push(system: System, secrets: RemoteSecrets) -> str | None:
     _send_to_relay(system, local, remote_tip)
     relay_git(system.slug, "push", "-q", secrets.address.ssh_url(),
               f"{_RELAY_LOCAL}:refs/heads/{secrets.working_branch}", secrets=secrets)
+    # a posição conhecida da branch remota passa a ser o que acabou de ser enviado
+    get_backend().run(system, "update-ref", remote_ref(secrets.working_branch), local, work_tree=False)
+    relay_git(system.slug, "update-ref", f"refs/remotes/origin/{secrets.working_branch}", local)
     return local
 
 

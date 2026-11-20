@@ -186,3 +186,18 @@ def test_execucao_do_agente_envia_e_falha_de_remoto_nao_derruba_a_execucao(ready
     assert git_ssh_server.git("rev-parse", "homolog") == tip
     git_ssh_server.git("merge-base", "--is-ancestor", pending_tip, "homolog")
     assert git_remote.get_view(system)["state"] == "synced"
+
+
+def test_depois_de_enviar_a_promocao_nao_ve_pendencia(ready, git_ssh_server):
+    """Achado no E2E com GitLab: depois de um envio, a posição conhecida da branch remota tem de
+    acompanhar o que foi enviado, ou a promoção acusa checkpoints "não enviados"."""
+    from appaiforge import checkpoints, git_sync
+
+    system, owner = ready
+    git_sync.activate(system, owner)
+    _write(system, "app/main.py", "print('v2')\n")
+    checkpoints.record_checkpoint(system, None, "v2", owner)
+    git_sync.push_now(system, owner)
+    assert git_sync.unsent_checkpoints(system) == []
+    result = git_sync.request_promotion(system, owner)
+    assert result["fallback"] and "/-/merge_requests/new?" in result["url"]
