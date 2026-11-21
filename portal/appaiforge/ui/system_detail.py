@@ -176,21 +176,42 @@ def _render_deploy_only_tabs(system, user, name_label, breadcrumb_label) -> None
 
 def _render_configuration(system, user, name_label, breadcrumb_label, provider_label) -> None:
     """Identidade (nome, provedor/modelo), rede de saída e ciclo de vida do
-    sistema (specs system-management, https-forward-proxy)."""
-    ui.label("Rede de saída do agente").classes("font-semibold mt-2")
+    sistema (specs system-management, https-forward-proxy). Num sistema só
+    implantação não há agente nem broker: os textos falam da app e dos
+    registros de pacote (change add-deploy-only-system, D2)."""
+    deploy_only = system.kind == "deploy_only"
+    if deploy_only:
+        off_notice = "desabilitado — nenhum destino externo é liberado, nem os registros de pacote"
+        internet_help = (
+            "Desligado, o proxy de saída não libera nenhum destino externo, nem os registros de pacote: "
+            "uma versão que muda o uv.lock não consegue ser implantada."
+        )
+        restricted_help = (
+            "Ligado, substitui a allow-list padrão (registros de pacote) pela lista cadastrada na aba "
+            "\"Domínios\" — só ela passa a valer. Para implantar uma versão que muda o uv.lock, inclua "
+            "pypi.org e files.pythonhosted.org."
+        )
+    else:
+        off_notice = "desabilitado — só o broker de inferência continua alcançável"
+        internet_help = (
+            "Desligado, o proxy de saída não libera nenhum destino externo; o broker de inferência "
+            "(quando habilitado) não é afetado — ele nunca passa por este proxy."
+        )
+        restricted_help = (
+            "Ligado, substitui a allow-list padrão (provedor de LLM/broker + registros de pacote) "
+            "pela lista cadastrada na aba \"Domínios\" — só ela passa a valer."
+        )
+    ui.label("Rede de saída da app" if deploy_only else "Rede de saída do agente").classes("font-semibold mt-2")
     with ui.row().classes("items-center gap-6 mb-2"):
         with ui.column().classes("gap-0"):
             ui.switch(
                 "Acesso à internet", value=system.internet_enabled,
                 on_change=lambda e: (
                     network_policy.set_internet_enabled(system.id, e.value, author_id=user.id),
-                    notify("Acesso à internet " + ("habilitado" if e.value else "desabilitado — só o broker de inferência continua alcançável") + ".", kind="positive"),
+                    notify("Acesso à internet " + ("habilitado" if e.value else off_notice) + ".", kind="positive"),
                 ),
             ).props("data-testid=toggle-internet-enabled")
-            ui.label(
-                "Desligado, o proxy de saída não libera nenhum destino externo; o broker de inferência "
-                "(quando habilitado) não é afetado — ele nunca passa por este proxy."
-            ).classes("text-xs text-gray-500")
+            ui.label(internet_help).classes("text-xs text-gray-500")
         with ui.column().classes("gap-0"):
             ui.switch(
                 "Modo restrito", value=system.restricted_network,
@@ -199,10 +220,7 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
                     notify("Modo restrito " + ("ligado — só os domínios da aba \"Domínios\" são liberados." if e.value else "desligado — voltou a usar a allow-list padrão."), kind="positive"),
                 ),
             ).props("data-testid=toggle-restricted-network")
-            ui.label(
-                "Ligado, substitui a allow-list padrão (provedor de LLM/broker + registros de pacote) "
-                "pela lista cadastrada na aba \"Domínios\" — só ela passa a valer."
-            ).classes("text-xs text-gray-500")
+            ui.label(restricted_help).classes("text-xs text-gray-500")
 
     with ui.row().classes("gap-2"):
         ui.button("Renomear sistema", icon="edit", on_click=lambda: open_rename_dialog()).props("dense outline data-testid=rename-system")
@@ -565,9 +583,12 @@ def _render_network(system, user) -> None:
     efeito quando "Modo restrito" está ligado (aba Configurações), mas a
     lista pode ser editada com o modo desligado também."""
     manage = can_manage_system(user, system)
+    default_list = (
+        "registros de pacote" if system.kind == "deploy_only" else "provedor de LLM/broker + registros de pacote"
+    )
     ui.label(
         "Domínios liberados quando o \"Modo restrito\" está ligado (aba Configurações) — "
-        "substituem por completo a allow-list padrão (provedor de LLM/broker + registros de pacote)."
+        f"substituem por completo a allow-list padrão ({default_list})."
     ).classes("text-sm text-gray-500 mb-2")
 
     domains_box = ui.column().classes("w-full gap-1")

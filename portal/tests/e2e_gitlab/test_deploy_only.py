@@ -204,6 +204,10 @@ def test_criacao_em_desenvolvimento_oferece_o_tipo(page):
     page.get_by_role("tab", name="Configurações").click()
     assert page.locator('[data-testid=edit-provider]').count() == 0, "sem provedor de LLM para editar"
     assert page.get_by_text("Com agente").count() == 0, "o tipo não é editável"
+    page.get_by_text("Rede de saída da app").wait_for(timeout=5_000)
+    assert page.get_by_text("broker de inferência").count() == 0, "não há broker neste container"
+    assert page.locator('[data-testid=toggle-internet-enabled]').count() == 1
+    assert page.locator('[data-testid=toggle-restricted-network]').count() == 1
 
 
 def test_jornada_homologacao_para_producao(page, browser):
