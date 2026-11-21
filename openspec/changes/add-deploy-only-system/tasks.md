@@ -39,9 +39,9 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 6. Manifesto de conexões
 
-- [ ] 6.1 Homologação: gravar `.aidb/manifest.json` a cada checkpoint de sistema com repositório ativo, só com nome e tipo (design D8); verificar com teste de integração (conexão nova aparece; nenhuma credencial; sistema sem repositório não grava)
-- [ ] 6.2 Produção: conferir o manifesto do commit antes de implantar, listando conexões faltantes; sem manifesto, segue com aviso; verificar com teste de integração dos três casos
-- [ ] 6.3 Criar `tests/bdd/features/deploy_only_system.feature` com os cenários da spec e verificar que a suíte BDD passa
+- [x] 6.1 Homologação: gravar `.aidb/manifest.json` a cada checkpoint de sistema com repositório ativo, só com nome e tipo (design D8); verificar com teste de integração (conexão nova aparece; nenhuma credencial; sistema sem repositório não grava)
+- [x] 6.2 Produção: conferir o manifesto do commit antes de implantar, listando conexões faltantes; sem manifesto, segue com aviso; verificar com teste de integração dos três casos
+- [x] 6.3 Criar `tests/bdd/features/deploy_only_system.feature` com os cenários da spec e verificar que a suíte BDD passa
 
 ## 7. E2E com dois portais e documentação
 
