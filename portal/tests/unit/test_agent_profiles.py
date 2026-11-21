@@ -246,3 +246,14 @@ def test_perfil_opencode_le_config_do_openssl_no_sandbox():
     from appaiforge.agent_profiles import get_profile
 
     assert "/etc/ssl/openssl.cnf" in get_profile("opencode")["readable_paths"]
+
+
+def test_imagem_do_perfil_padrao_segue_a_imagem_base_configurada(monkeypatch):
+    """Piloto em Kubernetes: com APPAIFORGE_BASE_IMAGE apontando para um registro próprio, o
+    container do sistema usa essa imagem, não só os sidecars. O perfil claude-code mantém a dele."""
+    from appaiforge.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "base_image", "registro.exemplo.com/appaiforge/base:1.4.2")
+    assert get_profile("opencode")["image"] == "registro.exemplo.com/appaiforge/base:1.4.2"
+    assert get_profile()["image"] == "registro.exemplo.com/appaiforge/base:1.4.2"
+    assert get_profile("claude-code")["image"] == "appaiforge/claude-code:0.1.0"

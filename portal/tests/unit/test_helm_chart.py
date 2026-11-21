@@ -124,3 +124,9 @@ def test_rbac_no_namespace_de_sistemas_separado():
     # o ServiceAccount continua no namespace da release
     assert binding["subjects"][0]["namespace"] == "aidb"
     assert _portal_env(docs)["APPAIFORGE_K8S_NAMESPACE"] == "aidb-sistemas"
+
+
+def test_imagem_base_dos_sistemas_so_quando_definida():
+    assert "APPAIFORGE_BASE_IMAGE" not in _portal_env(_docs())
+    env = _portal_env(_docs("--set", "portal.baseImage=registro.exemplo.com/appaiforge/base:1.4.2"))
+    assert env["APPAIFORGE_BASE_IMAGE"] == "registro.exemplo.com/appaiforge/base:1.4.2"

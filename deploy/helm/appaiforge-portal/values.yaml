@@ -115,6 +115,11 @@ portal:
   # (vazio = auth.publicBaseUrl).
   webhookBaseUrl: ""
 
+  # Imagem dos Pods de sistema (vazio = padrão do portal, appaiforge/base:0.1.0). Num cluster
+  # real, a do seu registro, ex.: registro.exemplo.com/appaiforge/base:1.4.2. Com registro
+  # privado, anexe o Secret de pull ao ServiceAccount `default` do namespace dos sistemas.
+  baseImage: ""
+
   # Implantação de versões dos sistemas só implantação (só vale com installationRole=production).
   deploy:
     # segundos entre as consultas de tags novas no modo automático

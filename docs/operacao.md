@@ -52,7 +52,9 @@ O portal de produção só serve sistemas só implantação: roda as versões ap
 ### 2b. Instalar por Helm (driver Kubernetes)
 
 1. Crie o namespace e o Secret, com as chaves `secretKey`, `dbGateProxyServiceToken`, `postgresPassword` e `breakglassPasswordHash`. Os comandos estão no [README do chart](../deploy/helm/appaiforge-portal/README.md#portal-de-produção).
-2. Ajuste uma cópia de [`values-production.yaml`](../deploy/helm/appaiforge-portal/values-production.yaml):
+2. Publique no registro do cluster as imagens do portal (`deploy/portal.Dockerfile`) e a base dos sistemas (`base-image/Dockerfile`). Num `kind`, carregue-as com `kind load docker-image`.
+3. Ajuste uma cópia de [`values-production.yaml`](../deploy/helm/appaiforge-portal/values-production.yaml):
+   - imagem do portal (`image.repository` e `image.tag`) e imagem base dos sistemas (`portal.baseImage`). Com registro privado, use `imagePullSecrets` para o portal e anexe o Secret de pull ao `ServiceAccount` `default` do namespace dos sistemas: os Pods de sistema usam esse ServiceAccount;
    - host da rota do portal (`portalRoute.host`);
    - `auth.publicBaseUrl`;
    - `portal.webhookBaseUrl`;

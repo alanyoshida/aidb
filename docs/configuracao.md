@@ -9,7 +9,7 @@
 | `PROVISIONING_DRIVER` | `docker` | `kubernetes` materializa cada sistema como Pod — ver [driver Kubernetes](driver-kubernetes.md) |
 | `HARNESS_MODE` | `opencode` (no compose: `fake`) | `fake` = agente determinístico sem LLM (dev/E2E) |
 | `FAKE_DELAY` | `0.15` | ritmo do harness fake em segundos |
-| `BASE_IMAGE` | `appaiforge/base:0.1.0` | imagem dos containers de sistema |
+| `BASE_IMAGE` | `appaiforge/base:0.1.0` | imagem dos containers de sistema e dos sidecars (no chart, `portal.baseImage`); sistemas com o perfil `claude-code` usam a imagem própria do perfil |
 | `CONTAINER_CPUS` / `CONTAINER_MEM_MB` / `CONTAINER_DISK_GB` | 2 / 2048 / 10 | limites por sistema (ADR 0013) |
 | `CONTAINER_PIDS_LIMIT` | 512 | teto de processos por container (ADR 0018) |
 | `MAX_SYSTEMS` | 10 | teto de sistemas simultâneos |

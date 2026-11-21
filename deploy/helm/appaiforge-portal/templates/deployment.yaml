@@ -149,6 +149,10 @@ spec:
             - name: APPAIFORGE_INSTALLATION_ROLE
               value: {{ .Values.portal.installationRole | quote }}
             {{- end }}
+            {{- if .Values.portal.baseImage }}
+            - name: APPAIFORGE_BASE_IMAGE
+              value: {{ .Values.portal.baseImage | quote }}
+            {{- end }}
             {{- if .Values.portal.webhookBaseUrl }}
             - name: APPAIFORGE_WEBHOOK_BASE_URL
               value: {{ .Values.portal.webhookBaseUrl | quote }}
