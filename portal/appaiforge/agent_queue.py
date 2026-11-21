@@ -59,6 +59,11 @@ def _policy_decision_span(run_id: str, classification: str, decision: str) -> No
     span.end()
 
 
+# Eventos que mostram que o agente respondeu algo; sem nenhum deles, a execução não foi sucesso.
+_ASSISTANT_KINDS = ("message", "file_edited", "command_run", "usage")
+NO_RESPONSE_SUMMARY = "o provedor de LLM não retornou resposta (verifique chave, saldo e modelo configurados)"
+
+
 def reconcile_orphaned_runs() -> int:
     """Marca como falhas as runs 'running'/'awaiting_approval' sem worker vivo.
 
@@ -391,6 +396,12 @@ class AgentQueue:
             # último evento do MESMO kind (não o último de qualquer kind): um "tool_output"
             # ou "usage" silencioso entre dois "command_run" iguais não deve resetar a
             # memória do dedup pro kind que importa.
+            # fim sem nenhuma resposta do agente (chave sem saldo/rejeitada, modelo inexistente):
+            # vira erro já aqui, para o chat mostrar o motivo em vez de "execução concluída"
+            if event.kind == "run_finished" and not any(
+                e.kind in _ASSISTANT_KINDS for e in buffer.snapshot()
+            ):
+                event = RunEvent("run_error", text=NO_RESPONSE_SUMMARY)
             key = _event_key(event)
             if last_dispatched.get(event.kind) == key:
                 return
@@ -489,11 +500,11 @@ class AgentQueue:
                 run.status = RunStatus.failed
                 run.summary = final.text
             elif final is not None:
-                assistant_events = [e for e in buffer.snapshot() if e.kind in ("message", "file_edited", "command_run", "usage")]
+                assistant_events = [e for e in buffer.snapshot() if e.kind in _ASSISTANT_KINDS]
                 if not assistant_events:
                     # provedor não produziu nada (ex.: chave sem saldo/rejeitada) — não é sucesso
                     run.status = RunStatus.failed
-                    run.summary = "o provedor de LLM não retornou resposta (verifique chave, saldo e modelo configurados)"
+                    run.summary = NO_RESPONSE_SUMMARY
                 else:
                     run.status = RunStatus.succeeded
                     run.summary = final.meta.get("summary") or next(

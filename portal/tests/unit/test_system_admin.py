@@ -97,3 +97,36 @@ def test_revoke_inference_sem_permissao(owner_system):
         revoke_inference_access(system.id, actor=other)
     assert models_for("anthropic", "claude-3-5-haiku-latest")[0] == "claude-3-5-haiku-latest"
     assert models_for("desconhecido", "x-model") == ["x-model"]
+
+def test_modelo_padrao_segue_o_provedor_escolhido(clean_db):
+    """Piloto com LLM real: criar com um provedor que não oferece glm-4.6 gravava glm-4.6, e o
+    agente não respondia. Sem modelo escolhido, vale o primeiro do catálogo do provedor."""
+    from appaiforge.services import catalog
+
+    catalog.ensure_presets()
+    editor = auth.create_user("modelo@sys.local", "pw", UserType.editor.value)
+    assert create_system(editor, "GLM", "modelo-glm").model == "glm-4.6"
+    anthropic = catalog.get_provider("anthropic")["models"][0]
+    assert create_system(editor, "Anthropic", "modelo-anthropic", "anthropic").model == anthropic
+    assert create_system(editor, "Escolhido", "modelo-escolhido", "anthropic", "outro").model == "outro"
+
+
+def test_falha_ao_aplicar_provedor_deixa_o_sistema_em_erro(owner_system, monkeypatch):
+    """Antes, a falha só ia para o log e a página mostrava o provedor novo como aplicado."""
+    import time
+
+    from appaiforge.models import SystemStatus
+
+    editor, system = owner_system
+
+    def boom(_system):
+        raise RuntimeError("segredo ilegível")
+
+    monkeypatch.setattr("appaiforge.provisioning.provision_system", boom)
+    set_provider(system.id, "anthropic", "claude-3-5-sonnet-latest", actor=editor)
+    deadline = time.time() + 10
+    while time.time() < deadline and get_system(system.id).status != SystemStatus.error:
+        time.sleep(0.1)
+    fresh = get_system(system.id)
+    assert fresh.status == SystemStatus.error
+    assert "não foi possível aplicar o provedor" in fresh.status_message

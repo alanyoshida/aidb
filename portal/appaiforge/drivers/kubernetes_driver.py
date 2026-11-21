@@ -18,6 +18,7 @@ import io
 import json
 import logging
 import os
+import shlex
 import tarfile
 import time
 
@@ -326,9 +327,17 @@ class KubernetesProvisioningDriver:
             raise
         if pod.status.phase != "Running":
             return False
-        statuses = pod.status.container_statuses or []
-        agent_status = next((cs for cs in statuses if cs.name == "agent"), None)
-        return bool(agent_status and agent_status.ready)
+        # O teste roda agora, no container, em vez de ler o veredito da readinessProbe: o
+        # Kubernetes só marca "não pronto" depois de ~30s de falhas, e a checagem da implantação
+        # leria o estado de antes da troca de versão.
+        from types import SimpleNamespace
+
+        try:
+            code, _out, _err = _exec(SimpleNamespace(slug=slug), "agent",
+                                     _health_check_command(settings.app_port), timeout=15)
+        except Exception:  # noqa: BLE001 - container reiniciando, exec recusado: não está saudável
+            return False
+        return code == 0
 
 
 def app_route_objects(namespace: str, name: str, slug: str, app_port: int) -> list[tuple[str, dict]]:
@@ -641,7 +650,9 @@ def _agent_container(system: System, profile: dict, env: dict[str, str], setting
         resources=_resource_requirements(settings),
         security_context=_container_security_context(system.execution_mode),
         readiness_probe=probe,
-        liveness_probe=probe,
+        # Sem livenessProbe: com a app quebrada ela reiniciaria o container inteiro, agente
+        # incluído, no meio de uma execução. O supervisor (processo principal do container) já
+        # reinicia só a app, como no driver Docker.
         volume_mounts=[
             k8s.V1VolumeMount(name="workspace", mount_path="/workspace"),
             k8s.V1VolumeMount(name="config", mount_path=profile["config_mount_path"], read_only=True),
@@ -668,18 +679,25 @@ def _git_container(system: System, settings) -> k8s.V1Container:
     )
 
 
+def _health_check_command(app_port: int) -> list[str]:
+    """Resposta HTTP <500 na porta da app. Com a porta fechada, o curl imprime "000" e sai com
+    erro: antes, um `|| echo 000` somava outro "000" ("000000"), que passava no teste e deixava
+    a app morta como pronta (achado no piloto de produção)."""
+    check = (
+        f'code=$(curl -s -o /dev/null -w "%{{http_code}}" http://127.0.0.1:{app_port}/ 2>/dev/null); '
+        '[ "${code:-0}" -ge 100 ] && [ "$code" -lt 500 ]'
+    )
+    return ["sh", "-c", check]
+
+
 def _health_probe(app_port: int) -> k8s.V1Probe:
     """Mesmo critério que `health_monitor` usava por HTTP direto do portal (driver Docker):
     qualquer resposta <500 no `app_port` conta como vivo — o gate de identidade responde 403 sem
     token, e isso é app no ar, não app caída. Via `exec`+curl (não `httpGet`) porque o critério
     nativo do kubelet pra `httpGet` só aceita 200–399; perderíamos esse "<500" e quebraria a
     paridade observável com o driver Docker (`test_driver_parity.py`)."""
-    check = (
-        f'code=$(curl -s -o /dev/null -w "%{{http_code}}" http://127.0.0.1:{app_port}/ 2>/dev/null || echo 000); '
-        '[ "$code" != "000" ] && [ "$code" -lt 500 ]'
-    )
     return k8s.V1Probe(
-        _exec=k8s.V1ExecAction(command=["sh", "-c", check]),
+        _exec=k8s.V1ExecAction(command=_health_check_command(app_port)),
         initial_delay_seconds=10,
         period_seconds=10,
         failure_threshold=3,
@@ -893,3 +911,32 @@ class KubernetesGitBackend:
 
     def remove(self, system: System) -> None:
         delete_gitdir_pvc(system.slug)
+
+
+def list_workspace_files(system: System, roots: list[str], ignored: set[str]) -> list[str]:
+    """Arquivos sob `roots` (relativos a /workspace), lidos por exec no container `git` do Pod:
+    sob este driver o workspace só existe no PVC, e a aba Editor do portal não tem caminho local
+    (achado no piloto de produção). Pula os diretórios em `ignored` sem descer neles."""
+    prune = " -o ".join(f"-name {shlex.quote(name)}" for name in sorted(ignored))
+    script = (f"cd /workspace && find {' '.join(shlex.quote(r) for r in roots)} "
+              f"\\( {prune} \\) -prune -o -type f -print 2>/dev/null; true")
+    code, out, err = _exec(system, GIT_CONTAINER, ["sh", "-c", script], timeout=30)
+    if code != 0:
+        raise WorkspaceWriteError(f"não foi possível listar o workspace: {err.strip()}")
+    return [line for line in out.splitlines() if line]
+
+
+def read_workspace_file(system: System, path: str, base: str, max_bytes: int) -> bytes:
+    """Até `max_bytes` de `path` (absoluto no Pod), recusando o que, resolvidos os links, cair
+    fora de `base`. Volta em base64 para o conteúdo binário passar intacto pelo exec."""
+    script = ('p=$(realpath -e -- "$1") || exit 4; case "$p" in "$2"/*) ;; *) exit 3;; esac; '
+              'head -c "$3" -- "$p" | base64 -w0')
+    code, out, err = _exec(system, GIT_CONTAINER, ["sh", "-c", script, "sh", path, base, str(max_bytes)],
+                           timeout=30)
+    if code == 3:
+        raise ValueError(f"caminho fora do projeto: {path!r}")
+    if code != 0:
+        raise OSError(f"não foi possível ler {path}: {err.strip()}")
+    import base64
+
+    return base64.b64decode(out.strip() or b"")

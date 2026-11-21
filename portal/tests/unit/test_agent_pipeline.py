@@ -203,6 +203,13 @@ def test_run_sem_resposta_do_provedor_falha_com_mensagem(fake_workspace, clean_d
         row = s.get(AgentRun, run.id)
         assert row.status == RunStatus.failed
         assert "não retornou resposta" in row.summary
+        # o chat mostra o motivo, não "execução concluída" (achado no piloto com LLM real)
+        from appaiforge.models import RunEventRecord
+
+        kinds = [(e.kind, e.text) for e in s.execute(
+            select(RunEventRecord).where(RunEventRecord.run_id == run.id)).scalars()]
+        assert ("run_error", row.summary) in kinds
+        assert "run_finished" not in [k for k, _ in kinds]
 
 
 def test_templates_materializados_iguais_ao_original(fake_workspace, clean_db):

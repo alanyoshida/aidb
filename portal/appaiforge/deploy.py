@@ -412,6 +412,10 @@ def _deploy_locked(system: System, tag: str, trigger: str, actor: User | None) -
             dep.commit_sha, dep.previous_sha = sha, previous
         if _git_object(system, sha, "app/main.py") is None:
             raise DeployError(f"a versão {tag} não tem app/main.py")
+        if _git_object(system, sha, "app/uv.lock") is None and _git_object(system, sha, "app/requirements.txt") is not None:
+            # a produção instala dependências só pelo uv.lock: sem ele a app subiria sem nada
+            raise DeployError(f"a versão {tag} declara dependências em app/requirements.txt sem app/uv.lock; "
+                              "na homologação, peça ao agente para gerenciá-las com uv (uv add) e promova de novo")
         warning = check_manifest(system, sha)
         failure = _switch(system, sha, previous)
         if failure is None:

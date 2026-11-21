@@ -73,3 +73,27 @@ def test_modo_automatico_implanta_a_tag_nova(system, monkeypatch):
     monkeypatch.setattr(deploy, "deploy", lambda sys, tag, trigger: calls.append((tag, trigger)) or {"tag": tag})
     assert deploy.check_for_new(system, deploy.TRIGGER_POLLING) == {"tag": "v1.3.0"}
     assert calls == [("v1.3.0", "polling")]
+
+
+def test_versao_com_requirements_sem_uv_lock_e_recusada_antes_da_troca(system, monkeypatch):
+    """Piloto: a app declarava as dependências só em requirements.txt; a produção, que instala só
+    pelo uv.lock, subiu a app sem nada e ela morreu na importação. Agora a versão é recusada antes
+    de o workspace trocar, com o motivo."""
+    from types import SimpleNamespace
+
+    from appaiforge import checkpoints, git_sync
+
+    files = {"app/main.py": "m", "app/requirements.txt": "nicegui\n"}
+    monkeypatch.setattr(deploy, "_load_secrets", lambda s: SimpleNamespace())
+    monkeypatch.setattr(checkpoints, "ensure_repo", lambda s: None)
+    monkeypatch.setattr(git_sync, "system_tip", lambda s: None)
+    monkeypatch.setattr(deploy, "verify_and_fetch", lambda s, tag, secrets: "a" * 40)
+    monkeypatch.setattr(deploy, "_git_object", lambda s, sha, path: files.get(path))
+
+    def no_switch(*_a, **_k):
+        raise AssertionError("não pode trocar o workspace")
+
+    monkeypatch.setattr(deploy, "_switch", no_switch)
+    view = deploy._deploy_locked(system, "v1.0.6", "manual", None)
+    assert view["status"] == "failed"
+    assert "requirements.txt" in view["detail"] and "uv.lock" in view["detail"]

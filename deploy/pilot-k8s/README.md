@@ -57,6 +57,18 @@ kind load docker-image registro.pilot.test/appaiforge/base:1.4.2 appaiforge/port
      --set portal.baseImage=registro.pilot.test/appaiforge/base:1.4.2 --wait
    ```
 
+## Homologação com LLM real
+
+A stack sobe a homologação com o agente simulado. Para usar o agente real (`opencode`):
+
+```bash
+docker compose -f deploy/docker-compose.e2e-gitlab.yml -f deploy/pilot-k8s/homolog-llm.yml up -d --no-deps portal
+```
+
+Depois, como admin, cadastre a chave de um provedor em **Administração** e crie sistemas novos com
+esse provedor. Os sistemas criados pela jornada de teste têm uma conexão com senha falsa e não
+servem para o agente real.
+
 ## Rodar a jornada
 
 ```bash

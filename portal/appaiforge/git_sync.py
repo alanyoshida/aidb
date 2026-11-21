@@ -736,8 +736,13 @@ def _gitlab(secrets: RemoteSecrets, method: str, path: str, **kwargs):
     import httpx
 
     url = f"{secrets.api_url.rstrip('/')}/api/v4{path}"
-    with httpx.Client(timeout=REMOTE_TIMEOUT, follow_redirects=False) as client:
-        response = client.request(method, url, headers={"PRIVATE-TOKEN": secrets.api_token}, **kwargs)
+    try:
+        with httpx.Client(timeout=REMOTE_TIMEOUT, follow_redirects=False) as client:
+            response = client.request(method, url, headers={"PRIVATE-TOKEN": secrets.api_token}, **kwargs)
+    except httpx.TransportError as exc:
+        # erros do httpx não são OSError: sem isto, "Testar token" com o endereço errado falhava
+        # sem nenhuma mensagem na tela. O endereço vai na mensagem para o editor conferir.
+        raise RemoteError(f"API do GitLab inacessível em {secrets.api_url}: {exc}", "unreachable") from None
     if response.status_code in (401, 403):
         raise RemoteError("o GitLab recusou o token de API do sistema", "access_denied")
     if response.status_code == 404:

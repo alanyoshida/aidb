@@ -113,3 +113,84 @@ def test_icon_for_mapeia_categorias_conhecidas():
 
 def test_icon_for_extensao_desconhecida_devolve_padrao():
     assert workspace_files.icon_for("Dockerfile") == workspace_files.DEFAULT_FILE_ICON
+
+
+def _write_openspec(system, rel_path: str, content: bytes) -> None:
+    full = os.path.join(workspace_files.openspec_dir(system), rel_path)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "wb") as f:
+        f.write(content)
+
+
+def test_openspec_recem_iniciado_nao_aparece(system):
+    """O `openspec init` de todo sistema não pode fazer a aba parecer com arquivos."""
+    _write_openspec(system, "config.yaml", b"schema: spec-driven\n")
+    _write_openspec(system, "specs/.gitkeep", b"")
+    os.makedirs(os.path.join(workspace_files.openspec_dir(system), "changes", "archive"))
+    assert workspace_files.list_tree(system) == []
+
+
+def test_changes_do_openspec_aparecem_e_sao_lidas(system):
+    _write(system, "main.py", b"print('oi')\n")
+    _write_openspec(system, "config.yaml", b"schema: spec-driven\n")
+    _write_openspec(system, "changes/add-x/proposal.md", b"# Proposta\n")
+    _write_openspec(system, "changes/add-x/tasks.md", b"- [ ] tarefa\n")
+
+    tree = workspace_files.list_tree(system)
+    assert [n["label"] for n in tree] == ["main.py", "openspec"]
+    openspec = tree[1]
+    assert [n["label"] for n in openspec["children"]] == ["changes"]  # config.yaml fica de fora
+    change = openspec["children"][0]["children"][0]
+    proposal_id = next(n["id"] for n in change["children"] if n["label"] == "proposal.md")
+
+    content = workspace_files.read_file(system, proposal_id)
+    assert content.text == "# Proposta\n" and content.language == "Markdown"
+    assert workspace_files.display_path(proposal_id) == "openspec/changes/add-x/proposal.md"
+
+
+def test_leitura_do_openspec_nao_sai_de_changes_e_specs(system):
+    _write_openspec(system, "config.yaml", b"segredo: nao\n")
+    with pytest.raises(ValueError):
+        workspace_files.read_file(system, workspace_files.OPENSPEC_PREFIX + "config.yaml")
+    with pytest.raises(ValueError):
+        workspace_files.read_file(system, workspace_files.OPENSPEC_PREFIX + "changes/../../app/main.py")
+
+
+def _all_workspace_files(system) -> list[str]:
+    from appaiforge.checkpoints import workspace_dir
+
+    root = workspace_dir(system)
+    out = []
+    for top in ("app", "openspec/changes", "openspec/specs"):
+        for dirpath, _dirs, files in os.walk(os.path.join(root, top)):
+            out += [os.path.relpath(os.path.join(dirpath, f), root) for f in files]
+    return out
+
+
+def test_kubernetes_le_pelo_pod_com_a_mesma_arvore(system, monkeypatch):
+    """Piloto de produção: sob o driver Kubernetes o workspace só existe no PVC, e o Editor ficava
+    vazio. A árvore montada pela listagem do Pod é a mesma da leitura local."""
+    from appaiforge.config import get_settings
+    from appaiforge.drivers import kubernetes_driver
+
+    _write(system, "main.py", b"print('oi')\n")
+    _write(system, "templates/base.html", b"<html></html>")
+    _write(system, ".venv/lib/x.py", b"x\n")
+    _write_openspec(system, "changes/add-x/proposal.md", b"# Proposta\n")
+    _write_openspec(system, "specs/.gitkeep", b"")
+    local = workspace_files.list_tree(system)
+
+    files = _all_workspace_files(system)
+    reads = []
+    monkeypatch.setattr(get_settings(), "provisioning_driver", "kubernetes")
+    monkeypatch.setattr(kubernetes_driver, "list_workspace_files", lambda s, roots, ignored: files)
+    monkeypatch.setattr(kubernetes_driver, "read_workspace_file",
+                        lambda s, path, base, n: reads.append((path, base)) or b"# Proposta\n")
+
+    assert workspace_files.list_tree(system) == local
+    proposal = workspace_files.OPENSPEC_PREFIX + "changes/add-x/proposal.md"
+    assert workspace_files.read_file(system, proposal).text == "# Proposta\n"
+    assert reads == [("/workspace/openspec/changes/add-x/proposal.md", "/workspace/openspec/changes")]
+    with pytest.raises(ValueError):
+        workspace_files.read_file(system, "../openspec/config.yaml")
+    assert len(reads) == 1, "caminho fora da pasta é recusado antes do exec"
