@@ -42,3 +42,4 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0028](0028-repositorio-git-do-sistema-fora-do-workspace.md) | Repositório git do sistema fora do workspace; restauração cria checkpoint novo em vez de reescrever o histórico | aceito |
 | [0029](0029-repositorio-remoto-por-retransmissao-no-portal.md) | Repositório remoto do sistema: envio pelo portal por cópia de retransmissão, chave e token fora do container, API só para a promoção | aceito |
 | [0030](0030-sistema-so-implantacao-no-portal-de-producao.md) | Sistema só implantação: o portal de produção implanta tags verificadas na branch de destino, sem agente nem credencial de LLM | aceito |
+| [0031](0031-isolacao-por-instalacao-do-portal.md) | Isolação por instalação: cada portal só remove ou adota os próprios containers, e a produção exige host Docker próprio | aceito |

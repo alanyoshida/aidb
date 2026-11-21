@@ -1,0 +1,26 @@
+{{- if .Values.portalRoute.enabled }}
+# Rota do próprio portal (change add-production-portal-install, D5): usuários e o webhook do
+# GitLab chegam por aqui. Prioridade 1, abaixo das rotas /apps/<slug> que o driver cria.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "appaiforge-portal.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+spec:
+  entryPoints:
+    {{- toYaml .Values.portalRoute.entryPoints | nindent 4 }}
+  routes:
+    - match: Host(`{{ required "portalRoute.host é obrigatório com portalRoute.enabled=true" .Values.portalRoute.host }}`) && PathPrefix(`/`)
+      kind: Rule
+      priority: 1
+      services:
+        - name: {{ include "appaiforge-portal.fullname" . }}
+          port: {{ .Values.service.port }}
+  {{- if .Values.portalRoute.tlsSecretName }}
+  tls:
+    secretName: {{ .Values.portalRoute.tlsSecretName }}
+  {{- end }}
+{{- end }}

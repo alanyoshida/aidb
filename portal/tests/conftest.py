@@ -36,7 +36,10 @@ def clean_db(database_url):
     from appaiforge.db import get_engine, reset_engine
     from appaiforge.models import Base
 
+    from appaiforge.installation import reset_cache
+
     reset_engine()
+    reset_cache()
     engine = get_engine()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)

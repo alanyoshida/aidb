@@ -11,8 +11,15 @@ Portal AIDB instalado (driver de provisionamento: {{ .Values.portal.provisioning
      http://{{ include "appaiforge-portal.fullname" . }}:{{ .Values.service.port }}/api/health
 
    Deve responder 200.
+{{ if .Values.portalRoute.enabled }}
+3. Acesse o portal pela rota do Traefik:
 
+   http{{ if .Values.portalRoute.tlsSecretName }}s{{ end }}://{{ .Values.portalRoute.host }}/
+
+   Ou, sem DNS, por port-forward:
+{{- else }}
 3. Acesse o portal (sem Ingress/Traefik configurado para ele por este chart):
+{{- end }}
 
    kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "appaiforge-portal.fullname" . }} 8080:{{ .Values.service.port }}
 
@@ -21,7 +28,7 @@ Portal AIDB instalado (driver de provisionamento: {{ .Values.portal.provisioning
    Login (admin semeado em dev): admin@appaiforge.local / admin123
 {{- end }}
 
-{{- if eq .Values.portal.harnessMode "fake" }}
+{{- if and (eq .Values.portal.harnessMode "fake") (ne .Values.portal.installationRole "production") }}
 
 Nota: APPAIFORGE_HARNESS_MODE="fake" — o chat não chama nenhum LLM real.
 Troque portal.harnessMode para "opencode" (--set portal.harnessMode=opencode)
@@ -35,3 +42,11 @@ tudo, inclusive os dados:
 
    kubectl --namespace {{ .Release.Namespace }} delete pvc -l app.kubernetes.io/instance={{ .Release.Name }}
 
+
+{{- if eq .Values.portal.installationRole "production" }}
+
+Portal de PRODUÇÃO: só aceita sistemas só implantação. Primeiro acesso pelo admin de
+emergência ({{ .Values.auth.breakglass.email | default "auth.breakglass.email não definido" }}) ou pelo OIDC.
+Webhook do GitLab: {{ .Values.portal.webhookBaseUrl | default .Values.auth.publicBaseUrl | default "defina portal.webhookBaseUrl" }}/hooks/gitlab/<id do sistema>
+Antes de atualizar a versão do portal: alembic upgrade head (docs/operacao.md).
+{{- end }}

@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     # (padrão: sistemas com agente e só implantação) ou `production` (só sistemas só
     # implantação — nenhum agente é criado nem provisionado).
     installation_role: str = "development"
+    # Exceção, SÓ PARA TESTES, à exigência de host Docker próprio do portal de produção
+    # (change add-production-portal-install, D3): com ela, a subida só registra aviso.
+    allow_shared_docker_host: bool = False
     # Implantação de versões em sistemas só implantação (change add-deploy-only-system, D5/D7)
     deploy_health_timeout: float = 90.0
     deploy_health_interval: float = 2.0

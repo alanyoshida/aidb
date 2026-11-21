@@ -15,8 +15,9 @@ import time
 
 import docker
 
+from ..installation import INSTALLATION_LABEL, installation_id, owner_description
 from ..models import ExecutionMode, System
-from .base import ComputeUnitNotFound, app_exec_command, files_tar
+from .base import ComputeUnitNotFound, ComputeUnitOwnedElsewhere, app_exec_command, files_tar
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,9 @@ class DockerProvisioningDriver:
         profile = get_profile(system.agent_profile)
         client = _docker()
         container_name = _p.system_container_name(system.slug)
+        # nunca remover nem reaproveitar container de outro dono (add-production-portal-install, D2)
+        for name in (container_name, _p.dbgate_sidecar_name(system.slug), _p.httpsproxy_sidecar_name(system.slug)):
+            _ensure_ours(client, name, system.id)
         # os sidecars dependem do netns do sistema (`network_mode: container:<id>`,
         # D1) — remover primeiro evita um sidecar órfão apontando pra um
         # container que já não existe mais (achado ao recriar via reconciliação)
@@ -99,6 +103,7 @@ class DockerProvisioningDriver:
                 "appaiforge.system_id": system.id,
                 "appaiforge.slug": system.slug,
                 "appaiforge.managed": "true",
+                INSTALLATION_LABEL: installation_id(),
             },
             "restart_policy": {"Name": "unless-stopped"},
             **limits,
@@ -129,18 +134,25 @@ class DockerProvisioningDriver:
             _p.system_container_name(system.slug),
         ):
             try:
+                _ensure_ours(client, name, system.id)
                 client.containers.get(name).remove(force=True)
             except docker.errors.NotFound:
                 pass
+            except ComputeUnitOwnedElsewhere as exc:
+                log.warning("remoção de %s: %s; container mantido", system.slug, exc)
 
     def reconcile_one(self, system_id: str, slug: str) -> None:
         from .. import provisioning as _p
 
         client = _docker()
+        name = _p.system_container_name(slug)
         try:
-            system_container = client.containers.get(_p.system_container_name(slug))
+            system_container = client.containers.get(name)
         except docker.errors.NotFound:
             raise ComputeUnitNotFound(slug) from None
+        owner = owner_description(system_container.labels, system_id, installation_id())
+        if owner is not None:
+            raise ComputeUnitOwnedElsewhere(name, owner)
         self._reconcile_dbgate_sidecar(system_id, slug, system_container.id)
         self._reconcile_httpsproxy_sidecar(system_id, slug, system_container.id)
 
@@ -183,7 +195,7 @@ class DockerProvisioningDriver:
         herda o ambiente dele, inclusive o proxy de saída (change add-deploy-only-system, D5)."""
         from .. import provisioning as _p
 
-        container = _docker().containers.get(_p.system_container_name(system.slug))
+        container = _own_container(_docker(), _p.system_container_name(system.slug), system.id)
         user = container.attrs.get("Config", {}).get("User") or "root"
         result = container.exec_run(app_exec_command(command, env, timeout), user=user, demux=True)
         out, err = result.output if result.output else (None, None)
@@ -192,7 +204,7 @@ class DockerProvisioningDriver:
     def write_app_files(self, system: System, directory: str, files: dict[str, bytes]) -> None:
         from .. import provisioning as _p
 
-        container = _docker().containers.get(_p.system_container_name(system.slug))
+        container = _own_container(_docker(), _p.system_container_name(system.slug), system.id)
         code, _, err = self.exec_in_app(system, ["mkdir", "-p", directory], timeout=30)
         if code != 0:
             raise RuntimeError(f"não foi possível criar {directory} no container: {err.strip()}")
@@ -209,6 +221,7 @@ class DockerProvisioningDriver:
 
         client = _docker()
         name = _p.dbgate_sidecar_name(system.slug)
+        _ensure_ours(client, name, system.id)
         _remove_container_if_exists(client, name)
         if not manifest:
             return
@@ -232,6 +245,7 @@ class DockerProvisioningDriver:
                 "appaiforge.system_id": system.id,
                 "appaiforge.slug": system.slug,
                 "appaiforge.managed": "true",
+                INSTALLATION_LABEL: installation_id(),
                 "appaiforge.role": "dbgate-sidecar",
             },
             restart_policy={"Name": "unless-stopped"},
@@ -245,6 +259,7 @@ class DockerProvisioningDriver:
 
         client = _docker()
         name = _p.httpsproxy_sidecar_name(system.slug)
+        _ensure_ours(client, name, system.id)
         _remove_container_if_exists(client, name)
 
         settings = _p.get_settings()
@@ -264,6 +279,7 @@ class DockerProvisioningDriver:
                 "appaiforge.system_id": system.id,
                 "appaiforge.slug": system.slug,
                 "appaiforge.managed": "true",
+                INSTALLATION_LABEL: installation_id(),
                 "appaiforge.role": "httpsproxy-sidecar",
             },
             restart_policy={"Name": "unless-stopped"},
@@ -307,6 +323,25 @@ class DockerProvisioningDriver:
         system = get_system(system_id)
         if system is not None:
             self._provision_httpsproxy_sidecar(system, system_container_id)
+
+
+def _own_container(client: docker.DockerClient, name: str, system_id: str):
+    """Container `name`, só se for deste portal para `system_id` (D2); senão
+    `ComputeUnitOwnedElsewhere`. `docker.errors.NotFound` passa adiante."""
+    container = client.containers.get(name)
+    owner = owner_description(container.labels, system_id, installation_id())
+    if owner is not None:
+        raise ComputeUnitOwnedElsewhere(name, owner)
+    return container
+
+
+def _ensure_ours(client: docker.DockerClient, name: str, system_id: str) -> None:
+    """Sem container com esse nome, ou com um deste portal para o sistema: segue. Com um de
+    outro dono: `ComputeUnitOwnedElsewhere`, antes de qualquer remoção (D2)."""
+    try:
+        _own_container(client, name, system_id)
+    except docker.errors.NotFound:
+        pass
 
 
 def _remove_container_if_exists(client: docker.DockerClient, name: str) -> None:

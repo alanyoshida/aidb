@@ -1,0 +1,48 @@
+# Exemplo de valores para um portal de PRODUÇÃO (change add-production-portal-install).
+# Use junto com o values.yaml padrão:
+#
+#   helm install aidb-prod deploy/helm/appaiforge-portal \
+#     --namespace aidb-prod --create-namespace \
+#     -f deploy/helm/appaiforge-portal/values-production.yaml
+#
+# Antes, crie o Secret com as chaves secretKey, dbGateProxyServiceToken, postgresPassword
+# e breakglassPasswordHash (ver docs/operacao.md, "Instalar um portal de produção").
+
+fullnameOverride: aidb-prod-portal
+
+secrets:
+  # Secret criado fora do Helm: produção nunca usa os valores de dev de secrets.*
+  existingSecret: aidb-prod-portal-secrets
+
+auth:
+  mode: local
+  # endereço público do portal, como o navegador o vê
+  publicBaseUrl: "https://aidb-prod.exemplo.com"
+  # admin de emergência; o hash vem do Secret (chave breakglassPasswordHash)
+  breakglass:
+    email: "admin@exemplo.com"
+
+portal:
+  installationRole: production
+  # instalação nova: o banco nasce pelas migrações, aplicadas antes de cada subida
+  migrateOnStart: true
+  # produção não semeia admin@appaiforge.local / admin123
+  seedDemoAdmin: false
+  # Os Pods de sistema ficam no namespace da release (aidb-prod), que é só deste portal: dois
+  # portais no mesmo namespace disputariam os mesmos Pods. Não use um systemsNamespace diferente
+  # do da release: a RBAC do chart só concede permissão no namespace da release.
+  systemsNamespace: ""
+  # endereço do portal como o GitLab o vê (aba Implantação → webhook)
+  webhookBaseUrl: "https://aidb-prod.exemplo.com"
+  deploy:
+    pollInterval: 60
+    healthTimeout: 90
+    healthInterval: 2
+
+portalRoute:
+  enabled: true
+  host: aidb-prod.exemplo.com
+  entryPoints:
+    - web
+  # com TLS no Traefik: entryPoints [websecure] e o Secret do certificado
+  tlsSecretName: ""

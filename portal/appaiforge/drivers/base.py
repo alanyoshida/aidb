@@ -19,6 +19,19 @@ class ComputeUnitNotFound(Exception):
     equivalente driver-agnóstico de `docker.errors.NotFound` para o container principal."""
 
 
+class ComputeUnitOwnedElsewhere(Exception):
+    """Já existe uma unidade de execução com o nome do sistema, mas ela é de outro sistema ou de
+    outra instalação do portal (change add-production-portal-install, D2). O portal não a
+    remove nem a adota."""
+
+    def __init__(self, name: str, owner: str):
+        self.name, self.owner = name, owner
+        super().__init__(
+            f"o nome {name} já está em uso por {owner}; o portal não remove nem reaproveita "
+            "container de outro dono (produção precisa de um host Docker próprio)"
+        )
+
+
 class WorkspaceWriteError(OSError):
     """Falha ao escrever no workspace de um sistema quando o driver não dá ao portal um caminho
     local/montado até ele (driver Kubernetes: a PVC só é alcançável via exec dentro do Pod —
