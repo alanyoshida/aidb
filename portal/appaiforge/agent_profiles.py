@@ -17,11 +17,10 @@ FROM_PROVIDER = "from_provider"
 # Imagem do agente igual à imagem base da plataforma (`settings.base_image`, APPAIFORGE_BASE_IMAGE):
 # resolvida em get_profile, para que um cluster com registro próprio troque a imagem dos sistemas
 # por configuração, e não só a dos sidecars.
-BASE_IMAGE = "base_image"
-# Mesma ideia para a imagem do perfil claude-code (`settings.claude_code_image`).
-CLAUDE_CODE_IMAGE = "claude_code_image"
-# Marcador da imagem do perfil -> configuração que a define.
-_IMAGE_SETTINGS = {BASE_IMAGE: "base_image", CLAUDE_CODE_IMAGE: "claude_code_image"}
+#
+# Cada perfil diz em `image_setting` QUAL configuração define a imagem; `image` só existe no perfil
+# devolvido por get_profile. Assim uma leitura direta de PROFILES não confunde o nome da
+# configuração com o nome de uma imagem (dá KeyError em "image", não uma imagem inválida).
 
 PROFILES: dict[str, dict] = {
     "opencode": {
@@ -30,7 +29,7 @@ PROFILES: dict[str, dict] = {
         "cwd": "/opencode-config",
         # Imagem de container do agente: a imagem base da plataforma
         # (`settings.base_image`, padrão appaiforge/base:0.1.0), resolvida em get_profile.
-        "image": BASE_IMAGE,
+        "image_setting": "base_image",
         # Caminho, dentro do container, onde o portal monta (read-only, fora
         # do workspace) o diretório de config deste agente — igual ao
         # literal `/opencode-config` que o provisionamento usava fixo antes.
@@ -109,7 +108,7 @@ PROFILES: dict[str, dict] = {
         # invocada por prompt, como subprocesso curto, de dentro do shim.
         "command": ["python3", "/opt/claude-code-shim/shim.py"],
         "cwd": "/workspace",
-        "image": CLAUDE_CODE_IMAGE,
+        "image_setting": "claude_code_image",
         # Diretório montado só-leitura, fora do workspace (spec agent-runtime,
         # "Perfil entregue ao container sem segredo") — guarda settings.json
         # (D3) e, quando o sistema tem alguma DbConnection, mcp-servers.json
@@ -182,12 +181,10 @@ def get_profile(name: str | None = None) -> dict:
     profile = PROFILES.get(key)
     if profile is None:
         raise UnknownProfile(f"perfil de agente '{key}' não registrado")
-    resolved = dict(profile)
-    setting = _IMAGE_SETTINGS.get(resolved["image"])
-    if setting is not None:
-        from .config import get_settings
+    from .config import get_settings
 
-        resolved["image"] = getattr(get_settings(), setting)
+    resolved = dict(profile)
+    resolved["image"] = getattr(get_settings(), resolved.pop("image_setting"))
     return resolved
 
 

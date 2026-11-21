@@ -48,10 +48,13 @@ class Settings(BaseSettings):
     # num registro privado. Precisam existir no namespace dos sistemas.
     k8s_image_pull_secrets: str = ""
 
-    # Docker
+    # Imagens dos sistemas (os dois drivers). No Kubernetes, trocar uma delas (ou os Secrets de
+    # pull) faz a reconciliação recriar os Pods que ainda usam a anterior.
     base_image: str = "appaiforge/base:0.1.0"
     # Imagem dos sistemas com o perfil de agente claude-code (no chart, portal.claudeCodeImage).
     claude_code_image: str = "appaiforge/claude-code:0.1.0"
+
+    # Docker
     docker_network: str = "appaiforge-net"
     # Raiz dos workspaces visível ao portal (dentro do container do portal em compose).
     workspaces_dir: str = "/workspaces"

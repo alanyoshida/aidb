@@ -72,3 +72,33 @@ def test_secrets_de_pull_dos_pods_de_sistema():
     assert _image_pull_secrets(SimpleNamespace(k8s_image_pull_secrets="")) is None
     refs = _image_pull_secrets(SimpleNamespace(k8s_image_pull_secrets=" registro-a, registro-b ,"))
     assert [r.name for r in refs] == ["registro-a", "registro-b"]
+
+
+def _pod(images: dict, secrets: list[str]):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(spec=SimpleNamespace(
+        containers=[SimpleNamespace(name=n, image=i) for n, i in images.items()],
+        image_pull_secrets=[SimpleNamespace(name=s) for s in secrets] or None,
+    ))
+
+
+def test_divergencia_de_spec_recria_o_pod(monkeypatch):
+    """Imagens e Secrets de pull vêm da configuração, mas o spec do Pod é imutável: a
+    reconciliação recria o Pod que ainda usa a configuração anterior."""
+    from types import SimpleNamespace
+
+    from appaiforge.drivers import kubernetes_driver
+    from appaiforge.services import systems
+
+    monkeypatch.setattr(systems, "get_system", lambda sid: SimpleNamespace(agent_profile="opencode"))
+    settings = SimpleNamespace(base_image="r/base:2", claude_code_image="r/cc:2", k8s_image_pull_secrets="reg")
+    monkeypatch.setattr("appaiforge.config.get_settings", lambda: settings)
+    current = {"agent": "r/base:2", "git": "r/base:2", "httpsproxy": "r/base:2"}
+
+    assert kubernetes_driver._spec_drift(_pod(current, ["reg"]), "s", settings) == ""
+    assert "imagePullSecrets" in kubernetes_driver._spec_drift(_pod(current, []), "s", settings)
+    old_git = {**current, "git": "appaiforge/base:0.1.0"}
+    assert "git" in kubernetes_driver._spec_drift(_pod(old_git, ["reg"]), "s", settings)
+    old_agent = {**current, "agent": "appaiforge/base:0.1.0"}
+    assert "agent" in kubernetes_driver._spec_drift(_pod(old_agent, ["reg"]), "s", settings)

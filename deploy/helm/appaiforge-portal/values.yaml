@@ -124,7 +124,8 @@ portal:
   claudeCodeImage: ""
 
   # Secrets de pull dos Pods de sistema (registro privado). Precisam existir no namespace dos
-  # sistemas. Ex.: [registro-credenciais]
+  # sistemas. Aceita nomes ([registro-credenciais]) ou o formato do imagePullSecrets do
+  # Kubernetes ([{name: registro-credenciais}]).
   systemImagePullSecrets: []
 
   # Implantação de versões dos sistemas só implantação (só vale com installationRole=production).
