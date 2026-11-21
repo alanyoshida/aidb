@@ -192,7 +192,7 @@ def test_criacao_em_desenvolvimento_oferece_o_tipo(page):
     _create_user(page, editor, "editor")
     _login(page, editor, "pw-e2e")
     page.get_by_role("button", name="Novo sistema").click()
-    assert page.locator('[data-testid=system-provider]').is_visible()
+    page.locator('[data-testid=system-provider]').wait_for(timeout=15_000)
     page.locator('[data-testid=system-kind]').get_by_text("Só implantação").click()
     page.locator('[data-testid=system-provider]').wait_for(state="hidden", timeout=5_000)
     page.locator('[data-testid=system-name]').fill("Só implantação em desenvolvimento")
