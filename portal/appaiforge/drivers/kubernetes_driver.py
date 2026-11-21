@@ -88,6 +88,11 @@ class KubernetesProvisioningDriver:
         except ApiException as exc:
             if exc.status == 404:
                 api.create_namespace(k8s.V1Namespace(metadata=k8s.V1ObjectMeta(name=name)))
+            elif exc.status == 403:
+                # Sem a ClusterRole de namespaces (chart com rbac.clusterScoped=false), o
+                # namespace é criado por quem instala e o portal não consegue nem lê-lo. Segue:
+                # se ele não existir, a criação dos recursos do sistema falha com o motivo.
+                log.info("sem permissão para ler o namespace %s; assumindo que já existe", name)
             else:
                 raise
 
