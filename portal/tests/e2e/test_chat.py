@@ -251,7 +251,9 @@ def test_sessao_com_contexto_reiniciado_fica_bloqueada(page, suffix):
         page.reload()
         page.get_by_role("tab", name="Chat").click()
         page.get_by_text("Sessões").click()
-        page.get_by_text(session_title, exact=True).click()
+        # o botão da sessão na barra lateral ("título · data"); o mesmo texto também está no
+        # título da sessão aberta e no balão do pedido, que agora fica na tela
+        page.get_by_role("button", name=session_title).click()
         if page.get_by_text("Contexto do agente foi reiniciado").is_visible():
             blocked_visible = True
             break
