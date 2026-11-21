@@ -29,6 +29,24 @@ docker compose -f deploy/docker-compose.e2e-oidc.yml up -d --build
 cd portal && uv run pytest tests/e2e_oidc
 ```
 
+O vínculo de um sistema com um repositório remoto (change `add-system-git-remote`) tem um **terceiro
+stack**: portal na porta 8083 com harness fake, GitLab CE (API em 8929, SSH em 2229) e GitLab Runner
+com executor shell, em versões fixadas. O GitLab pede alguns GB de memória e leva de 4 a 5 minutos
+para responder na primeira subida; não rode junto com os outros stacks E2E. O script de inicialização
+é idempotente e cria o token de root, registra o runner e prepara os projetos `aidb/ci-templates`
+(pipeline dos sistemas) e `aidb/sistema-e2e` (branches `main` e `homolog` protegidas, merge sem squash,
+merge só com pipeline verde, CI apontando para o pipeline do outro projeto).
+
+```bash
+docker compose -f deploy/docker-compose.e2e-gitlab.yml up -d --build
+python3 deploy/e2e-gitlab/init.py
+cd portal && uv run pytest tests/e2e_gitlab
+```
+
+Para recomeçar o GitLab do zero, remova também os volumes: `docker compose -f
+deploy/docker-compose.e2e-gitlab.yml down -v`. O token de root e as senhas do arquivo compose e de
+`deploy/e2e-gitlab/init.py` valem só para esse stack.
+
 ## Cenário com LLM real (`@llm_real`)
 
 O caminho opencode+GLM é validado manualmente (não roda em CI):

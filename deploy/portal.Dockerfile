@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# openssh-client: o portal fala com o repositório remoto de cada sistema por SSH (change
+# add-system-git-remote); o container do sistema nunca recebe a chave.
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

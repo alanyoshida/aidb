@@ -712,6 +712,12 @@ def delete_system(system: System, actor_id: str | None = None, actor_email: str 
     from .git_backend import get_backend
 
     get_backend().remove(system)
+    # Vínculo com o repositório remoto (chave e token cifrados) e a cópia de retransmissão
+    # (change `add-system-git-remote`). O repositório remoto em si não é tocado.
+    from .services import git_remote
+
+    git_remote.delete_for_system(system.id)
+    shutil.rmtree(os.path.join(get_settings().git_relays_dir, system.slug), ignore_errors=True)
     # Config gerada pelo portal (config do agente + perfil de runtime). Nos dois drivers ela fica
     # no diretório local do portal — no Kubernetes o ConfigMap já sai com `stop_and_remove`, a
     # pasta não. Sem isto ela ficava órfã (change fix-delete-system-config). Só aqui: arquivar

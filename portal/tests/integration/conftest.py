@@ -59,3 +59,15 @@ def system(docker_env, clean_db):
     sys = create_system(editor, "Sistema Prov", f"prov-{os.urandom(3).hex()}")
     yield sys
     remove_system_containers(sys.slug)
+
+
+@pytest.fixture()
+def git_ssh_server(tmp_path):
+    """Servidor git por SSH efêmero com um repositório bare vazio (change add-system-git-remote)."""
+    from git_ssh_server import start_server
+
+    server = start_server(str(tmp_path / "git-ssh"))
+    try:
+        yield server
+    finally:
+        server.container.remove(force=True)

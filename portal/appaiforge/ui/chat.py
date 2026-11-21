@@ -138,6 +138,9 @@ _STATUS_ICON = {
     "run_finished": ("check_circle", "text-green-600", "execução concluída"),
     "run_interrupted": ("stop_circle", "text-gray-500", "execução interrompida"),
     "run_error": ("error", "text-red-600", "erro na execução"),
+    # execução que não começou por um motivo que o editor resolve (ex.: alterações não salvas
+    # antes de sincronizar com o repositório remoto); o texto já vem em português
+    "run_blocked": ("pause_circle", "text-amber-600", "execução não iniciada"),
     "session_context_reset": ("refresh", "text-amber-600", "contexto reiniciado"),
 }
 
@@ -777,7 +780,7 @@ def render_chat(
         if event.kind in _STATUS_ICON:
             icon, color, label = _STATUS_ICON[event.kind]
             # o reset de contexto traz a própria mensagem já em português
-            label_text = (event.text or label) if event.kind == "session_context_reset" else label
+            label_text = (event.text or label) if event.kind in ("session_context_reset", "run_blocked") else label
             with box, ui.row().classes("w-full justify-center items-center gap-1"):
                 ui.icon(icon).classes(f"text-sm {color}")
                 ui.label(label_text).classes(f"text-xs {color}")

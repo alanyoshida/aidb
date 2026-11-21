@@ -28,6 +28,39 @@
 
 Aba ao lado do Chat, visível para quem gerencia o sistema (mesmo acesso das demais abas). Mostra, à esquerda, a árvore de arquivos da pasta onde o agente gera o projeto (`<workspace>/app`, sem `.venv`/`__pycache__`/`.git`/caches do NiceGUI) e, à direita, o conteúdo do arquivo selecionado com destaque de sintaxe pela extensão. **Somente leitura**: o painel nunca aceita edição, e nada feito nessa aba grava no workspace. A árvore reflete o estado atual do workspace (não um checkpoint específico) e se atualiza sozinha a cada 2s, então o editor vê o resultado de uma geração sem precisar trocar de aba e voltar. Um arquivo binário ou ilegível como texto mostra um aviso no lugar do conteúdo, em vez de falhar.
 
+## Repositório
+
+Aba visível para quem gerencia o sistema. Liga o sistema a um projeto do GitLab para que as
+mudanças passem por merge request, revisão e pipelines (preparação do projeto em
+[Preparar um projeto no GitLab](gitlab.md)).
+
+1. Copie a **chave pública** e cadastre-a no GitLab como chave de implantação com escrita.
+2. Informe o **endereço SSH** (`git@gitlab.exemplo.com:time/app.git`), a **branch de trabalho**
+   (padrão `homolog`), a **de destino** (padrão `main`) e, se o HTTP do GitLab não for
+   `https://<host>`, o **endereço da API**. **Salvar**.
+3. **Testar conexão**: confira a impressão digital do servidor e confirme. Se o servidor mudar de
+   chave depois, nada é enviado até uma nova confirmação.
+4. **Ativar vínculo**: o primeiro envio cria a branch de trabalho.
+
+A partir daí:
+
+- **Cada checkpoint** (execução, manual ou restauração) é enviado à branch de trabalho, com o editor
+  como autor. Se o GitLab estiver fora do ar, o estado fica **envio pendente** e o envio sai no
+  checkpoint seguinte ou em **Enviar agora**.
+- **Antes de cada execução** o portal traz o que foi mergeado na branch de trabalho por outras
+  pessoas (aparece em Checkpoints como "repositório remoto"). **Sincronizar agora** faz o mesmo sob
+  demanda.
+- **Alterações não salvas**: se o workspace tem alterações sem checkpoint e o GitLab tem novidades,
+  a execução não começa e o chat explica. Na aba, escolha **Salvar como checkpoint** ou **Descartar**.
+- **Divergente**: se o GitLab e o sistema alteraram os mesmos trechos, os envios param e a aba lista
+  os arquivos. **Resolver no workspace** coloca as marcas de conflito nos arquivos para o agente
+  resolver pelo chat — o próximo checkpoint sem marcas conclui; **Cancelar resolução** desfaz.
+  **Adotar a versão do remoto** descarta o trabalho local não enviado (os checkpoints continuam
+  restauráveis).
+- **Solicitar promoção** abre o merge request da branch de trabalho para a de destino (ou mostra o
+  que já está aberto) usando o **token de API**; sem token, mostra o link de criação.
+- **Desativar vínculo** para envios e sincronizações sem mexer no workspace nem no GitLab.
+
 ## Aparência
 
 Na topbar o usuário escolhe o modo (Light, Dark ou Pastel) e a cor de destaque (Índigo, Teal, Âmbar ou Violeta). A preferência fica salva por usuário e é aplicada ao portal inteiro sem flash. Todas as 12 combinações respeitam contraste WCAG AA; ao criar componentes novos, use os tokens de `portal/appaiforge/ui/theme.py` em vez de cores fixas.

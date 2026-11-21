@@ -1,10 +1,10 @@
-# Spec Delta
+# system-git-remote Specification
 
 ## Purpose
 
 Liga o código gerado de um sistema a um repositório git remoto, para que cada alteração feita pelo chat chegue a uma branch de trabalho, receba o que humanos mergearem nela e possa ser promovida por merge request com revisão e pipelines.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Configuração do repositório remoto por sistema
 O portal SHALL permitir que quem gerencia o sistema configure, numa aba "Repositório" da página do sistema, o endereço SSH do repositório remoto, a branch de trabalho (padrão `homolog`) e a branch de destino (padrão `main`). Sistemas sem repositório configurado SHALL continuar funcionando como antes.
@@ -49,15 +49,38 @@ O portal SHALL gerar um par de chaves SSH exclusivo para cada sistema, exibir a 
 - **THEN** o portal passa a usar um par novo, exibe a nova chave pública e a anterior deixa de ser usada
 
 ### Requirement: Chave privada fora do container do sistema
-A chave privada de implantação SHALL NOT ser entregue ao container do sistema por nenhum meio, e a configuração de um repositório remoto SHALL NOT ampliar os destinos de rede alcançáveis pelo agente.
+A chave privada de implantação e o token de API do GitLab SHALL NOT ser entregues ao container do sistema por nenhum meio, e a configuração de um repositório remoto SHALL NOT ampliar os destinos de rede alcançáveis pelo agente.
 
 #### Scenario: Chave ausente no container
 - **WHEN** um sistema com repositório configurado já teve checkpoints enviados
 - **THEN** a chave privada não existe no sistema de arquivos, nas variáveis de ambiente nem nos processos do container do sistema
 
+#### Scenario: Token ausente no container
+- **WHEN** um sistema com token de API configurado já teve uma promoção solicitada
+- **THEN** o token não existe no sistema de arquivos, nas variáveis de ambiente nem nos processos do container do sistema
+
 #### Scenario: Agente não alcança o servidor do repositório
 - **WHEN** o agente de um sistema com repositório configurado tenta conectar diretamente ao servidor git remoto
 - **THEN** a conexão é recusada pelo confinamento de rede, como seria antes da configuração
+
+### Requirement: Token de API do GitLab por sistema
+O portal SHALL permitir que quem gerencia o sistema cadastre, troque e remova um token de API do GitLab para o sistema, opcional, guardado cifrado e nunca exibido de volta, e SHALL permitir testar se o token alcança o projeto do repositório configurado. O endereço da API SHALL ser derivado do host do repositório, com possibilidade de informar outro.
+
+#### Scenario: Token cadastrado
+- **WHEN** o editor cadastra um token de API para o sistema
+- **THEN** o portal confirma o cadastro e, em consultas posteriores, informa apenas que há um token configurado, sem exibi-lo
+
+#### Scenario: Token testado
+- **WHEN** o editor testa o token cadastrado
+- **THEN** o portal informa se o token alcança o projeto do repositório e tem permissão para abrir merge request, sem alterar nada no remoto
+
+#### Scenario: Token inválido
+- **WHEN** o token cadastrado é recusado pelo GitLab
+- **THEN** o teste informa que o token foi recusado, e a solicitação de promoção passa a mostrar o endereço de criação preenchido
+
+#### Scenario: Endereço da API derivado do repositório
+- **WHEN** o repositório é `git@gitlab.exemplo.com:time/app.git` e o editor não informa endereço de API
+- **THEN** o portal usa `https://gitlab.exemplo.com` como endereço da API
 
 ### Requirement: Identidade do servidor remoto confirmada
 O portal SHALL apresentar a impressão digital da chave do servidor remoto para confirmação de quem gerencia o sistema antes do primeiro uso, e SHALL recusar qualquer operação quando o servidor apresentar chave diferente da confirmada.
@@ -233,7 +256,7 @@ O portal SHALL permitir que quem gerencia um sistema divergente adote a versão 
 - **THEN** a ação "Adotar a versão do remoto" não é oferecida
 
 ### Requirement: Solicitação de promoção por ação explícita
-O portal SHALL abrir um merge request da branch de trabalho para a branch de destino somente quando quem gerencia o sistema aciona "Solicitar promoção", e SHALL exibir o endereço do merge request. Quando o remoto não confirmar a abertura, o portal SHALL exibir o endereço de criação já preenchido com as duas branches.
+O portal SHALL abrir um merge request da branch de trabalho para a branch de destino somente quando quem gerencia o sistema aciona "Solicitar promoção", usando o token de API do sistema, e SHALL exibir o endereço do merge request. Sem token configurado, ou com o token recusado, o portal SHALL exibir o endereço de criação já preenchido com as duas branches.
 
 #### Scenario: Promoção solicitada
 - **WHEN** o editor aciona "Solicitar promoção" com todos os checkpoints enviados
@@ -246,6 +269,10 @@ O portal SHALL abrir um merge request da branch de trabalho para a branch de des
 #### Scenario: Merge request já aberto
 - **WHEN** o editor aciona "Solicitar promoção" e já existe merge request aberto entre as duas branches
 - **THEN** o portal mostra o endereço do merge request existente em vez de abrir outro
+
+#### Scenario: Promoção sem token
+- **WHEN** o editor aciona "Solicitar promoção" num sistema sem token de API
+- **THEN** o portal mostra o endereço de criação do merge request já preenchido com as duas branches, e nada é aberto no remoto
 
 #### Scenario: Promoção indisponível com pendência
 - **WHEN** o sistema está divergente ou com envio pendente
@@ -263,22 +290,22 @@ O portal SHALL NOT enviar ao repositório remoto alterações originadas no work
 - **THEN** o checkpoint enviado mantém a versão do repositório e o portal avisa que a alteração foi deixada de fora
 
 ### Requirement: Estado do repositório visível e auditado
-O portal SHALL exibir na aba Repositório o estado atual do vínculo — sincronizado, envio pendente, divergente ou erro, com o motivo — e SHALL registrar na auditoria do sistema a configuração, a troca de chave, os envios, as sincronizações, as divergências e as solicitações de promoção.
+O portal SHALL exibir na aba Repositório o estado atual do vínculo — sincronizado, envio pendente, divergente ou erro, com o motivo — e SHALL registrar na auditoria do sistema a configuração, a troca de chave, o cadastro e a remoção do token de API, os envios, as sincronizações, as divergências e as solicitações de promoção.
 
 #### Scenario: Estado sincronizado
 - **WHEN** todos os checkpoints foram enviados e não há commits novos no remoto
 - **THEN** a aba Repositório mostra o estado sincronizado e o último commit enviado
 
 #### Scenario: Ações aparecem na auditoria
-- **WHEN** o editor configura o repositório e depois solicita uma promoção
-- **THEN** a aba Auditoria do sistema mostra as duas ações com autor e momento
+- **WHEN** o editor configura o repositório, cadastra o token de API e depois solicita uma promoção
+- **THEN** a aba Auditoria do sistema mostra as três ações com autor e momento, sem o valor do token
 
 ### Requirement: Exclusão definitiva remove vínculo e chave
-Na exclusão definitiva de um sistema, o portal SHALL remover a configuração do repositório remoto, a chave de implantação e qualquer cópia do histórico mantida para o envio, sem alterar o repositório remoto.
+Na exclusão definitiva de um sistema, o portal SHALL remover a configuração do repositório remoto, a chave de implantação, o token de API e qualquer cópia do histórico mantida para o envio, sem alterar o repositório remoto.
 
 #### Scenario: Nada do vínculo sobra após a exclusão
 - **WHEN** um administrador exclui definitivamente um sistema com repositório configurado
-- **THEN** a configuração, a chave privada e as cópias auxiliares do histórico deixam de existir no portal, e o repositório remoto permanece intacto
+- **THEN** a configuração, a chave privada, o token de API e as cópias auxiliares do histórico deixam de existir no portal, e o repositório remoto permanece intacto
 
 ### Requirement: Desvincular o repositório remoto
 O portal SHALL permitir que quem gerencia o sistema desative o vínculo com o repositório remoto, interrompendo envios e sincronizações sem alterar o workspace, o histórico de checkpoints nem o repositório remoto.

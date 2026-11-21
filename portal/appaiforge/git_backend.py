@@ -31,7 +31,9 @@ from .models import ExecutionMode, System
 
 
 class GitError(Exception):
-    pass
+    def __init__(self, message: str = "", returncode: int | None = None):
+        super().__init__(message)
+        self.returncode = returncode
 
 
 # Opções passadas em TODA chamada, além da config do repositório (que é escrita só pelo portal):
@@ -62,6 +64,13 @@ REPO_CONFIG: tuple[tuple[str, str], ...] = (
 )
 
 _SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Buscar de um pacote local é transporte "file", proibido por `protocol.allow=never`; liberado só
+# nesta operação, e com validação de todo objeto recebido.
+BUNDLE_FETCH_OPTIONS: tuple[str, ...] = (
+    "-c", "protocol.file.allow=always",
+    "-c", "fetch.fsckObjects=true",
+)
 
 
 def git_env(git_dir: str, work_tree: str | None) -> dict[str, str]:
@@ -112,6 +121,12 @@ class GitBackend(Protocol):
 
     def prepare_work_tree(self, system: System) -> None: ...
 
+    def export_bundle(self, system: System, revs: list[str]) -> bytes: ...
+
+    def add_exclude(self, system: System, pattern: str) -> None: ...
+
+    def import_bundle(self, system: System, data: bytes, refspec: str) -> None: ...
+
     def remove(self, system: System) -> None: ...
 
 
@@ -149,11 +164,51 @@ class DockerGitBackend:
             **self._identity_kwargs(system),
         )
         if result.returncode != 0:
-            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.strip()}")
+            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.strip()}", result.returncode)
         return result.stdout.strip()
 
     def is_initialized(self, system: System) -> bool:
         return os.path.isfile(os.path.join(self.git_dir(system), "HEAD"))
+
+    def _run_bytes(self, system: System, args: list[str], *, stdin: bytes | None = None,
+                   extra: tuple[str, ...] = ()) -> bytes:
+        git_dir = self.git_dir(system)
+        result = subprocess.run(
+            ["git", *SAFE_OPTIONS, *extra, *args], cwd=git_dir, env=git_env(git_dir, None),
+            input=stdin, capture_output=True, timeout=120, **self._identity_kwargs(system),
+        )
+        if result.returncode != 0:
+            raise GitError(f"git {' '.join(args[:2])}: {result.stderr.decode(errors='replace').strip()}", result.returncode)
+        return result.stdout
+
+    def add_exclude(self, system: System, pattern: str) -> None:
+        """Acrescenta um padrão ao `info/exclude` do repositório (no GIT_DIR, fora do workspace)."""
+        path = os.path.join(self.git_dir(system), "info", "exclude")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing = open(path).read().splitlines() if os.path.exists(path) else []
+        if pattern not in existing:
+            with open(path, "a") as f:
+                f.write(pattern + "\n")
+            self._chown(path, system)
+            self._chown(os.path.dirname(path), system)
+
+    def export_bundle(self, system: System, revs: list[str]) -> bytes:
+        """Pacote git (`git bundle`) com `revs` (ex.: ["main", "^<sha já no remoto>"])."""
+        return self._run_bytes(system, ["bundle", "create", "-", *revs])
+
+    def import_bundle(self, system: System, data: bytes, refspec: str) -> None:
+        """Busca um pacote no repositório do sistema, só para a referência de `refspec`, validando
+        os objetos recebidos. O pacote vai para um arquivo temporário legível pelo uid do git."""
+        import tempfile
+
+        fd, path = tempfile.mkstemp(prefix="aidb-", suffix=".bundle")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.chmod(path, 0o644)
+            self._run_bytes(system, ["fetch", "-q", path, refspec], extra=BUNDLE_FETCH_OPTIONS)
+        finally:
+            os.unlink(path)
 
     def _chown(self, path: str, system: System) -> None:
         if os.geteuid() != 0:

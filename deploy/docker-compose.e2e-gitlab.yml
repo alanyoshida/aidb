@@ -1,0 +1,124 @@
+# Stack E2E com GitLab local (change add-system-git-remote).
+#
+# Portal de homologação (harness fake) + GitLab CE + GitLab Runner, para testar o vínculo de um
+# sistema com um repositório remoto de ponta a ponta: envio dos checkpoints, merges humanos na
+# branch de trabalho, solicitação de promoção e pipeline que cria a tag de versão.
+#
+#   docker compose -f deploy/docker-compose.e2e-gitlab.yml up -d --build
+#   python3 deploy/e2e-gitlab/init.py  # prepara GitLab, runner e projetos (idempotente)
+#   cd portal && uv run pytest tests/e2e_gitlab
+#
+# O GitLab pede vários GB de memória e leva alguns minutos para ficar pronto. Não rode junto com
+# as outras stacks E2E. Credenciais deste arquivo valem só para este ambiente de teste.
+name: appaiforge-e2e-gitlab
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appaiforge
+      POSTGRES_PASSWORD: appaiforge
+      POSTGRES_DB: appaiforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appaiforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  traefik:
+    image: traefik:v3.1
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "8083:80"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - dynamic:/etc/traefik/dynamic
+    depends_on:
+      portal:
+        condition: service_healthy
+
+  portal:
+    build:
+      context: ..
+      dockerfile: deploy/portal.Dockerfile
+    environment:
+      APPAIFORGE_DATABASE_URL: postgresql+psycopg://appaiforge:appaiforge@postgres:5432/appaiforge
+      APPAIFORGE_SECRET_KEY: e2e-gitlab-secret
+      APPAIFORGE_DOCKER_NETWORK: appaiforge-e2e-gitlab-net
+      APPAIFORGE_WORKSPACES_DIR: /workspaces
+      APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_E2E_GITLAB_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e-gitlab}
+      APPAIFORGE_CONFIGS_DIR: /configs
+      APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_E2E_GITLAB_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-gitlab}
+      APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
+      APPAIFORGE_GITDIRS_DIR: /gitdirs
+      APPAIFORGE_GIT_RELAYS_DIR: /git-relays
+      APPAIFORGE_HARNESS_MODE: fake
+      APPAIFORGE_FAKE_DELAY: "0.5"
+      APPAIFORGE_MAX_SYSTEMS: "20"
+      APPAIFORGE_HEALTH_INTERVAL: "5"
+      APPAIFORGE_SEED_DEMO_ADMIN: "1"
+    volumes:
+      - ${APPAIFORGE_E2E_GITLAB_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e-gitlab}:/workspaces
+      - ${APPAIFORGE_E2E_GITLAB_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-gitlab}:/configs
+      # Repositórios dos sistemas e cópias de retransmissão: só o portal monta.
+      - gitdirs:/gitdirs
+      - git-relays:/git-relays
+      - dynamic:/dynamic
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  gitlab:
+    image: gitlab/gitlab-ce:19.4.5-ce.0
+    hostname: gitlab
+    shm_size: 256m
+    environment:
+      # Senha de root só deste ambiente de teste.
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab'
+        gitlab_rails['initial_root_password'] = 'Qx7#vT2m!Rz9pL4wNe8'
+        gitlab_rails['gitlab_shell_ssh_port'] = 22
+        gitlab_rails['usage_ping_enabled'] = false
+        puma['worker_processes'] = 0
+        sidekiq['concurrency'] = 5
+        prometheus_monitoring['enable'] = false
+        gitlab_kas['enable'] = false
+        registry['enable'] = false
+        gitlab_pages['enable'] = false
+    ports:
+      - "8929:80"
+      - "2229:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+
+  gitlab-runner:
+    image: gitlab/gitlab-runner:v19.4.3
+    volumes:
+      - gitlab-runner-config:/etc/gitlab-runner
+    depends_on:
+      - gitlab
+
+networks:
+  default:
+    name: appaiforge-e2e-gitlab-net
+
+volumes:
+  pgdata:
+  dynamic:
+  gitdirs:
+  git-relays:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  gitlab-runner-config:

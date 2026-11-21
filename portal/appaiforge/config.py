@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     # (objetos, refs, config, hooks) vive aqui, num volume montado SÓ no portal — nenhum
     # container de sistema o monta, então nada que o agente escreve chega à config do git.
     gitdirs_dir: str = "/gitdirs"
+    # Cópias bare de retransmissão, por sistema, de onde o portal fala com o repositório remoto
+    # (change `add-system-git-remote`, design D1). Também só o portal monta. Cache reconstruível.
+    git_relays_dir: str = "/git-relays"
 
     # Traefik file provider: diretório compartilhado com o Traefik onde o portal
     # escreve a configuração dinâmica das rotas /apps/{slug}.

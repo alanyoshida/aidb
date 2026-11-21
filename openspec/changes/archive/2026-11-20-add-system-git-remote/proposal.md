@@ -13,11 +13,11 @@ Depende da change `isolate-workspace-repository`, que tira o repositório git do
 - Antes de cada execução do agente, o portal traz para o workspace o que foi mergeado na branch de trabalho por fora (merge requests de humanos).
 - Quando há alterações sem checkpoint no workspace e commits a trazer do remoto, a execução não começa: o editor decide entre salvar e descartar.
 - Quando o que veio do remoto conflita com o trabalho local, o sistema fica em estado "divergente": o portal para e mostra os arquivos em conflito. As saídas são resolver o conflito no workspace, por ação explícita, ou adotar a versão do remoto.
-- Ação explícita "Solicitar promoção" abre o merge request da branch de trabalho para a branch de destino. Nenhum merge request é aberto automaticamente.
+- Ação explícita "Solicitar promoção" abre o merge request da branch de trabalho para a branch de destino pela API do GitLab, com um token opcional por sistema guardado cifrado no portal; sem token, o portal mostra o endereço de criação já preenchido. Nenhum merge request é aberto automaticamente.
 - O portal não envia ao remoto alterações feitas no workspace em `.gitlab-ci.yml` na raiz do repositório.
 - Novo stack de E2E com GitLab local e GitLab Runner, montado no início do trabalho para verificar o comportamento do GitLab antes de implementar sobre ele, e nova fixture de integração com servidor git por SSH.
 
-Fora desta change: o sistema "só implantação" do portal de produção (deploy por tag, trava por instalação, manifesto de conexões), integração por token de API (status de pipeline no portal), forjas diferentes de GitLab, e mudança de schema no banco de produção.
+Fora desta change: o sistema "só implantação" do portal de produção (deploy por tag, trava por instalação, manifesto de conexões), status de pipeline no portal, forjas diferentes de GitLab, e mudança de schema no banco de produção.
 
 ## Capabilities
 
