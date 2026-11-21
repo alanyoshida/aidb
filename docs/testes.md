@@ -7,11 +7,15 @@ cd portal
 uv sync                                  # deps (Python 3.12)
 docker compose -f ../deploy/docker-compose.yml up -d --build   # stack para E2E
 
-uv run pytest tests/unit                 # unitários (rápidos)
-uv run pytest tests/bdd                  # BDD: cenários das specs em Gherkin
+uv run pytest -n 8 tests/unit tests/bdd  # unitários e BDD em paralelo (~2 min; ~9 min sem -n)
 uv run pytest tests/integration          # Docker real + Postgres efêmero
 uv run pytest tests/e2e                  # browser (Playwright) contra o stack, do zero
 ```
+
+**Paralelismo (`-n`, pytest-xdist):** só para `tests/unit` e `tests/bdd`. Cada processo é uma sessão
+própria e sobe o seu Postgres efêmero, então os testes não disputam tabelas. As suítes de
+integração e E2E rodam sem `-n`: criam containers e Pods com nomes fixos, usam um único cluster
+`kind` e falam com um stack único, que limpam no começo.
 
 A suíte E2E roda contra um **stack dedicado e isolado** (porta 8081, harness sempre fake, bancos e workspaces próprios) — nunca toca no portal nem nos sistemas do ambiente real:
 

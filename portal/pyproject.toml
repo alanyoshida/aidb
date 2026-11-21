@@ -36,6 +36,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "asyncpg>=0.30",
     "pyseccomp>=0.1.2",
+    "pytest-xdist>=3.6",
 ]
 
 [project.scripts]
