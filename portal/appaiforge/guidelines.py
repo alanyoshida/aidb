@@ -83,7 +83,7 @@ Você é o agente de código deste sistema. Siga estas regras em toda geração:
 ## Estilo
 - CRUD administrativo: grade com busca + formulário modal + validação.
 - Dashboards: NiceGUI + Plotly/ECharts embutidos.
-- Código simples e direto; sem over-engineering; deps via `uv` em `app/requirements.txt` se precisar.
+- Código simples e direto; sem over-engineering; dependências sempre com `uv add <pacote>` dentro de `app/` (gera `app/pyproject.toml` e `app/uv.lock`, que vão junto no checkpoint); nunca `requirements.txt` nem `pip install`: a produção só instala o que está no `uv.lock`.
 
 ## Visualizações no chat (artifacts)
 Quando o editor pedir gráficos, tabelas ou visualizações, use os blocos abaixo para que o resultado apareça renderizado diretamente no chat — sem precisar abrir a app:
