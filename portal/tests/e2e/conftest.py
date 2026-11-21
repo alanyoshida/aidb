@@ -96,17 +96,35 @@ def _e2e_sidecar_ids() -> list[str]:
     return result
 
 
-@pytest.fixture(scope="session", autouse=True)
-def clean_stack():
-    """Limpa somente dados de teste (@e2e.local): containers, linhas e workspaces órfãos."""
+# Só nesta suíte: o stack local é dedicado aos testes, e vários deles criam sistemas como o admin
+# de demonstração (ospec-*, editor-*, dbg-*...), que o _RESET_SQL (só @e2e.local) não apagava; os
+# containers deles se acumulavam a cada execução. _RESET_SQL segue restrito, porque as suítes de
+# OIDC e GitLab o reaproveitam, e o stack GitLab também serve ao piloto, com sistemas do admin.
+_LOCAL_RESET_SQL = _RESET_SQL.replace(
+    "WHERE owner_id IN (SELECT id FROM _e2e_users);",
+    "WHERE owner_id IN (SELECT id FROM _e2e_users)\n"
+    "  OR owner_id IN (SELECT id FROM users WHERE email = 'admin@appaiforge.local');",
+    1,
+)
+assert _LOCAL_RESET_SQL != _RESET_SQL
+
+
+def _cleanup() -> bool:
+    """Limpa os dados de teste (@e2e.local e os sistemas do admin de demonstração, neste stack
+    dedicado): linhas, containers e workspaces órfãos.
+    Devolve False quando o stack não está disponível.
+
+    Primeiro as linhas, depois os containers sem sistema: na ordem inversa, os containers dos
+    sistemas de teste da execução anterior escapavam (o sistema ainda existia na hora da
+    checagem) e ficavam rodando, com o opencode, até a execução seguinte da seguinte."""
     try:
+        _run(["docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-c", _LOCAL_RESET_SQL])
         slugs_vivos = set(_run([
             "docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-t", "-A", "-c",
             "SELECT slug FROM systems",
         ]).split())
     except (RuntimeError, FileNotFoundError):
-        yield  # stack não disponível: nada a limpar
-        return
+        return False
 
     # containers de sistema cujo slug não existe mais no banco — SOMENTE na rede do
     # stack E2E, para nunca tocar containers do ambiente de dev/produção (isolamento)
@@ -125,8 +143,6 @@ def clean_stack():
         except RuntimeError:
             continue
 
-    _run(["docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-c", _RESET_SQL])
-
     # workspaces órfãos (sem sistema correspondente) — nunca segue symlink para fora da raiz
     if os.path.isdir(HOST_WORKSPACES):
         for entry in os.listdir(HOST_WORKSPACES):
@@ -142,8 +158,18 @@ def clean_stack():
                 _run(["docker", "exec", PORTAL_CONTAINER, "rm", "-rf", f"/gitdirs/{entry}"])
     except RuntimeError:
         pass
+    return True
 
+
+@pytest.fixture(scope="session", autouse=True)
+def clean_stack():
+    """Limpa antes (sobras de execuções interrompidas) e depois da sessão: os containers de
+    sistema não fazem parte do compose e seguiriam rodando com a stack parada."""
+    if not _cleanup():
+        yield  # stack não disponível: nada a limpar
+        return
     yield
+    _cleanup()
 
 
 @pytest.fixture(scope="session")

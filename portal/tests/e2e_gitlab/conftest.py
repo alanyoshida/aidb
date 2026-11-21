@@ -50,10 +50,10 @@ def _slugs(pg_container: str) -> set[str]:
                      "SELECT slug FROM systems"]).split())
 
 
-@pytest.fixture(scope="session", autouse=True)
-def clean_stack():
-    """Limpa o que testes anteriores deixaram nos dois portais. Os containers de sistema dos dois
-    estão na mesma rede: só sai o que não pertence a nenhum dos dois bancos."""
+def _cleanup() -> bool:
+    """Limpa os dados de teste dos dois portais e o que ficou sem dono. Os containers de sistema
+    dos dois estão na mesma rede: só sai o que não pertence a nenhum dos dois bancos. Devolve
+    False quando nenhum dos dois stacks está disponível."""
     portals = [(PG_CONTAINER, PORTAL_CONTAINER), (PROD_PG_CONTAINER, PROD_PORTAL_CONTAINER)]
     live: dict[str, set[str]] = {}
     for pg, portal in portals:
@@ -63,8 +63,7 @@ def clean_stack():
         except (RuntimeError, FileNotFoundError):
             continue
     if not live:
-        yield
-        return
+        return False
     restantes = set().union(*live.values())
     for cid in _run(["docker", "ps", "-aq", "--filter", "label=appaiforge.managed=true",
                      "--filter", f"network={NETWORK}"]).split():
@@ -78,7 +77,18 @@ def clean_stack():
             for entry in _run(["docker", "exec", portal, "ls", "-1", directory]).split():
                 if entry not in slugs and re.fullmatch(r"[a-z0-9][a-z0-9-]*", entry):
                     _run(["docker", "exec", portal, "rm", "-rf", f"{directory}/{entry}"])
+    return True
+
+
+@pytest.fixture(scope="session", autouse=True)
+def clean_stack():
+    """Limpa antes e depois da sessão: os containers de sistema não fazem parte do compose e
+    seguiriam rodando (com o agente) depois dos testes."""
+    if not _cleanup():
+        yield
+        return
     yield
+    _cleanup()
 
 
 @pytest.fixture(scope="session")
