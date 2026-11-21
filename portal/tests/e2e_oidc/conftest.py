@@ -45,17 +45,13 @@ def _run(cmd: list[str]) -> str:
     return result.stdout
 
 
-@pytest.fixture(scope="session", autouse=True)
-def clean_stack():
+def _cleanup() -> bool:
+    """Dados de teste (@e2e-oidc.local), containers sem sistema e repositórios órfãos. Devolve
+    False quando o stack não está disponível."""
     try:
-        slugs_vivos = set(_run([
-            "docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-t", "-A", "-c",
-            "SELECT slug FROM systems",
-        ]).split())
+        _run(["docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-c", _local_reset_sql()])
     except (RuntimeError, FileNotFoundError):
-        yield
-        return
-    _run(["docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-c", _local_reset_sql()])
+        return False
     restantes = set(_run([
         "docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-t", "-A", "-c",
         "SELECT slug FROM systems",
@@ -78,8 +74,18 @@ def clean_stack():
                 _run(["docker", "exec", PORTAL_CONTAINER, "rm", "-rf", f"/gitdirs/{entry}"])
     except RuntimeError:
         pass
-    del slugs_vivos
+    return True
+
+
+@pytest.fixture(scope="session", autouse=True)
+def clean_stack():
+    """Limpa antes e depois da sessão: os containers de sistema não fazem parte do compose e
+    seguiriam rodando (com o agente) depois dos testes."""
+    if not _cleanup():
+        yield
+        return
     yield
+    _cleanup()
 
 
 @pytest.fixture(scope="session")
