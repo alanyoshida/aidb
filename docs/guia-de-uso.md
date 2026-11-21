@@ -67,7 +67,9 @@ Para o portal de produção, que só roda versões aprovadas. O sistema **só im
 agente, chat nem checkpoints e não recebe credencial de LLM. Ele implanta tags de versão de um
 repositório GitLab. Num portal de produção (`APPAIFORGE_INSTALLATION_ROLE=production`) é o único
 tipo: a criação já vem com ele escolhido e sem provedor de LLM. Num portal de desenvolvimento,
-escolha **Só implantação** em **Novo sistema**. O tipo não muda depois de criado.
+escolha **Só implantação** em **Novo sistema**. O tipo não muda depois de criado. Até a primeira
+versão ser implantada, a app em `/apps/<slug>` mostra "nenhuma versão implantada" e aponta para a
+aba **Implantação**.
 
 A página do sistema tem as abas **Implantação**, Editor, Conexões, Domínios, Configurações e
 Auditoria. Na aba **Implantação**:
