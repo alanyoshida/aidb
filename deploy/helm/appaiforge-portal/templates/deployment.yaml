@@ -26,6 +26,31 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.portal.migrateOnStart }}
+      # Migrações do banco com a imagem NOVA antes de o portal subir (change
+      # add-production-portal-install): numa atualização, o portal novo depende das colunas que
+      # a migração cria. Se o Postgres ainda não estiver pronto, o initContainer falha e o
+      # Kubernetes tenta de novo.
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          workingDir: /app/portal
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: postgresPassword
+            - name: APPAIFORGE_DATABASE_URL
+              value: postgresql+psycopg://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@{{ include "appaiforge-portal.postgres.fullname" . }}:5432/{{ .Values.postgres.database }}
+            - name: APPAIFORGE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "appaiforge-portal.secretName" . }}
+                  key: secretKey
+      {{- end }}
       containers:
         - name: portal
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -73,11 +98,13 @@ spec:
                   name: {{ include "appaiforge-portal.secretName" . }}
                   key: dbGateProxyServiceToken
             # DNS do Service do próprio portal (abaixo) — usado pelos sidecars
-            # dbgate de cada sistema pra chamar de volta o portal; o default de
-            # settings.portal_internal_url ("http://portal:8080") é o hostname da
-            # rede Docker, não resolve aqui.
+            # dbgate de cada sistema pra chamar de volta o portal e pelo forwardAuth
+            # das rotas /apps/<slug>; o default de settings.portal_internal_url
+            # ("http://portal:8080") é o hostname da rede Docker, não resolve aqui.
+            # Nome completo (svc.cluster.local): o forwardAuth é chamado pelo Traefik,
+            # que roda em outro namespace, onde o nome curto não resolve.
             - name: APPAIFORGE_PORTAL_INTERNAL_URL
-              value: http://{{ include "appaiforge-portal.fullname" . }}:{{ .Values.service.port }}
+              value: http://{{ include "appaiforge-portal.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
             # main.py:_seed_demo_admin() compara com a string exata "1", não um
             # bool qualquer — por isso o ternário em vez de `| quote` direto.
             - name: APPAIFORGE_SEED_DEMO_ADMIN
@@ -114,6 +141,25 @@ spec:
                 secretKeyRef:
                   name: {{ include "appaiforge-portal.secretName" . }}
                   key: breakglassPasswordHash
+            {{- end }}
+            {{- include "appaiforge-portal.validateProduction" . }}
+            {{- if ne .Values.portal.installationRole "development" }}
+            # Papel da instalação (change add-production-portal-install, D4); só aparece fora do
+            # padrão, para a renderização de desenvolvimento continuar idêntica.
+            - name: APPAIFORGE_INSTALLATION_ROLE
+              value: {{ .Values.portal.installationRole | quote }}
+            {{- end }}
+            {{- if .Values.portal.webhookBaseUrl }}
+            - name: APPAIFORGE_WEBHOOK_BASE_URL
+              value: {{ .Values.portal.webhookBaseUrl | quote }}
+            {{- end }}
+            {{- if eq .Values.portal.installationRole "production" }}
+            - name: APPAIFORGE_DEPLOY_POLL_INTERVAL
+              value: {{ .Values.portal.deploy.pollInterval | quote }}
+            - name: APPAIFORGE_DEPLOY_HEALTH_TIMEOUT
+              value: {{ .Values.portal.deploy.healthTimeout | quote }}
+            - name: APPAIFORGE_DEPLOY_HEALTH_INTERVAL
+              value: {{ .Values.portal.deploy.healthInterval | quote }}
             {{- end }}
             - name: APPAIFORGE_MAX_SYSTEMS
               value: {{ .Values.portal.maxSystems | quote }}

@@ -639,7 +639,7 @@ def start_provisioning_thread(system_id: str) -> None:
 def reconcile() -> None:
     """Concilia estado real das unidades de execução (container ou Pod, a depender do driver
     ativo — change `add-kubernetes-driver`) com o registrado (boot/periódico)."""
-    from .drivers import ComputeUnitNotFound, get_driver
+    from .drivers import ComputeUnitNotFound, ComputeUnitOwnedElsewhere, get_driver
 
     driver = get_driver()
     with session_scope() as s:
@@ -665,6 +665,12 @@ def reconcile() -> None:
         try:
             driver.reconcile_one(system_id, slug)
             publish_app_by_slug(slug)
+        except ComputeUnitOwnedElsewhere as exc:
+            # o nome está com outro dono (add-production-portal-install, D2): não toca nele
+            from .services.systems import set_status
+
+            log.warning("reconciliação de %s: %s", slug, exc)
+            set_status(system_id, SystemStatus.error, str(exc))
         except ComputeUnitNotFound:
             log.warning("reconciliação: unidade de execução ausente para %s; recriando", slug)
             from .services.systems import get_system

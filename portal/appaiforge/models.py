@@ -127,6 +127,9 @@ class PortalInstance(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     auth_mode: Mapped[str] = mapped_column(String(20))
+    # Identidade da instalação (change add-production-portal-install, D1): rótulo dos
+    # containers que este portal cria; vazia só numa base anterior, até o próximo boot.
+    installation_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

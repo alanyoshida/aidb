@@ -5,6 +5,8 @@ no primeiro boot e não pode mudar depois: trocar o modo de uma instalação exi
 deixaria donos órfãos e usuários duplicados sem nenhum sinal, então o boot é recusado.
 """
 
+import secrets
+
 from sqlalchemy import exists, select
 
 from .config import Settings, get_settings
@@ -68,6 +70,10 @@ def enforce_mode_lock() -> str:
             ).scalar()
             row = PortalInstance(id=1, auth_mode="local" if has_users else configured)
             s.add(row)
+        if not row.installation_id:
+            # identidade da instalação (change add-production-portal-install, D1): no
+            # primeiro boot, ou na primeira subida de uma base anterior a esta versão
+            row.installation_id = secrets.token_hex(16)
         recorded = row.auth_mode
     if recorded != configured:
         raise AuthModeMismatch(

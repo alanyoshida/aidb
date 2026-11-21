@@ -86,7 +86,7 @@ Uma configuração de exceção, documentada como só para testes e desligada po
 
 ### Requirement: Chart Helm instala um portal de produção
 
-O chart Helm do portal SHALL aceitar como valores o papel da instalação, o endereço do portal visto pelo GitLab para o webhook e os parâmetros de implantação (intervalo da consulta periódica, prazo e intervalo das checagens de saúde), e SHALL passá-los ao portal como as configurações correspondentes. Com o papel padrão, o resultado SHALL ser o mesmo de antes desta versão.
+O chart Helm do portal SHALL aceitar como valores o papel da instalação, o endereço do portal visto pelo GitLab para o webhook e os parâmetros de implantação (intervalo da consulta periódica, prazo e intervalo das checagens de saúde), e SHALL passá-los ao portal como as configurações correspondentes. Com o papel padrão, o resultado SHALL ser o mesmo de antes desta versão, exceto pelo endereço interno do portal (requisito seguinte).
 
 #### Scenario: Valores de produção chegam ao portal
 
@@ -96,7 +96,32 @@ O chart Helm do portal SHALL aceitar como valores o papel da instalação, o end
 #### Scenario: Instalação de desenvolvimento não muda
 
 - **WHEN** o chart é renderizado com os valores padrão
-- **THEN** o papel é desenvolvimento e o resultado é o mesmo da versão anterior do chart
+- **THEN** o papel é desenvolvimento e o resultado é o mesmo da versão anterior do chart, exceto pelo endereço interno do portal com o nome completo do Service
+
+### Requirement: Endereço interno do portal alcançável de outros namespaces
+
+O chart SHALL passar ao portal um endereço interno com o nome completo do Service no cluster, para que o forwardAuth das rotas `/apps/<slug>`, chamado pelo Traefik a partir do namespace dele, alcance o portal.
+
+#### Scenario: App de sistema pela rota do Traefik
+
+- **GIVEN** um portal instalado pelo chart e um sistema provisionado pelo driver Kubernetes
+- **WHEN** um usuário com sessão abre `/apps/<slug>` pela entrada do Traefik
+- **THEN** a app responde, e sem sessão o usuário é mandado ao login
+
+### Requirement: Migrações aplicadas antes de o portal subir no cluster
+
+O chart SHALL oferecer, desligada por padrão, a aplicação das migrações do banco com a imagem do portal que vai subir, antes de o portal começar a atender. O exemplo de valores de produção SHALL deixá-la ligada.
+
+#### Scenario: Instalação nova de produção
+
+- **WHEN** o chart é instalado com os valores de produção num banco vazio
+- **THEN** as migrações são aplicadas até a mais recente antes de o portal subir
+
+#### Scenario: Atualização sem migração pendente
+
+- **GIVEN** uma instalação com o banco na migração mais recente
+- **WHEN** o chart é atualizado
+- **THEN** a etapa de migração não muda nada e o portal sobe normalmente
 
 ### Requirement: Guardas do chart para produção
 

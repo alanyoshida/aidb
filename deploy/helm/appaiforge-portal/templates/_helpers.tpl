@@ -58,3 +58,21 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
+
+{{/*
+Guardas de produção (change add-production-portal-install, D4): um portal de produção não
+semeia o admin de demonstração e lê os segredos de um Secret criado fora do Helm.
+*/}}
+{{- define "appaiforge-portal.validateProduction" -}}
+{{- if not (has .Values.portal.installationRole (list "development" "production")) -}}
+{{- fail (printf "portal.installationRole deve ser development ou production (recebido: %s)" .Values.portal.installationRole) -}}
+{{- end -}}
+{{- if eq .Values.portal.installationRole "production" -}}
+{{- if .Values.portal.seedDemoAdmin -}}
+{{- fail "portal.installationRole=production não pode semear o admin de demonstração: defina portal.seedDemoAdmin=false e use auth.breakglass ou OIDC para o primeiro admin" -}}
+{{- end -}}
+{{- if not .Values.secrets.existingSecret -}}
+{{- fail "portal.installationRole=production exige secrets.existingSecret: crie o Secret fora do Helm (chaves secretKey, dbGateProxyServiceToken, postgresPassword) em vez de usar os valores de dev" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

@@ -127,6 +127,8 @@ services:
       # webhook que o GitLab chama.
       APPAIFORGE_PORTAL_INTERNAL_URL: http://portal-prod:8080
       APPAIFORGE_WEBHOOK_BASE_URL: http://portal-prod:8080
+      # os dois portais dividem o host Docker só nesta stack de testes (add-production-portal-install, D3)
+      APPAIFORGE_ALLOW_SHARED_DOCKER_HOST: "true"
       APPAIFORGE_DEPLOY_POLL_INTERVAL: "5"
       APPAIFORGE_MAX_SYSTEMS: "20"
       APPAIFORGE_HEALTH_INTERVAL: "5"

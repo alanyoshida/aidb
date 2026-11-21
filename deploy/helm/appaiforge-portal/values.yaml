@@ -98,6 +98,30 @@ portal:
 
   seedDemoAdmin: true
 
+  # Papel da instalação (change add-deploy-only-system / add-production-portal-install):
+  # "development" (padrão) aceita sistemas com agente e só implantação; "production" só
+  # aceita sistemas só implantação. Com "production", o chart exige seedDemoAdmin=false e
+  # secrets.existingSecret, e cada portal precisa do seu próprio systemsNamespace.
+  installationRole: development
+
+  # Roda `alembic upgrade head` num initContainer, com a imagem nova, antes de cada subida do
+  # portal. Ligue numa instalação nova (o banco nasce pelas migrações). Não ligue num banco
+  # criado antes sem Alembic: as migrações tentariam recriar as tabelas e o initContainer falharia.
+  migrateOnStart: false
+
+  # Endereço do portal como o GitLab o vê, mostrado na aba Implantação para o webhook
+  # (vazio = auth.publicBaseUrl).
+  webhookBaseUrl: ""
+
+  # Implantação de versões dos sistemas só implantação (só vale com installationRole=production).
+  deploy:
+    # segundos entre as consultas de tags novas no modo automático
+    pollInterval: 60
+    # prazo, em segundos, para a versão nova responder em três checagens seguidas
+    healthTimeout: 90
+    # segundos entre essas checagens
+    healthInterval: 2
+
   configsDir: /configs
 
   dbGate:
@@ -114,6 +138,18 @@ portal:
   # Exemplo:
   #   - name: APPAIFORGE_DISPLAY_TIMEZONE
   #     value: America/Sao_Paulo
+
+# Rota do próprio portal no Traefik (change add-production-portal-install, D5), para usuários
+# e para o webhook do GitLab. Desligada por padrão (acesso por port-forward). Prioridade 1:
+# as rotas /apps/<slug> dos sistemas continuam ganhando.
+portalRoute:
+  enabled: false
+  # host público do portal (obrigatório com enabled=true), ex.: aidb-prod.exemplo.com
+  host: ""
+  entryPoints:
+    - web
+  # Secret TLS opcional (tls.secretName da IngressRoute)
+  tlsSecretName: ""
 
 postgres:
   image:

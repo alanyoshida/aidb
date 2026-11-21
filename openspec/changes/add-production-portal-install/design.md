@@ -28,7 +28,7 @@
 **Non-Goals:**
 
 - Suportar produção e homologação no mesmo host Docker (prefixo de nome por instalação).
-- Rótulo de instalação nos Pods do driver Kubernetes. O isolamento lá é um `systemsNamespace` por portal, exigido no guia.
+- Rótulo de instalação nos Pods do driver Kubernetes. O isolamento lá é um namespace por portal (o da release), exigido no guia.
 - TLS, DNS e certificados: são do controlador de entrada e do operador. O guia só aponta onde configurar.
 - Migração de schema do banco de produção.
 
@@ -83,7 +83,19 @@
   - `publicBaseUrl`;
   - `webhookBaseUrl`;
   - rota do portal ligada;
-  - `systemsNamespace` próprio.
+  - sistemas no namespace da release, que é só deste portal. A RBAC do chart só concede permissão nesse namespace, então um `systemsNamespace` diferente não é usado.
+
+### D4b: Endereço interno do portal com o nome completo do Service
+
+- Achado ao instalar no kind: o chart passava `APPAIFORGE_PORTAL_INTERNAL_URL=http://<nome>:8080`. O forwardAuth das rotas `/apps/<slug>` é chamado pelo Traefik, que roda no seu próprio namespace, onde esse nome curto não resolve. Toda app de sistema criada pelo driver Kubernetes respondia 500.
+- O chart passa a usar `http://<nome>.<namespace>.svc.cluster.local:<porta>`, que resolve de qualquer namespace e continua valendo para os sidecars.
+- É a única linha que muda na renderização padrão do chart.
+
+### D4c: Migrações antes de subir, no chart
+
+- Ao escrever o guia de atualização: o portal novo depende das colunas que a migração cria (nesta versão, `installation_id`), e rodar `alembic` com `exec` no pod antigo usaria as migrações antigas.
+- Novo valor `portal.migrateOnStart` (padrão `false`): um initContainer com a imagem nova roda `alembic upgrade head` antes do portal. Se o Postgres ainda não estiver pronto, ele falha e o Kubernetes tenta de novo.
+- Fica desligado por padrão porque bancos criados antes sem Alembic (só `create_all`) fariam as migrações tentarem recriar as tabelas. O `values-production.yaml` liga, já que a instalação de produção é nova.
 
 ### D5: Rota do portal no chart
 

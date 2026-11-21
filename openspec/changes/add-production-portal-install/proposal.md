@@ -23,7 +23,7 @@ A v1.3.0 entregou o sistema só implantação, mas o portal de produção só ex
 Fora desta change:
 - Rodar dois portais no mesmo host Docker em produção (decisão: host próprio).
 - Prefixo de nome por instalação.
-- Rótulo de instalação nos Pods do driver Kubernetes. Lá o isolamento é um `systemsNamespace` por portal, que o guia exige.
+- Rótulo de instalação nos Pods do driver Kubernetes. Lá o isolamento é um namespace por portal (o da release), que o guia exige.
 - Migração de schema do banco de produção.
 
 ## Capabilities

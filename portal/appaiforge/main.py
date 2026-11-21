@@ -53,6 +53,9 @@ def create_app() -> FastAPI:
 
     # Antes de qualquer seed: o seed criaria usuários e mascararia uma base nova.
     check_on_boot()
+    from .installation import check_docker_host
+
+    check_docker_host()  # produção só em host Docker próprio (add-production-portal-install, D3)
     from .services.directory import sync_breakglass
 
     sync_breakglass()
