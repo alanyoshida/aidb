@@ -41,6 +41,9 @@ def backoff_seconds(failures: int, base: float = 1.0, cap: float = 30.0) -> floa
     return min(cap, base * (2 ** max(0, failures - 1)))
 
 
+APP_PID_FILE = os.environ.get("AIDB_APP_PID_FILE", "/tmp/aidb-app.pid")
+
+
 def dir_signature(app_dir: str) -> tuple:
     """Assinatura (mtime, size) dos arquivos da app para detecção de mudanças."""
     sig = []
@@ -320,6 +323,17 @@ class Supervisor:
                 [sys.executable, "-c", _PLACEHOLDER_CODE.format(port=self.app_port)]
             )
             self.is_placeholder = True
+        self._record_app_start()
+
+    def _record_app_start(self) -> None:
+        """Grava o PID da app em APP_PID_FILE (melhor esforço): o portal compara antes e depois
+        de implantar uma versão para saber que a app nova já subiu (add-deploy-only-system, D5)."""
+        try:
+            with open(APP_PID_FILE + ".tmp", "w") as f:
+                f.write(f"{self.app_pid} {'placeholder' if self.is_placeholder else 'app'}\n")
+            os.replace(APP_PID_FILE + ".tmp", APP_PID_FILE)
+        except OSError:
+            pass
 
     def poll(self) -> None:
         """Um passo da malha de controle: reinicia a app se morreu, mudou ou apareceu."""

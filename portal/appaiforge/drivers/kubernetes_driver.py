@@ -290,6 +290,18 @@ class KubernetesProvisioningDriver:
 
         return _exec(system, "agent", app_exec_command(command, env, timeout), timeout=timeout + 30)
 
+    def write_app_files(self, system: System, directory: str, files: dict[str, bytes]) -> None:
+        from .base import files_tar
+
+        data = files_tar(files)
+        code, _, err = _exec(
+            system, "agent",
+            ["sh", "-c", 'mkdir -p "$1" && head -c "$2" | tar -x -C "$1"', "sh", directory, str(len(data))],
+            stdin=data,
+        )
+        if code != 0:
+            raise WorkspaceWriteError(f"não foi possível gravar arquivos em {directory} no container: {err.strip()}")
+
     def is_healthy(self, slug: str) -> bool:
         """Lê o resultado da `readinessProbe` do container `agent` via API, em vez de sondar
         HTTP a partir do portal — a rede do Pod só é alcançável de dentro do cluster, e o portal

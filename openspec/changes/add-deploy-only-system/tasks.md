@@ -19,23 +19,23 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 3. Repositório de origem e versões
 
-- [ ] 3.1 Configuração do repositório para `deploy_only` reaproveitando `system_git_remotes` (chave, identidade do servidor, branch de destino) e `deploy_settings.tag_pattern`; o portal nunca envia nada (design D3); verificar com teste de integração contra o servidor git por SSH de que nenhuma ref remota muda
-- [ ] 3.2 Listar tags do padrão em ordem de versão, marcando a atual e as já implantadas (design D4); verificar com teste unitário de ordenação (`v1.0.10` > `v1.0.2`) e de filtro, e de integração contra o servidor da fixture
-- [ ] 3.3 Verificação da tag contra a branch de destino e transferência do commit para o repositório do sistema (design D4); verificar com teste de integração: tag na branch aceita, tag fora recusada, tag movida registra o commit verificado
+- [x] 3.1 Configuração do repositório para `deploy_only` reaproveitando `system_git_remotes` (chave, identidade do servidor, branch de destino) e `deploy_settings.tag_pattern`; o portal nunca envia nada (design D3); verificar com teste de integração contra o servidor git por SSH de que nenhuma ref remota muda
+- [x] 3.2 Listar tags do padrão em ordem de versão, marcando a atual e as já implantadas (design D4); verificar com teste unitário de ordenação (`v1.0.10` > `v1.0.2`) e de filtro, e de integração contra o servidor da fixture
+- [x] 3.3 Verificação da tag contra a branch de destino e transferência do commit para o repositório do sistema (design D4); verificar com teste de integração: tag na branch aceita, tag fora recusada, tag movida registra o commit verificado
 
 ## 4. Implantação, saúde e histórico
 
-- [ ] 4.1 Serviço de implantação com as pré-checagens, dependências antes do código, troca do código e checagem de saúde (design D5), registrando `deployments`; verificar com teste de integração contra a fixture: versão implantada servida em `/apps/{slug}`
-- [ ] 4.2 Dependências pelo lock: `uv sync --frozen` só quando o lock muda; falha não troca o código; verificar com teste de integração (lock igual não reinstala; dependência inexistente falha e mantém a versão anterior)
-- [ ] 4.3 Volta automática quando a versão não fica saudável no prazo; verificar com teste de integração com uma versão cuja app quebra ao subir
-- [ ] 4.4 Uma implantação por sistema por vez e recuperação de implantação interrompida na subida do portal (design D6); verificar com teste de integração
+- [x] 4.1 Serviço de implantação com as pré-checagens, dependências antes do código, troca do código e checagem de saúde (design D5), registrando `deployments`; verificar com teste de integração contra a fixture: versão implantada servida em `/apps/{slug}`
+- [x] 4.2 Dependências pelo lock: `uv sync --frozen` só quando o lock muda; falha não troca o código; verificar com teste de integração (lock igual não reinstala; dependência inexistente falha e mantém a versão anterior)
+- [x] 4.3 Volta automática quando a versão não fica saudável no prazo; verificar com teste de integração com uma versão cuja app quebra ao subir
+- [x] 4.4 Uma implantação por sistema por vez e recuperação de implantação interrompida na subida do portal (design D6); verificar com teste de integração
 - [ ] 4.5 Aba Implantação: versões com "Implantar", versão atual, histórico e auditoria; rollback é implantar uma tag anterior; verificar com teste E2E
 
 ## 5. Modo automático, consulta e webhook
 
-- [ ] 5.1 Regra do automático: a tag mais nova do padrão, só se nunca implantada (design D7); verificar com testes unitários (rollback permanece; tag que falhou não repete; modo manual não implanta)
-- [ ] 5.2 Consulta periódica em thread com intervalo configurável; verificar com teste de integração com intervalo curto
-- [ ] 5.3 Webhook `POST /hooks/gitlab/{system_id}`: segredo do sistema em tempo constante, 401 sem efeito, corpo ignorado, verificação em segundo plano (design D7); segredo gerado, exibido e trocável na aba; verificar com testes de rota (segredo certo, errado, ausente, corpo com tag inexistente)
+- [x] 5.1 Regra do automático: a tag mais nova do padrão, só se nunca implantada (design D7); verificar com testes unitários (rollback permanece; tag que falhou não repete; modo manual não implanta)
+- [x] 5.2 Consulta periódica em thread com intervalo configurável; verificar com teste de integração com intervalo curto
+- [x] 5.3 Webhook `POST /hooks/gitlab/{system_id}`: segredo do sistema em tempo constante, 401 sem efeito, corpo ignorado, verificação em segundo plano (design D7); segredo gerado, exibido e trocável na aba; verificar com testes de rota (segredo certo, errado, ausente, corpo com tag inexistente)
 
 ## 6. Manifesto de conexões
 

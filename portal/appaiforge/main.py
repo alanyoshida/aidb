@@ -44,6 +44,9 @@ def create_app() -> FastAPI:
     from .edge_auth import router as edge_auth_router
 
     application.include_router(edge_auth_router)
+    from .deploy_routes import router as deploy_router
+
+    application.include_router(deploy_router)
     get_engine()
     Base.metadata.create_all(get_engine())  # Alembic é o caminho normal; create_all garante dev/boot
     from .auth_mode import check_on_boot
@@ -66,6 +69,10 @@ def create_app() -> FastAPI:
     from .agent_queue import reconcile_orphaned_runs
 
     reconcile_orphaned_runs()
+
+    from .deploy import recover_interrupted
+
+    recover_interrupted()  # implantação interrompida por reinício (add-deploy-only-system, D6)
 
     telemetry.start_span_cleanup_timer()
 
@@ -146,6 +153,9 @@ def create_app() -> FastAPI:
     from .health_monitor import start_monitor
 
     start_monitor()
+    from .deploy import start_poller
+
+    start_poller()
     ui.run_with(application, title="AIDB")
     return application
 

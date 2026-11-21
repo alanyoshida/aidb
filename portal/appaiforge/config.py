@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # (padrão: sistemas com agente e só implantação) ou `production` (só sistemas só
     # implantação — nenhum agente é criado nem provisionado).
     installation_role: str = "development"
+    # Implantação de versões em sistemas só implantação (change add-deploy-only-system, D5/D7)
+    deploy_health_timeout: float = 90.0
+    deploy_health_interval: float = 2.0
+    deploy_poll_interval: float = 60.0
     # Cópias bare de retransmissão, por sistema, de onde o portal fala com o repositório remoto
     # (change `add-system-git-remote`, design D1). Também só o portal monta. Cache reconstruível.
     git_relays_dir: str = "/git-relays"
