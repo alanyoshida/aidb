@@ -89,7 +89,9 @@ portal:
 
   # Namespace onde os Pods de sistema são provisionados. Vazio = mesmo
   # namespace da release (.Release.Namespace), igual ao que os manifests
-  # antigos faziam (portal e sistemas no namespace "appaiforge").
+  # antigos faziam (portal e sistemas no namespace "appaiforge"). A Role do
+  # portal é criada neste namespace; se for outro, ele precisa existir antes do
+  # `helm install` e ser só deste portal.
   systemsNamespace: ""
 
   # "fake" (default, igual ao docker-compose) não chama LLM nenhum; troque para
@@ -101,7 +103,7 @@ portal:
   # Papel da instalação (change add-deploy-only-system / add-production-portal-install):
   # "development" (padrão) aceita sistemas com agente e só implantação; "production" só
   # aceita sistemas só implantação. Com "production", o chart exige seedDemoAdmin=false e
-  # secrets.existingSecret, e cada portal precisa do seu próprio systemsNamespace.
+  # secrets.existingSecret, e cada portal precisa do seu próprio namespace de sistemas.
   installationRole: development
 
   # Roda `alembic upgrade head` num initContainer, com a imagem nova, antes de cada subida do

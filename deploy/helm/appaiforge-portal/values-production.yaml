@@ -28,9 +28,10 @@ portal:
   migrateOnStart: true
   # produção não semeia admin@appaiforge.local / admin123
   seedDemoAdmin: false
-  # Os Pods de sistema ficam no namespace da release (aidb-prod), que é só deste portal: dois
-  # portais no mesmo namespace disputariam os mesmos Pods. Não use um systemsNamespace diferente
-  # do da release: a RBAC do chart só concede permissão no namespace da release.
+  # Vazio: os Pods de sistema ficam no namespace da release (aidb-prod), que é só deste portal.
+  # Para separá-los (quotas, NetworkPolicies), use um namespace próprio, criado antes do
+  # `helm install` e não compartilhado com outro portal: dois portais no mesmo namespace de
+  # sistemas disputariam os mesmos Pods.
   systemsNamespace: ""
   # endereço do portal como o GitLab o vê (aba Implantação → webhook)
   webhookBaseUrl: "https://aidb-prod.exemplo.com"

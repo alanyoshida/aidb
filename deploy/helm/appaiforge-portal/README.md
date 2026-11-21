@@ -45,7 +45,7 @@ admin semeado em dev.
 |---|---|---|
 | `image.repository` / `image.tag` | `appaiforge/portal` / `0.1.0` | imagem do portal |
 | `portal.harnessMode` | `fake` | `fake` = sem LLM real (dev/E2E); `opencode` = chat real |
-| `portal.systemsNamespace` | namespace da release | onde o driver provisiona os Pods de sistema |
+| `portal.systemsNamespace` | namespace da release | onde o driver provisiona os Pods de sistema; a Role do portal é criada nele, e um namespace diferente do da release precisa existir antes do `helm install` |
 | `portal.seedDemoAdmin` | `true` | semeia `admin@appaiforge.local` / `admin123` (nunca em produção) |
 | `portal.dbGate.mode` | `enforce` | `enforce` recusa bloqueada/confirmável na hora; `shadow` só audita |
 | `rbac.clusterScoped` | `true` | concede o `ClusterRole` de `namespaces` (get/create) usado por `ensure_ready()`; desligue para criar o namespace dos sistemas manualmente e não conceder isso ao `ServiceAccount` do portal |
@@ -64,10 +64,10 @@ Veja [`values.yaml`](values.yaml) para a lista completa, comentada.
 Um portal de produção só serve sistemas só implantação (sem agente, sem chat, sem credencial de
 LLM). O exemplo [`values-production.yaml`](values-production.yaml) liga o papel `production`,
 desliga o admin de demonstração, lê os segredos de um `Secret` criado fora do Helm e liga a rota
-do portal. Instale cada portal no seu próprio namespace: os Pods de sistema ficam no namespace da
-release, e dois portais no mesmo namespace disputariam os mesmos Pods. Não use um
-`portal.systemsNamespace` diferente do namespace da release: a RBAC do chart só concede
-permissão nele.
+do portal. Instale cada portal no seu próprio namespace. Por padrão, os Pods de sistema ficam
+no namespace da release; para separá-los, defina `portal.systemsNamespace` com um namespace
+criado antes do `helm install`. A Role do portal é criada no namespace dos sistemas. Dois portais
+nunca devem usar o mesmo namespace de sistemas, porque disputariam os mesmos Pods.
 
 ```bash
 kubectl create namespace aidb-prod

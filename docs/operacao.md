@@ -64,7 +64,7 @@ O portal de produção só serve sistemas só implantação: roda as versões ap
    helm install aidb-prod deploy/helm/appaiforge-portal -n aidb-prod -f values-production.yaml
    ```
 
-As migrações rodam num initContainer antes de cada subida do portal (`portal.migrateOnStart`). O chart recusa renderizar em produção com o admin de demonstração ligado ou sem o Secret externo. Os sistemas ficam no namespace da release. Não use um `portal.systemsNamespace` diferente: a RBAC do chart só vale no namespace da release.
+As migrações rodam num initContainer antes de cada subida do portal (`portal.migrateOnStart`). O chart recusa renderizar em produção com o admin de demonstração ligado ou sem o Secret externo. Os sistemas ficam no namespace da release. Para separá-los, defina `portal.systemsNamespace` com um namespace criado antes do `helm install` e só deste portal; a Role do portal é criada nele.
 
 ### 3. Primeiro acesso
 

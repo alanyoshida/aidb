@@ -4,11 +4,17 @@
 # menos — verificado com `kubectl auth can-i --as=system:serviceaccount:<ns>:<sa>`
 # para cada verbo/recurso abaixo (ver openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/portal-rbac.yaml,
 # origem destes manifests).
+#
+# Role e RoleBinding ficam no namespace dos SISTEMAS (portal.systemsNamespace, ou o da
+# release quando vazio): todas as operações abaixo são sobre recursos de sistema, e uma Role
+# só vale no namespace onde é criada. Com um systemsNamespace diferente do da release, esse
+# namespace precisa existir antes do `helm install` (o Helm não cria objetos num namespace
+# inexistente, e o chart não o cria para que um `helm uninstall` não apague os sistemas).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "appaiforge-portal.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "appaiforge-portal.systemsNamespace" . }}
   labels:
     {{- include "appaiforge-portal.labels" . | nindent 4 }}
 rules:
@@ -50,7 +56,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "appaiforge-portal.fullname" . }}
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "appaiforge-portal.systemsNamespace" . }}
   labels:
     {{- include "appaiforge-portal.labels" . | nindent 4 }}
 subjects:

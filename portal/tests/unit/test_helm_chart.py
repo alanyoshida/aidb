@@ -103,3 +103,24 @@ def test_migracoes_antes_de_subir_so_quando_ligado():
     assert containers[0]["workingDir"] == "/app/portal"
     names = [e["name"] for e in containers[0]["env"]]
     assert names.index("POSTGRES_PASSWORD") < names.index("APPAIFORGE_DATABASE_URL")
+
+
+def _rbac(docs: list[dict], kind: str) -> dict:
+    return next(d for d in docs if d["kind"] == kind)
+
+
+def test_rbac_no_namespace_da_release_por_padrao():
+    docs = _docs()
+    assert _rbac(docs, "Role")["metadata"]["namespace"] == "aidb"
+    assert _rbac(docs, "RoleBinding")["metadata"]["namespace"] == "aidb"
+
+
+def test_rbac_no_namespace_de_sistemas_separado():
+    docs = _docs("--set", "portal.systemsNamespace=aidb-sistemas")
+    role, binding = _rbac(docs, "Role"), _rbac(docs, "RoleBinding")
+    # a Role vale só onde é criada: precisa estar onde o driver cria os Pods
+    assert role["metadata"]["namespace"] == "aidb-sistemas"
+    assert binding["metadata"]["namespace"] == "aidb-sistemas"
+    # o ServiceAccount continua no namespace da release
+    assert binding["subjects"][0]["namespace"] == "aidb"
+    assert _portal_env(docs)["APPAIFORGE_K8S_NAMESPACE"] == "aidb-sistemas"
