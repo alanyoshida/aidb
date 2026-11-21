@@ -45,6 +45,7 @@ admin semeado em dev.
 |---|---|---|
 | `image.repository` / `image.tag` | `appaiforge/portal` / `0.1.0` | imagem do portal |
 | `portal.harnessMode` | `fake` | `fake` = sem LLM real (dev/E2E); `opencode` = chat real |
+| `portal.baseImage` | `appaiforge/base:0.1.0` (padrão do portal) | imagem dos Pods de sistema; com registro privado, anexe o Secret de pull ao `ServiceAccount` `default` do namespace dos sistemas |
 | `portal.systemsNamespace` | namespace da release | onde o driver provisiona os Pods de sistema; a Role do portal é criada nele, e um namespace diferente do da release precisa existir antes do `helm install` |
 | `portal.seedDemoAdmin` | `true` | semeia `admin@appaiforge.local` / `admin123` (nunca em produção) |
 | `portal.dbGate.mode` | `enforce` | `enforce` recusa bloqueada/confirmável na hora; `shadow` só audita |

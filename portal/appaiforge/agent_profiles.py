@@ -14,16 +14,19 @@ que o catálogo de cada provedor dita), não propriedade fixa de um só.
 """
 
 FROM_PROVIDER = "from_provider"
+# Imagem do agente igual à imagem base da plataforma (`settings.base_image`, APPAIFORGE_BASE_IMAGE):
+# resolvida em get_profile, para que um cluster com registro próprio troque a imagem dos sistemas
+# por configuração, e não só a dos sidecars.
+BASE_IMAGE = "base_image"
 
 PROFILES: dict[str, dict] = {
     "opencode": {
         "agent": "opencode",
         "command": ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"],
         "cwd": "/opencode-config",
-        # Imagem de container do agente (change generalize-agent-runtime-plumbing)
-        # — valor igual ao `settings.base_image` que o provisionamento usava
-        # fixo antes desta mudança; zero mudança de comportamento.
-        "image": "appaiforge/base:0.1.0",
+        # Imagem de container do agente: a imagem base da plataforma
+        # (`settings.base_image`, padrão appaiforge/base:0.1.0), resolvida em get_profile.
+        "image": BASE_IMAGE,
         # Caminho, dentro do container, onde o portal monta (read-only, fora
         # do workspace) o diretório de config deste agente — igual ao
         # literal `/opencode-config` que o provisionamento usava fixo antes.
@@ -175,7 +178,12 @@ def get_profile(name: str | None = None) -> dict:
     profile = PROFILES.get(key)
     if profile is None:
         raise UnknownProfile(f"perfil de agente '{key}' não registrado")
-    return dict(profile)
+    resolved = dict(profile)
+    if resolved["image"] == BASE_IMAGE:
+        from .config import get_settings
+
+        resolved["image"] = get_settings().base_image
+    return resolved
 
 
 def resolve_credential_env(profile: dict, provider: str) -> str:

@@ -22,8 +22,15 @@ auth:
   breakglass:
     email: "admin@exemplo.com"
 
+image:
+  # imagem do portal no seu registro, na versão que vai instalar
+  repository: appaiforge/portal
+  tag: "0.1.0"
+
 portal:
   installationRole: production
+  # imagem dos Pods de sistema no seu registro (vazio = appaiforge/base:0.1.0)
+  baseImage: ""
   # instalação nova: o banco nasce pelas migrações, aplicadas antes de cada subida
   migrateOnStart: true
   # produção não semeia admin@appaiforge.local / admin123

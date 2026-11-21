@@ -1,0 +1,11 @@
+# Cluster kind do piloto de produção: um cluster só para o portal de produção, separado do
+# appaiforge-dev. A porta 80 do nó (Traefik com hostNetwork) fica na porta 28080 do host.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: aidb-prod
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 28080
+        protocol: TCP
