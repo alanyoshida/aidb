@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     # (objetos, refs, config, hooks) vive aqui, num volume montado SÓ no portal — nenhum
     # container de sistema o monta, então nada que o agente escreve chega à config do git.
     gitdirs_dir: str = "/gitdirs"
+    # Papel desta instalação do portal (change `add-deploy-only-system`, D1): `development`
+    # (padrão: sistemas com agente e só implantação) ou `production` (só sistemas só
+    # implantação — nenhum agente é criado nem provisionado).
+    installation_role: str = "development"
     # Cópias bare de retransmissão, por sistema, de onde o portal fala com o repositório remoto
     # (change `add-system-git-remote`, design D1). Também só o portal monta. Cache reconstruível.
     git_relays_dir: str = "/git-relays"

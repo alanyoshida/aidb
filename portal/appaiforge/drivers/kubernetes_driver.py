@@ -281,6 +281,15 @@ class KubernetesProvisioningDriver:
         name = _p.system_container_name(system.slug)
         return f"http://{name}.{settings.k8s_namespace}.svc.cluster.local:{settings.app_port}/"
 
+    def exec_in_app(
+        self, system: System, command: list[str], *, env: dict[str, str] | None = None, timeout: int = 600
+    ) -> tuple[int, str, str]:
+        """`exec` no container `agent` do Pod — num sistema só implantação ele roda só a app,
+        com a identidade e o ambiente dela (change add-deploy-only-system, D5)."""
+        from .base import app_exec_command
+
+        return _exec(system, "agent", app_exec_command(command, env, timeout), timeout=timeout + 30)
+
     def is_healthy(self, slug: str) -> bool:
         """Lê o resultado da `readinessProbe` do container `agent` via API, em vez de sondar
         HTTP a partir do portal — a rede do Pod só é alcançável de dentro do cluster, e o portal

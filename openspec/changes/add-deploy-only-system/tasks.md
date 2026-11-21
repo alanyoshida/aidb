@@ -4,17 +4,17 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 ## 1. Tipo do sistema e trava por instalação
 
-- [ ] 1.1 Migração Alembic com `systems.kind` (padrão `agent`), `deploy_settings` e `deployments`, e os modelos (design D1, D3); verificar com `alembic upgrade head` e `alembic downgrade -1` num banco efêmero
-- [ ] 1.2 Configuração `installation_role` (`development` | `production`); `create_system` aceita o tipo e recusa `agent` em produção (design D1); verificar com testes unitários de criação nos dois papéis e de tipo padrão
-- [ ] 1.3 `provision_system` recusa sistema `agent` num portal de produção, deixando-o em erro com o motivo, também pela reconciliação; verificar com teste de integração
+- [x] 1.1 Migração Alembic com `systems.kind` (padrão `agent`), `deploy_settings` e `deployments`, e os modelos (design D1, D3); verificar com `alembic upgrade head` e `alembic downgrade -1` num banco efêmero
+- [x] 1.2 Configuração `installation_role` (`development` | `production`); `create_system` aceita o tipo e recusa `agent` em produção (design D1); verificar com testes unitários de criação nos dois papéis e de tipo padrão
+- [x] 1.3 `provision_system` recusa sistema `agent` num portal de produção, deixando-o em erro com o motivo, também pela reconciliação; verificar com teste de integração
 - [ ] 1.4 Formulário de criação: escolha do tipo em desenvolvimento; em produção, "só implantação" fixo e sem provedor de LLM; verificar com teste E2E nos dois papéis
-- [ ] 1.5 Documentar `APPAIFORGE_INSTALLATION_ROLE` em `docs/configuracao.md`; verificar que o nome bate com `config.py`
+- [x] 1.5 Documentar `APPAIFORGE_INSTALLATION_ROLE` em `docs/configuracao.md`; verificar que o nome bate com `config.py`
 
 ## 2. Container sem agente
 
-- [ ] 2.1 Supervisor com `AIDB_SYSTEM_KIND=deploy_only`: não sobe harness nem `ensure_openspec`, só a app (design D2); verificar com testes unitários do supervisor
-- [ ] 2.2 `provision_system` para `deploy_only`: sem config nem perfil de agente, sem credencial nem token de LLM, allow-list só com os registros de pacote; verificar com teste de integração nos dois drivers que o container sobe sem processo de agente e sem variável de LLM
-- [ ] 2.3 Operação `exec_in_app` nos dois drivers (usuário da app no Docker; container `agent` no Kubernetes) (design D5); verificar com teste de integração nos dois drivers
+- [x] 2.1 Supervisor com `AIDB_SYSTEM_KIND=deploy_only`: não sobe harness nem `ensure_openspec`, só a app (design D2); verificar com testes unitários do supervisor
+- [x] 2.2 `provision_system` para `deploy_only`: sem config nem perfil de agente, sem credencial nem token de LLM, allow-list só com os registros de pacote; verificar com teste de integração nos dois drivers que o container sobe sem processo de agente e sem variável de LLM
+- [x] 2.3 Operação `exec_in_app` nos dois drivers (usuário da app no Docker; container `agent` no Kubernetes) (design D5); verificar com teste de integração nos dois drivers
 - [ ] 2.4 Página do sistema `deploy_only` sem Chat nem Checkpoints e com a aba Implantação; o tipo não é editável; verificar com teste E2E
 
 ## 3. Repositório de origem e versões

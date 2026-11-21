@@ -16,7 +16,7 @@ import time
 import docker
 
 from ..models import ExecutionMode, System
-from .base import ComputeUnitNotFound
+from .base import ComputeUnitNotFound, app_exec_command
 
 log = logging.getLogger(__name__)
 
@@ -175,6 +175,19 @@ class DockerProvisioningDriver:
             return resp.status_code < 500
         except httpx.HTTPError:
             return False
+
+    def exec_in_app(
+        self, system: System, command: list[str], *, env: dict[str, str] | None = None, timeout: int = 600
+    ) -> tuple[int, str, str]:
+        """`exec_run` no container do sistema com o usuário do próprio container (o da app) —
+        herda o ambiente dele, inclusive o proxy de saída (change add-deploy-only-system, D5)."""
+        from .. import provisioning as _p
+
+        container = _docker().containers.get(_p.system_container_name(system.slug))
+        user = container.attrs.get("Config", {}).get("User") or "root"
+        result = container.exec_run(app_exec_command(command, env, timeout), user=user, demux=True)
+        out, err = result.output if result.output else (None, None)
+        return result.exit_code, (out or b"").decode(errors="replace"), (err or b"").decode(errors="replace")
 
     # -- sidecars (D1 do design agent-network-perimeter / db-proxy-gate-data-plane) --
 

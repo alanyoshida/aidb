@@ -332,3 +332,28 @@ def test_openspec_nao_sobrescreve_diretorio_global_real(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     Supervisor(runner=FakeRunner(), workspace=str(ws), agent_profile=FAKE_PROFILE).ensure_openspec()
     assert not real.is_symlink() and (real / "meu.md").exists()
+
+
+def test_supervisor_so_implantacao_sobe_so_a_app(tmp_path):
+    """change add-deploy-only-system, tarefa 2.1: sem harness e sem OpenSpec, só a app."""
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "main.py").write_text("print('app')\n")
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE,
+                     system_kind="deploy_only")
+    sup.start()
+    assert sup.harness_pid is None
+    assert runner.ran == [], "nenhum comando de preparação (OpenSpec) roda"
+    assert len(runner.spawned) == 1
+    cmd, cwd = runner.spawned[0]
+    assert cmd[-1] == "main.py" and cwd == str(app)
+    assert not (tmp_path / "openspec").exists()
+
+
+def test_supervisor_com_agente_continua_subindo_harness(tmp_path):
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+    sup.start()
+    assert sup.harness_pid is not None
+    assert any(cmd == FAKE_PROFILE["command"] for cmd, _ in runner.spawned)

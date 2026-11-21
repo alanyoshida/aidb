@@ -13,6 +13,7 @@
 | `CONTAINER_CPUS` / `CONTAINER_MEM_MB` / `CONTAINER_DISK_GB` | 2 / 2048 / 10 | limites por sistema (ADR 0013) |
 | `CONTAINER_PIDS_LIMIT` | 512 | teto de processos por container (ADR 0018) |
 | `MAX_SYSTEMS` | 10 | teto de sistemas simultâneos |
+| `INSTALLATION_ROLE` | `development` | papel do portal: `development` aceita sistemas com agente e só implantação; `production` só aceita sistemas só implantação — nenhum agente é criado nem provisionado (ver [Sistema só implantação](guia-de-uso.md#sistema-só-implantação)) |
 | `HEALTH_INTERVAL` | 15 | sonda de saúde das apps (segundos) |
 | `WORKSPACES_DIR` / `HOST_WORKSPACES_DIR` | /workspaces | raiz dos workspaces (bind compartilhado) |
 | `DYNAMIC_CONFIG_DIR` | /dynamic | rotas dinâmicas do Traefik (volume compartilhado) |
