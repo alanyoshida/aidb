@@ -150,7 +150,7 @@ def k8s_e2e_system(k8s_env, clean_db, fake_anthropic_stub_k8s, monkeypatch):
     yield sys, editor
     from kubernetes.client.rest import ApiException
 
-    from appaiforge.drivers.kubernetes_driver import _config_map_name, _workspace_pvc_name
+    from appaiforge.drivers.kubernetes_driver import _config_map_name, _gitdir_pvc_name, _workspace_pvc_name
     from appaiforge.edge import system_container_name
 
     api = _k8s_api()
@@ -159,6 +159,7 @@ def k8s_e2e_system(k8s_env, clean_db, fake_anthropic_stub_k8s, monkeypatch):
         (lambda n: api.delete_namespaced_pod(n, NAMESPACE, grace_period_seconds=0), name),
         (lambda n: api.delete_namespaced_config_map(n, NAMESPACE), _config_map_name(sys.slug)),
         (lambda n: api.delete_namespaced_persistent_volume_claim(n, NAMESPACE), _workspace_pvc_name(sys.slug)),
+        (lambda n: api.delete_namespaced_persistent_volume_claim(n, NAMESPACE), _gitdir_pvc_name(sys.slug)),
         (lambda n: api.delete_namespaced_service(n, NAMESPACE), name),
     ):
         try:
@@ -169,7 +170,7 @@ def k8s_e2e_system(k8s_env, clean_db, fake_anthropic_stub_k8s, monkeypatch):
     from kubernetes import client as k8s
 
     custom = k8s.CustomObjectsApi()
-    for plural, obj_name in (("ingressroutes", name), ("middlewares", f"{name}-strip")):
+    for plural, obj_name in (("ingressroutes", name), ("middlewares", f"{name}-strip"), ("middlewares", f"{name}-auth")):
         try:
             custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", NAMESPACE, plural, obj_name)
         except ApiException as exc:
@@ -317,6 +318,32 @@ from appaiforge.services.systems import create_system
 from kubernetes import client as k8s
 
 catalog.ensure_presets()
+
+# Sobras de execuções anteriores (o script foi interrompido antes do fim, ou é de antes desta
+# limpeza): os recursos no cluster saem (Pod, rotas, PVCs) e a linha fica arquivada, não apagada,
+# para não contar no teto de sistemas do portal real. Só sobras com mais de 30 minutos: uma
+# execução deste teste em andamento no mesmo cluster não é tocada.
+import datetime as _dt
+
+from sqlalchemy import select as _select
+from appaiforge.models import System as _System, SystemStatus as _SystemStatus
+from appaiforge.provisioning import delete_system as _delete_system
+from appaiforge.services.systems import get_system as _get_system, set_status as _set_status
+
+_cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=30)
+with session_scope() as s:
+    _stale = list(s.scalars(_select(_System.id).where(
+        _System.slug.like("e2e-incluster-%"), _System.status != _SystemStatus.archived,
+        _System.created_at < _cutoff,
+    )))
+for _sid in _stale:
+    _row = _get_system(_sid)
+    try:
+        _delete_system(_row)
+    except Exception as exc:  # sobra parcial (Pod ou PVC já ausente): a linha é arquivada mesmo assim
+        print(f"aviso: limpeza da sobra {_row.slug}: {exc}")
+    _set_status(_sid, _SystemStatus.archived, "")
+
 editor = auth.create_user(f"e2e-incluster-{os.urandom(3).hex()}@t.local", "pw", UserType.editor.value)
 system = create_system(
     editor, "E2E portal em cluster", f"e2e-incluster-{os.urandom(3).hex()}",
@@ -367,7 +394,10 @@ assert checkpoints[0]["git_sha"]
 # Nao apaga a linha do sistema/usuario do Postgres real: `delete_system()` em produção
 # (provisioning.py) tambem nunca apaga -- so para/remove o container/workspace, retendo
 # systems/checkpoints/runs para auditoria por design. O teste segue a mesma convencao; só os
-# objetos do cluster (Pod/PVC/ConfigMap/Service/IngressRoute) sao limpos, abaixo.
+# objetos do cluster (Pod/PVCs/ConfigMap/Service/IngressRoute/Middlewares) sao limpos, abaixo.
+# A linha fica arquivada: senão o sistema segue "provisioning" e conta no teto do portal real
+# (com dez sobras, o teste seguinte batia em "teto de 10 sistemas simultâneos atingido").
+_set_status(system.id, _SystemStatus.archived, "")
 print("OK")
 '''
 
@@ -480,12 +510,13 @@ def test_sistema_k8s_ponta_a_ponta_com_portal_dentro_do_cluster(_portal_real_dis
                     raise
         if slug:
             sys_name = f"appaiforge-sys-{slug}"
-            from appaiforge.drivers.kubernetes_driver import _config_map_name, _workspace_pvc_name
+            from appaiforge.drivers.kubernetes_driver import _config_map_name, _gitdir_pvc_name, _workspace_pvc_name
 
             for delete, resource in (
                 (lambda n: api.delete_namespaced_pod(n, PORTAL_NAMESPACE, grace_period_seconds=0), sys_name),
                 (lambda n: api.delete_namespaced_config_map(n, PORTAL_NAMESPACE), _config_map_name(slug)),
                 (lambda n: api.delete_namespaced_persistent_volume_claim(n, PORTAL_NAMESPACE), _workspace_pvc_name(slug)),
+                (lambda n: api.delete_namespaced_persistent_volume_claim(n, PORTAL_NAMESPACE), _gitdir_pvc_name(slug)),
                 (lambda n: api.delete_namespaced_service(n, PORTAL_NAMESPACE), sys_name),
             ):
                 try:
@@ -494,7 +525,8 @@ def test_sistema_k8s_ponta_a_ponta_com_portal_dentro_do_cluster(_portal_real_dis
                     if exc.status != 404:
                         raise
             custom = k8s.CustomObjectsApi()
-            for plural, obj_name in (("ingressroutes", sys_name), ("middlewares", f"{sys_name}-strip")):
+            for plural, obj_name in (("ingressroutes", sys_name), ("middlewares", f"{sys_name}-strip"),
+                                     ("middlewares", f"{sys_name}-auth")):
                 try:
                     custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", PORTAL_NAMESPACE, plural, obj_name)
                 except ApiException as exc:

@@ -130,3 +130,20 @@ def test_imagem_base_dos_sistemas_so_quando_definida():
     assert "APPAIFORGE_BASE_IMAGE" not in _portal_env(_docs())
     env = _portal_env(_docs("--set", "portal.baseImage=registro.exemplo.com/appaiforge/base:1.4.2"))
     assert env["APPAIFORGE_BASE_IMAGE"] == "registro.exemplo.com/appaiforge/base:1.4.2"
+
+
+def test_imagem_do_claude_code_e_secrets_de_pull_so_quando_definidos():
+    env = _portal_env(_docs())
+    assert "APPAIFORGE_CLAUDE_CODE_IMAGE" not in env and "APPAIFORGE_K8S_IMAGE_PULL_SECRETS" not in env
+    env = _portal_env(_docs("--set", "portal.claudeCodeImage=r.example/cc:1",
+                            "--set", "portal.systemImagePullSecrets={registro-a,registro-b}"))
+    assert env["APPAIFORGE_CLAUDE_CODE_IMAGE"] == "r.example/cc:1"
+    assert env["APPAIFORGE_K8S_IMAGE_PULL_SECRETS"] == "registro-a,registro-b"
+
+
+def test_secrets_de_pull_no_formato_do_kubernetes(tmp_path):
+    """O imagePullSecrets do Kubernetes é [{name: ...}]; o chart aceita esse formato e nomes."""
+    values = tmp_path / "v.yaml"
+    values.write_text("portal:\n  systemImagePullSecrets:\n    - name: registro-a\n    - registro-b\n")
+    env = _portal_env(_docs("-f", str(values)))
+    assert env["APPAIFORGE_K8S_IMAGE_PULL_SECRETS"] == "registro-a,registro-b"

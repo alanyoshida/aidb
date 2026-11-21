@@ -98,6 +98,6 @@ docker compose -f deploy/docker-compose.e2e-gitlab.yml down
   `portal.baseImage`.
 - **Guia de produção por Helm incompleto.** Ele não dizia qual imagem do portal usar, nem que a
   imagem base precisa estar no registro do cluster. Corrigido em `docs/operacao.md`.
-- **Registro privado.** Os Pods de sistema não declaram `imagePullSecrets` e usam o ServiceAccount
-  `default` do namespace dos sistemas. Anexe o Secret de pull a ele, como o guia agora diz.
+- **Registro privado.** Os Pods de sistema não declaravam `imagePullSecrets`. Corrigido depois:
+  `portal.systemImagePullSecrets` no chart.
 - **O `kind create cluster` troca o contexto atual** do kubeconfig para o cluster novo.

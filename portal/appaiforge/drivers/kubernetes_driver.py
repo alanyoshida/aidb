@@ -129,6 +129,7 @@ class KubernetesProvisioningDriver:
             ),
             spec=k8s.V1PodSpec(
                 restart_policy="Always",
+                image_pull_secrets=_image_pull_secrets(settings),
                 security_context=_pod_security_context(system.execution_mode),
                 containers=containers,
                 volumes=[
@@ -191,6 +192,13 @@ class KubernetesProvisioningDriver:
         # recriado pela reconciliação, como se estivesse ausente — o workspace e o histórico
         # ficam nos PVCs e sobrevivem à recriação.
         if GIT_CONTAINER not in {c.name for c in (pod.spec.containers or [])}:
+            raise ComputeUnitNotFound(slug)
+        # Imagens e Secrets de pull vêm da configuração do portal, mas o spec de um Pod é imutável:
+        # um Pod de antes de uma troca (registro privado, imagem nova) segue com o spec velho até
+        # ser recriado. Mesmo caminho do container `git` ausente: a reconciliação recria.
+        drift = _spec_drift(pod, system_id, settings)
+        if drift:
+            log.warning("Pod %s diverge da configuração (%s); recriado pela reconciliação", name, drift)
             raise ComputeUnitNotFound(slug)
         # Os sidecars vivem no MESMO Pod que o container do agente — não há "sidecar sumiu mas o
         # Pod continua" como existe no driver Docker (containers independentes). Se o Pod existe,
@@ -677,6 +685,34 @@ def _git_container(system: System, settings) -> k8s.V1Container:
             k8s.V1VolumeMount(name="gitdir", mount_path=GITDIR_MOUNT),
         ],
     )
+
+
+def _spec_drift(pod, system_id: str, settings) -> str:
+    """O que no spec do Pod difere do que a configuração atual geraria (imagens e Secrets de
+    pull); "" quando nada difere ou o sistema não existe mais."""
+    from ..agent_profiles import get_profile
+    from ..services.systems import get_system
+
+    system = get_system(system_id)
+    if system is None:
+        return ""
+    want = sorted(r.name for r in (_image_pull_secrets(settings) or []))
+    have = sorted(r.name for r in (pod.spec.image_pull_secrets or []))
+    if want != have:
+        return f"imagePullSecrets {have} -> {want}"
+    images = {c.name: c.image for c in (pod.spec.containers or [])}
+    expected = {"agent": get_profile(system.agent_profile)["image"]}
+    expected.update({name: settings.base_image for name in images if name != "agent"})
+    for name, image in expected.items():
+        if images.get(name) != image:
+            return f"imagem do container {name}: {images.get(name)} -> {image}"
+    return ""
+
+
+def _image_pull_secrets(settings) -> list[k8s.V1LocalObjectReference] | None:
+    """Secrets de pull dos Pods de sistema (registro privado), de `k8s_image_pull_secrets`."""
+    names = [n.strip() for n in (settings.k8s_image_pull_secrets or "").split(",") if n.strip()]
+    return [k8s.V1LocalObjectReference(name=n) for n in names] or None
 
 
 def _health_check_command(app_port: int) -> list[str]:
