@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     deploy_health_timeout: float = 90.0
     deploy_health_interval: float = 2.0
     deploy_poll_interval: float = 60.0
+    # Endereço do portal visto pelo GitLab, para o webhook; vazio = public_base_url.
+    webhook_base_url: str = ""
     # Cópias bare de retransmissão, por sistema, de onde o portal fala com o repositório remoto
     # (change `add-system-git-remote`, design D1). Também só o portal monta. Cache reconstruível.
     git_relays_dir: str = "/git-relays"

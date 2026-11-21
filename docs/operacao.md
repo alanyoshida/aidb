@@ -2,7 +2,9 @@
 
 ← [README](../README.md)
 
-- **Rollback**: página do sistema → Checkpoints → Restaurar.
+- **Rollback**: página do sistema → Checkpoints → Restaurar. Em sistema só implantação: aba Implantação → **Implantar** na tag anterior.
+- **Portal de produção**: instalação própria (banco, volumes e Traefik) com `APPAIFORGE_INSTALLATION_ROLE=production`; recusa criar e provisionar sistema com agente, e um sistema com agente encontrado na reconciliação fica em erro com o motivo. Rode `alembic upgrade head` antes de subir uma versão nova do portal.
+- **Implantação interrompida**: se o portal reinicia no meio de uma implantação, ela fica como falha ("interrompida") na subida seguinte e o workspace volta ao commit da última implantação com sucesso.
 - **Arquivar** (dono): para o container, preserva o workspace, remove a rota. **Excluir** (admin, só para arquivados): remove container + workspace.
 - **Logs**: `docker compose logs -f portal` / `docker logs appaiforge-sys-<slug>`.
 - **Saúde das conexões**: cada conexão é sondada periodicamente e exibe seu estado na página do sistema.

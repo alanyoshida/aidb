@@ -15,6 +15,10 @@ BASE_URL = os.environ.get("APPAIFORGE_E2E_GITLAB_BASE_URL", "http://localhost:80
 PG_CONTAINER = os.environ.get("APPAIFORGE_E2E_GITLAB_PG_CONTAINER", "appaiforge-e2e-gitlab-postgres-1")
 PORTAL_CONTAINER = os.environ.get("APPAIFORGE_E2E_GITLAB_PORTAL_CONTAINER", "appaiforge-e2e-gitlab-portal-1")
 NETWORK = "appaiforge-e2e-gitlab-net"
+# Portal de produção da mesma stack (change add-deploy-only-system): banco e volumes próprios.
+PROD_BASE_URL = os.environ.get("APPAIFORGE_E2E_GITLAB_PROD_BASE_URL", "http://localhost:8084").rstrip("/")
+PROD_PG_CONTAINER = os.environ.get("APPAIFORGE_E2E_GITLAB_PROD_PG_CONTAINER", "appaiforge-e2e-gitlab-postgres-prod-1")
+PROD_PORTAL_CONTAINER = os.environ.get("APPAIFORGE_E2E_GITLAB_PROD_PORTAL_CONTAINER", "appaiforge-e2e-gitlab-portal-prod-1")
 
 
 def _local_reset_sql() -> str:
@@ -36,20 +40,32 @@ def _run(cmd: list[str]) -> str:
     return result.stdout
 
 
-def portal_python(code: str) -> str:
+def portal_python(code: str, container: str = PORTAL_CONTAINER) -> str:
     """Prepara pré-condições pelos serviços do portal (o que o teste verifica continua no navegador)."""
-    return _run(["docker", "exec", "-w", "/app/portal", PORTAL_CONTAINER, "python", "-c", code])
+    return _run(["docker", "exec", "-w", "/app/portal", container, "python", "-c", code])
+
+
+def _slugs(pg_container: str) -> set[str]:
+    return set(_run(["docker", "exec", pg_container, "psql", "-U", "appaiforge", "-t", "-A", "-c",
+                     "SELECT slug FROM systems"]).split())
 
 
 @pytest.fixture(scope="session", autouse=True)
 def clean_stack():
-    try:
-        _run(["docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-c", _local_reset_sql()])
-    except (RuntimeError, FileNotFoundError):
+    """Limpa o que testes anteriores deixaram nos dois portais. Os containers de sistema dos dois
+    estão na mesma rede: só sai o que não pertence a nenhum dos dois bancos."""
+    portals = [(PG_CONTAINER, PORTAL_CONTAINER), (PROD_PG_CONTAINER, PROD_PORTAL_CONTAINER)]
+    live: dict[str, set[str]] = {}
+    for pg, portal in portals:
+        try:
+            _run(["docker", "exec", pg, "psql", "-U", "appaiforge", "-c", _local_reset_sql()])
+            live[portal] = _slugs(pg)
+        except (RuntimeError, FileNotFoundError):
+            continue
+    if not live:
         yield
         return
-    restantes = set(_run(["docker", "exec", PG_CONTAINER, "psql", "-U", "appaiforge", "-t", "-A", "-c",
-                          "SELECT slug FROM systems"]).split())
+    restantes = set().union(*live.values())
     for cid in _run(["docker", "ps", "-aq", "--filter", "label=appaiforge.managed=true",
                      "--filter", f"network={NETWORK}"]).split():
         name = _run(["docker", "inspect", "--format", "{{.Name}}", cid]).strip().lstrip("/")
@@ -57,10 +73,11 @@ def clean_stack():
         if slug and slug not in restantes:
             for suffix in ("", "-dbgate", "-httpsproxy"):
                 subprocess.run(["docker", "rm", "-f", f"appaiforge-sys-{slug}{suffix}"], capture_output=True, timeout=60)
-    for directory in ("/gitdirs", "/git-relays"):
-        for entry in _run(["docker", "exec", PORTAL_CONTAINER, "ls", "-1", directory]).split():
-            if entry not in restantes and re.fullmatch(r"[a-z0-9][a-z0-9-]*", entry):
-                _run(["docker", "exec", PORTAL_CONTAINER, "rm", "-rf", f"{directory}/{entry}"])
+    for portal, slugs in live.items():
+        for directory in ("/gitdirs", "/git-relays"):
+            for entry in _run(["docker", "exec", portal, "ls", "-1", directory]).split():
+                if entry not in slugs and re.fullmatch(r"[a-z0-9][a-z0-9-]*", entry):
+                    _run(["docker", "exec", portal, "rm", "-rf", f"{directory}/{entry}"])
     yield
 
 

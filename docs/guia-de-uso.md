@@ -61,6 +61,39 @@ A partir daí:
   que já está aberto) usando o **token de API**; sem token, mostra o link de criação.
 - **Desativar vínculo** para envios e sincronizações sem mexer no workspace nem no GitLab.
 
+## Sistema só implantação
+
+Para o portal de produção, que só roda versões aprovadas. O sistema **só implantação** não tem
+agente, chat nem checkpoints e não recebe credencial de LLM. Ele implanta tags de versão de um
+repositório GitLab. Num portal de produção (`APPAIFORGE_INSTALLATION_ROLE=production`) é o único
+tipo: a criação já vem com ele escolhido e sem provedor de LLM. Num portal de desenvolvimento,
+escolha **Só implantação** em **Novo sistema**. O tipo não muda depois de criado.
+
+A página do sistema tem as abas **Implantação**, Editor, Conexões, Domínios, Configurações e
+Auditoria. Na aba **Implantação**:
+
+1. Copie a **chave pública** e cadastre-a no GitLab como chave de implantação **sem escrita**
+   ([Portal de produção](gitlab.md#7-portal-de-produção-sistema-só-implantação)).
+2. Informe o **endereço SSH**, a **branch de destino** (padrão `main`) e o **padrão de tags**
+   (padrão `v*`). **Salvar** e **Testar conexão**, conferindo a impressão digital do servidor.
+3. **Versões** lista as tags do padrão da mais nova para a mais antiga (`v1.0.10` antes de
+   `v1.0.2`), marcando a **atual** e as **já implantadas**. **Implantar** em qualquer linha:
+   - a versão só é aceita se o commit da tag estiver na branch de destino;
+   - as conexões que a versão exige (manifesto `.aidb/manifest.json`, gravado pela homologação a
+     cada checkpoint) precisam estar cadastradas na aba Conexões com o mesmo nome. Faltando alguma,
+     a implantação é recusada listando-as. Versão sem manifesto implanta com um aviso;
+   - quando o `app/uv.lock` muda, as dependências são instaladas antes de o código trocar. Se a
+     instalação falha, nada muda;
+   - se a app da versão nova não responder em três checagens seguidas dentro do prazo, o portal
+     volta à versão anterior e o histórico mostra **voltou à anterior** com o motivo.
+4. **Voltar a uma versão anterior** é implantar a tag dela.
+5. **Implantação automática**: ligada, implanta a tag mais nova do padrão desde que ela nunca tenha
+   sido implantada neste sistema. Um rollback manual permanece até sair uma tag nova, e uma tag que
+   falhou não é tentada de novo. A **detecção** é por **consulta periódica** ou por **webhook do
+   GitLab**, com o endereço e o segredo mostrados na aba (**Trocar segredo** invalida o anterior).
+6. **Histórico de implantações**: tag, commit, origem (manual, consulta periódica ou webhook),
+   momento e resultado. Cada implantação também aparece na Auditoria.
+
 ## Aparência
 
 Na topbar o usuário escolhe o modo (Light, Dark ou Pastel) e a cor de destaque (Índigo, Teal, Âmbar ou Violeta). A preferência fica salva por usuário e é aplicada ao portal inteiro sem flash. Todas as 12 combinações respeitam contraste WCAG AA; ao criar componentes novos, use os tokens de `portal/appaiforge/ui/theme.py` em vez de cores fixas.

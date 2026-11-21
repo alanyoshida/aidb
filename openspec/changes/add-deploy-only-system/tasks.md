@@ -47,7 +47,7 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 
 - [ ] 7.1 Acrescentar um portal de produção (`APPAIFORGE_INSTALLATION_ROLE=production`, porta própria, banco próprio) ao `deploy/docker-compose.e2e-gitlab.yml`; verificar que os dois portais sobem e alcançam o GitLab
 - [ ] 7.2 Cenário E2E da jornada: homologação envia e promove; merge e tag pelo pipeline; produção cria o sistema a partir do repositório com chave só leitura, cadastra a conexão do manifesto, implanta a tag e a app responde; nova tag implantada sozinha por webhook; rollback para a anterior permanece; verificar que passa duas vezes seguidas
-- [ ] 7.3 ADR do sistema só implantação; `docs/gitlab.md` (chave só leitura, webhook); seções em `docs/guia-de-uso.md` e `docs/operacao.md`; verificar que nomes e rótulos citados existem
+- [x] 7.3 ADR do sistema só implantação; `docs/gitlab.md` (chave só leitura, webhook); seções em `docs/guia-de-uso.md` e `docs/operacao.md`; verificar que nomes e rótulos citados existem
 
 ## 8. Verificação integrada
 

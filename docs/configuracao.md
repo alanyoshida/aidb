@@ -14,6 +14,11 @@
 | `CONTAINER_PIDS_LIMIT` | 512 | teto de processos por container (ADR 0018) |
 | `MAX_SYSTEMS` | 10 | teto de sistemas simultâneos |
 | `INSTALLATION_ROLE` | `development` | papel do portal: `development` aceita sistemas com agente e só implantação; `production` só aceita sistemas só implantação — nenhum agente é criado nem provisionado (ver [Sistema só implantação](guia-de-uso.md#sistema-só-implantação)) |
+| `DEPLOY_HEALTH_TIMEOUT` | 90 | prazo, em segundos, para a app de uma versão recém-implantada responder em três checagens seguidas; senão volta à anterior |
+| `DEPLOY_HEALTH_INTERVAL` | 2 | intervalo, em segundos, entre essas checagens |
+| `DEPLOY_POLL_INTERVAL` | 60 | intervalo, em segundos, da consulta periódica de tags novas dos sistemas só implantação em modo automático |
+| `WEBHOOK_BASE_URL` | — | endereço do portal visto pelo GitLab, mostrado na aba Implantação para o webhook; vazio = `PUBLIC_BASE_URL` |
+| `PORTAL_INTERNAL_URL` | `http://portal:8080` | endereço do portal na rede dos containers: rota raiz do Traefik, forwardAuth das apps e chamadas dos sidecars; mude quando o serviço do portal tiver outro nome |
 | `HEALTH_INTERVAL` | 15 | sonda de saúde das apps (segundos) |
 | `WORKSPACES_DIR` / `HOST_WORKSPACES_DIR` | /workspaces | raiz dos workspaces (bind compartilhado) |
 | `DYNAMIC_CONFIG_DIR` | /dynamic | rotas dinâmicas do Traefik (volume compartilhado) |

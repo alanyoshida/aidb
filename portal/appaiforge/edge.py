@@ -61,7 +61,7 @@ def write_portal_router() -> None:
                 },
                 "services": {
                     "portal": {
-                        "loadBalancer": {"servers": [{"url": "http://portal:8080"}]}
+                        "loadBalancer": {"servers": [{"url": get_settings().portal_internal_url.rstrip("/")}]}
                     }
                 },
             }
