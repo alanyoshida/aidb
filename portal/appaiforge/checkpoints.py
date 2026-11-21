@@ -98,6 +98,7 @@ def commit_all(system: System, message: str, author: User | None = None) -> str 
         if leftover:
             raise MergeIncomplete(leftover)
     git_sync.protect_pipeline_file(system)
+    git_sync.write_connections_manifest(system)
     _git(system, "add", "-A")
     status = _git(system, "status", "--porcelain")
     if not status and not merging:

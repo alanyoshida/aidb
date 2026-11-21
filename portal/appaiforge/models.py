@@ -171,6 +171,9 @@ class System(Base):
         Enum(ExecutionMode, name="execution_mode"), default=ExecutionMode.reduced
     )
     identity_secret: Mapped[str] = mapped_column(String(64))
+    # Tipo do sistema (change add-deploy-only-system, D1): `agent` (com agente e chat) ou
+    # `deploy_only` (só implanta versões aprovadas de um repositório). Fixado na criação.
+    kind: Mapped[str] = mapped_column(String(20), default="agent", server_default="agent")
     # Perfil de runtime do agente (capability agent-runtime, change
     # generalize-agent-runtime-plumbing). Determinado no provisionamento,
     # nunca re-resolvido depois; string livre (não Enum) porque o conjunto
@@ -310,6 +313,39 @@ class SystemGitRemote(Base):
     last_mr_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class DeploySettings(Base):
+    """Configuração de implantação de um sistema só implantação (design D3)."""
+
+    __tablename__ = "deploy_settings"
+
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), primary_key=True)
+    tag_pattern: Mapped[str] = mapped_column(String(100), default="v*", server_default="v*")
+    mode: Mapped[str] = mapped_column(String(20), default="manual", server_default="manual")  # manual | automatic
+    detection: Mapped[str] = mapped_column(String(20), default="polling", server_default="polling")  # polling | webhook
+    webhook_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Deployment(Base):
+    """Uma implantação de versão num sistema só implantação (design D3)."""
+
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
+    tag: Mapped[str] = mapped_column(String(200))
+    commit_sha: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    trigger: Mapped[str] = mapped_column(String(20))  # manual | polling | webhook
+    actor_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20))  # running | succeeded | failed | rolled_back
+    detail: Mapped[str] = mapped_column(Text, default="", server_default="")
+    previous_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class TokenUsage(Base):

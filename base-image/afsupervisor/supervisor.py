@@ -41,6 +41,9 @@ def backoff_seconds(failures: int, base: float = 1.0, cap: float = 30.0) -> floa
     return min(cap, base * (2 ** max(0, failures - 1)))
 
 
+APP_PID_FILE = os.environ.get("AIDB_APP_PID_FILE", "/tmp/aidb-app.pid")
+
+
 def dir_signature(app_dir: str) -> tuple:
     """Assinatura (mtime, size) dos arquivos da app para detecção de mudanças."""
     sig = []
@@ -188,7 +191,7 @@ class Supervisor:
     def __init__(self, runner: ProcessRunner | None = None,
                  workspace: str = "/workspace", app_port: int = 8080,
                  root_path: str | None = None, agent_profile: dict | None = None,
-                 execution_mode: str = "legacy"):
+                 execution_mode: str = "legacy", system_kind: str = "agent"):
         self.runner = runner or ProcessRunner()
         self.workspace = workspace
         self.app_dir = os.path.join(workspace, "app")
@@ -196,6 +199,9 @@ class Supervisor:
         self.root_path = root_path or os.environ.get("APP_ROOT_PATH", "/")
         self.agent_profile = agent_profile
         self.execution_mode = execution_mode
+        # `deploy_only` (change add-deploy-only-system): sistema que só implanta versões
+        # aprovadas — nenhum agente, nenhum OpenSpec no workspace, só a app.
+        self.system_kind = system_kind
         self.harness_pid: int | None = None
         self.harness_failed = False
         self.app_pid: int | None = None
@@ -317,6 +323,17 @@ class Supervisor:
                 [sys.executable, "-c", _PLACEHOLDER_CODE.format(port=self.app_port)]
             )
             self.is_placeholder = True
+        self._record_app_start()
+
+    def _record_app_start(self) -> None:
+        """Grava o PID da app em APP_PID_FILE (melhor esforço): o portal compara antes e depois
+        de implantar uma versão para saber que a app nova já subiu (add-deploy-only-system, D5)."""
+        try:
+            with open(APP_PID_FILE + ".tmp", "w") as f:
+                f.write(f"{self.app_pid} {'placeholder' if self.is_placeholder else 'app'}\n")
+            os.replace(APP_PID_FILE + ".tmp", APP_PID_FILE)
+        except OSError:
+            pass
 
     def poll(self) -> None:
         """Um passo da malha de controle: reinicia a app se morreu, mudou ou apareceu."""
@@ -343,10 +360,14 @@ class Supervisor:
             elif not self.is_placeholder:
                 self.start_app()  # app removida (rollback): volta ao placeholder
 
-    def run_forever(self, poll_interval: float = 1.0) -> None:
-        self.ensure_openspec()
-        self.start_harness()
+    def start(self) -> None:
+        if self.system_kind != "deploy_only":
+            self.ensure_openspec()
+            self.start_harness()
         self.start_app()
+
+    def run_forever(self, poll_interval: float = 1.0) -> None:
+        self.start()
         while True:
             time.sleep(poll_interval)
             self.poll()
@@ -356,7 +377,9 @@ def main() -> None:
     port = int(os.environ.get("APP_PORT", "8080"))
     profile = load_agent_profile(os.environ.get("AIDB_AGENT_PROFILE"))
     execution_mode = os.environ.get("AIDB_EXECUTION_MODE", "legacy")
-    Supervisor(app_port=port, agent_profile=profile, execution_mode=execution_mode).run_forever()
+    system_kind = os.environ.get("AIDB_SYSTEM_KIND", "agent")
+    Supervisor(app_port=port, agent_profile=profile, execution_mode=execution_mode,
+               system_kind=system_kind).run_forever()
 
 
 if __name__ == "__main__":

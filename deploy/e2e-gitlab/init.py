@@ -197,9 +197,16 @@ def ensure_group_release_token(group: dict) -> None:
         {"key": "RELEASE_TOKEN", "value": token, "masked": True, "protected": True})
 
 
+def allow_local_webhooks() -> None:
+    """O webhook de tag chama o portal de produção pela rede Docker (endereço local), que o
+    GitLab bloqueia por padrão (change add-deploy-only-system). Só neste ambiente de teste."""
+    api("PUT", "/application/settings", {"allow_local_requests_from_web_hooks_and_services": True})
+
+
 def main() -> None:
     wait_api()
     ensure_root_token()
+    allow_local_webhooks()
     ensure_runner()
     group = ensure_group()
     ensure_templates(group)

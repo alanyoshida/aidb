@@ -829,3 +829,46 @@ def _promotion_description(system: System) -> str:
     for cp in checkpoints.list_checkpoints(system)[:10]:
         lines.append(f"- `{cp['git_sha'][:8]}` {cp['message'][:120]}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------------------------
+# Manifesto de conexões (change add-deploy-only-system, D8)
+# ---------------------------------------------------------------------------------------------
+
+MANIFEST_FILE = ".aidb/manifest.json"
+
+
+def connections_manifest(system_id: str) -> str:
+    """Conteúdo do manifesto: só nome e tipo de cada conexão do sistema, nenhuma credencial."""
+    import json
+
+    from sqlalchemy import select
+
+    from .db import session_scope
+    from .models import DbConnection
+
+    with session_scope() as s:
+        rows = s.execute(
+            select(DbConnection.name, DbConnection.kind).where(DbConnection.system_id == system_id)
+            .order_by(DbConnection.name)
+        ).all()
+    data = {"version": 1, "connections": [{"name": name, "kind": kind} for name, kind in rows]}
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
+def write_connections_manifest(system: System) -> None:
+    """Com o vínculo ativo, reescreve o manifesto no workspace antes do commit do checkpoint — o
+    que o agente tiver escrito nele é sobrescrito. Sem vínculo ativo, nada é gravado."""
+    remote = _remote_row(system.id)
+    if remote is None or not remote.enabled:
+        return
+    content = connections_manifest(system.id).encode()
+    if get_settings().provisioning_driver == "kubernetes":
+        from .drivers.kubernetes_driver import write_workspace_files
+
+        write_workspace_files(system, {MANIFEST_FILE: content})
+        return
+    path = os.path.join(get_settings().workspaces_dir, system.slug, MANIFEST_FILE)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(content)

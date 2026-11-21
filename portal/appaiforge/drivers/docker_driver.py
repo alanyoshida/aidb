@@ -16,7 +16,7 @@ import time
 import docker
 
 from ..models import ExecutionMode, System
-from .base import ComputeUnitNotFound
+from .base import ComputeUnitNotFound, app_exec_command, files_tar
 
 log = logging.getLogger(__name__)
 
@@ -175,6 +175,29 @@ class DockerProvisioningDriver:
             return resp.status_code < 500
         except httpx.HTTPError:
             return False
+
+    def exec_in_app(
+        self, system: System, command: list[str], *, env: dict[str, str] | None = None, timeout: int = 600
+    ) -> tuple[int, str, str]:
+        """`exec_run` no container do sistema com o usuário do próprio container (o da app) —
+        herda o ambiente dele, inclusive o proxy de saída (change add-deploy-only-system, D5)."""
+        from .. import provisioning as _p
+
+        container = _docker().containers.get(_p.system_container_name(system.slug))
+        user = container.attrs.get("Config", {}).get("User") or "root"
+        result = container.exec_run(app_exec_command(command, env, timeout), user=user, demux=True)
+        out, err = result.output if result.output else (None, None)
+        return result.exit_code, (out or b"").decode(errors="replace"), (err or b"").decode(errors="replace")
+
+    def write_app_files(self, system: System, directory: str, files: dict[str, bytes]) -> None:
+        from .. import provisioning as _p
+
+        container = _docker().containers.get(_p.system_container_name(system.slug))
+        code, _, err = self.exec_in_app(system, ["mkdir", "-p", directory], timeout=30)
+        if code != 0:
+            raise RuntimeError(f"não foi possível criar {directory} no container: {err.strip()}")
+        if not container.put_archive(directory, files_tar(files, AGENT_UID, AGENT_GID)):
+            raise RuntimeError(f"não foi possível gravar arquivos em {directory} no container")
 
     # -- sidecars (D1 do design agent-network-perimeter / db-proxy-gate-data-plane) --
 

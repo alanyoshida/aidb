@@ -686,3 +686,56 @@ def test_arquivamento_preserva_a_pvc_do_repositorio(system):
     provision_system(system)
     archive_system(system)
     assert _k8s_api().read_namespaced_persistent_volume_claim(_gitdir_pvc_name(system.slug), "appaiforge-test")
+
+
+def test_sistema_so_implantacao_sobe_sem_agente_no_kubernetes(k8s_env, clean_db):
+    """change add-deploy-only-system, tarefa 2.2: o container `agent` do Pod de um sistema só
+    implantação roda só a app — sem processo de agente nem variável de LLM."""
+    import subprocess
+    import time
+
+    from appaiforge import auth
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import UserType
+    from appaiforge.provisioning import provision_system
+    from appaiforge.services import catalog
+    from appaiforge.services.systems import KIND_DEPLOY_ONLY, create_system
+
+    catalog.ensure_presets()
+    editor = auth.create_user("k8s-deploy@t.local", "pw", UserType.editor.value)
+    sys = create_system(editor, "Prod K8s", f"k8sdep-{os.urandom(3).hex()}", kind=KIND_DEPLOY_ONLY)
+    try:
+        provision_system(sys)
+        pod_name = system_container_name(sys.slug)
+        _wait_pod_running(pod_name, timeout_s=60)
+        time.sleep(3)
+
+        def run(cmd):
+            return subprocess.run(
+                ["kubectl", "--context", "kind-appaiforge-dev", "-n", "appaiforge-test",
+                 "exec", pod_name, "-c", "agent", "--", *cmd],
+                capture_output=True, text=True, timeout=30,
+            ).stdout
+
+        env_lines = run(["env"]).splitlines()
+        cmdlines = run(["sh", "-c", "for f in /proc/[0-9]*/cmdline; do tr '\\0' ' ' < $f; echo; done"])
+        names = [line.split("=", 1)[0] for line in env_lines if "=" in line]
+        assert "AIDB_SYSTEM_KIND=deploy_only" in env_lines
+        assert not [n for n in names if any(m in n for m in ("API_KEY", "AIDB_AGENT_PROFILE", "INFERENCE", "BROKER"))], names
+        assert "opencode" not in cmdlines and "claude" not in cmdlines, cmdlines
+    finally:
+        _cleanup(sys.slug)
+
+
+def test_exec_in_app_no_kubernetes_roda_no_container_da_app(system):
+    from appaiforge.drivers import get_driver
+    from appaiforge.edge import system_container_name
+    from appaiforge.provisioning import provision_system
+
+    provision_system(system)
+    _wait_pod_running(system_container_name(system.slug), timeout_s=60)
+    code, out, _ = get_driver().exec_in_app(system, ["sh", "-c", "id -u; echo $HTTPS_PROXY; echo $EXTRA"], env={"EXTRA": "ok"})
+    uid, proxy, extra = out.split()
+    assert code == 0 and uid == "1000" and proxy.startswith("http://127.0.0.1:") and extra == "ok"
+    code, _, err = get_driver().exec_in_app(system, ["sh", "-c", "echo falhou >&2; exit 3"])
+    assert code == 3 and "falhou" in err

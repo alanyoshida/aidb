@@ -167,6 +167,9 @@ def default_https_allowlist(system: System) -> list[tuple[str, int]]:
     agente usa (etapa 3) só aponta pra um dos dois — mais os registros de
     pacote, iguais para todo sistema."""
     entries: list[tuple[str, int]] = list(PACKAGE_REGISTRY_HOSTS)
+    if getattr(system, "kind", "agent") == "deploy_only":
+        # sem agente, sem destino de LLM (change add-deploy-only-system, D2)
+        return entries
     if get_settings().inference_broker_enabled:
         entries.append(_broker_destination())
     else:
@@ -469,7 +472,11 @@ def provision_system(system: System) -> str:
     """
     from .agent_profiles import UnknownProfile, get_profile
     from .drivers import get_driver
+    from .services.systems import KIND_AGENT, KIND_DEPLOY_ONLY, AgentNotAllowedHere, is_production
 
+    # Portal de produção nunca sobe agente (change add-deploy-only-system, D1)
+    if system.kind == KIND_AGENT and is_production():
+        raise AgentNotAllowedHere("este portal é de produção: sistemas com agente não são provisionados")
     settings = get_settings()
     profile = get_profile(system.agent_profile)
     _check_capacity(system.id)
@@ -490,12 +497,18 @@ def provision_system(system: System) -> str:
 
     portal_config_dir = os.path.join(settings.configs_dir, system.slug)
     manifest = db_connections_manifest(system.id)
-    try:
-        config_writer = _config_writers()[profile["config_format"]]
-    except KeyError:
-        raise UnknownProfile(f"config_format '{profile['config_format']}' sem writer registrado")
-    config_writer(system, portal_config_dir, manifest)
-    write_agent_profile(system, portal_config_dir, manifest)
+    deploy_only = system.kind == KIND_DEPLOY_ONLY
+    if deploy_only:
+        # Sem agente (change add-deploy-only-system, D2): nada de config nem
+        # perfil de agente; o diretório só existe porque o driver o monta.
+        os.makedirs(portal_config_dir, exist_ok=True)
+    else:
+        try:
+            config_writer = _config_writers()[profile["config_format"]]
+        except KeyError:
+            raise UnknownProfile(f"config_format '{profile['config_format']}' sem writer registrado")
+        config_writer(system, portal_config_dir, manifest)
+        write_agent_profile(system, portal_config_dir, manifest)
 
     env = {
         "APP_IDENTITY_SECRET": system.identity_secret,
@@ -507,7 +520,11 @@ def provision_system(system: System) -> str:
         # do arquivo que esta env aponta, não de constante nenhuma no supervisor.
         # O diretório em si vem do perfil (profile["config_mount_path"]), não
         # de um literal fixo (change generalize-agent-runtime-plumbing).
-        "AIDB_AGENT_PROFILE": f"{profile['config_mount_path']}/agent-profile.json",
+        **(
+            {"AIDB_SYSTEM_KIND": KIND_DEPLOY_ONLY}
+            if deploy_only
+            else {"AIDB_AGENT_PROFILE": f"{profile['config_mount_path']}/agent-profile.json"}
+        ),
         # Diz ao supervisor se ele deve instalar seccomp/Landlock antes do
         # exec do agente (capability agent-sandbox, etapa 2). O modo já está
         # fixado desde a criação do sistema; o supervisor só confia nele.
@@ -520,7 +537,9 @@ def provision_system(system: System) -> str:
         "HTTPS_PROXY": f"http://127.0.0.1:{HTTPS_PROXY_PORT}",
         "NO_PROXY": "",
         **(
-            _broker_credential_env(system)
+            {}
+            if deploy_only
+            else _broker_credential_env(system)
             if settings.inference_broker_enabled
             else _provider_env(system.provider)
         ),
@@ -625,11 +644,23 @@ def reconcile() -> None:
     driver = get_driver()
     with session_scope() as s:
         systems = [
-            (sys.id, sys.slug, sys.status, sys.container_id)
+            (sys.id, sys.slug, sys.status, sys.container_id, sys.kind)
             for sys in s.execute(select(System)).scalars()
         ]
-    for system_id, slug, status, container_id in systems:
+    from .services.systems import KIND_AGENT, is_production
+
+    for system_id, slug, status, container_id, kind in systems:
         if status in (SystemStatus.archived, SystemStatus.provisioning):
+            continue
+        if kind == KIND_AGENT and is_production():
+            # portal de produção: um sistema com agente de antes da troca de papel não roda
+            from .services.systems import get_system, set_status
+
+            existing = get_system(system_id)
+            if existing is not None:
+                driver.remove(existing)
+            set_status(system_id, SystemStatus.error,
+                       "este portal é de produção: sistemas com agente não são provisionados")
             continue
         try:
             driver.reconcile_one(system_id, slug)

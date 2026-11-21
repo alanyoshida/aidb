@@ -4,6 +4,10 @@
 # sistema com um repositório remoto de ponta a ponta: envio dos checkpoints, merges humanos na
 # branch de trabalho, solicitação de promoção e pipeline que cria a tag de versão.
 #
+# Mais um portal de produção (change add-deploy-only-system), com banco, volumes e Traefik
+# próprios: só sistemas só implantação, que implantam as tags do mesmo GitLab. Portal de
+# homologação em http://localhost:8083, de produção em http://localhost:8084.
+#
 #   docker compose -f deploy/docker-compose.e2e-gitlab.yml up -d --build
 #   python3 deploy/e2e-gitlab/init.py  # prepara GitLab, runner e projetos (idempotente)
 #   cd portal && uv run pytest tests/e2e_gitlab
@@ -77,6 +81,73 @@ services:
       retries: 12
       start_period: 20s
 
+  postgres-prod:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appaiforge
+      POSTGRES_PASSWORD: appaiforge
+      POSTGRES_DB: appaiforge
+    volumes:
+      - pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appaiforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  traefik-prod:
+    image: traefik:v3.1
+    command: ["--configFile=/etc/traefik/traefik.yml"]
+    ports:
+      - "8084:80"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - dynamic-prod:/etc/traefik/dynamic
+    depends_on:
+      portal-prod:
+        condition: service_healthy
+
+  portal-prod:
+    build:
+      context: ..
+      dockerfile: deploy/portal.Dockerfile
+    environment:
+      APPAIFORGE_INSTALLATION_ROLE: production
+      APPAIFORGE_DATABASE_URL: postgresql+psycopg://appaiforge:appaiforge@postgres-prod:5432/appaiforge
+      APPAIFORGE_SECRET_KEY: e2e-gitlab-prod-secret
+      APPAIFORGE_DOCKER_NETWORK: appaiforge-e2e-gitlab-net
+      APPAIFORGE_WORKSPACES_DIR: /workspaces
+      APPAIFORGE_HOST_WORKSPACES_DIR: ${APPAIFORGE_E2E_GITLAB_PROD_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e-gitlab-prod}
+      APPAIFORGE_CONFIGS_DIR: /configs
+      APPAIFORGE_HOST_CONFIG_DIR: ${APPAIFORGE_E2E_GITLAB_PROD_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-gitlab-prod}
+      APPAIFORGE_DYNAMIC_CONFIG_DIR: /dynamic
+      APPAIFORGE_GITDIRS_DIR: /gitdirs
+      APPAIFORGE_GIT_RELAYS_DIR: /git-relays
+      # Endereço deste portal na rede Docker: rota raiz do Traefik, forwardAuth das apps e o
+      # webhook que o GitLab chama.
+      APPAIFORGE_PORTAL_INTERNAL_URL: http://portal-prod:8080
+      APPAIFORGE_WEBHOOK_BASE_URL: http://portal-prod:8080
+      APPAIFORGE_DEPLOY_POLL_INTERVAL: "5"
+      APPAIFORGE_MAX_SYSTEMS: "20"
+      APPAIFORGE_HEALTH_INTERVAL: "5"
+      APPAIFORGE_SEED_DEMO_ADMIN: "1"
+    volumes:
+      - ${APPAIFORGE_E2E_GITLAB_PROD_WORKSPACES_DIR:-/opt/appaiforge/workspaces-e2e-gitlab-prod}:/workspaces
+      - ${APPAIFORGE_E2E_GITLAB_PROD_CONFIGS_DIR:-/opt/appaiforge/configs-e2e-gitlab-prod}:/configs
+      - gitdirs-prod:/gitdirs
+      - git-relays-prod:/git-relays
+      - dynamic-prod:/dynamic
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres-prod:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   gitlab:
     image: gitlab/gitlab-ce:19.4.5-ce.0
     hostname: gitlab
@@ -115,7 +186,11 @@ networks:
 
 volumes:
   pgdata:
+  pgdata-prod:
   dynamic:
+  dynamic-prod:
+  gitdirs-prod:
+  git-relays-prod:
   gitdirs:
   git-relays:
   gitlab-config:

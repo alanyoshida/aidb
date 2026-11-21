@@ -9,7 +9,7 @@ from .. import inference_token, telemetry
 from ..agent_profiles import DEFAULT_PROFILE, get_profile
 from ..db import session_scope
 from ..edge import publish_app, unpublish_app
-from ..models import AgentRun, ChatSession, RunStatus, System, SystemStatus, User
+from ..models import AgentRun, ChatSession, DeploySettings, RunStatus, System, SystemStatus, User
 from ..provisioning import decide_execution_mode
 from ..rbac import can_create_systems, can_manage_system
 from ..security import generate_secret
@@ -30,6 +30,31 @@ class InvalidSlug(Exception):
     pass
 
 
+KIND_AGENT = "agent"
+KIND_DEPLOY_ONLY = "deploy_only"
+KINDS = (KIND_AGENT, KIND_DEPLOY_ONLY)
+
+
+class AgentNotAllowedHere(Exception):
+    """Portal de produção: sistemas com agente não são criados nem provisionados (D1)."""
+
+
+def is_production() -> bool:
+    return get_settings().installation_role == "production"
+
+
+def resolve_kind(kind: str | None) -> str:
+    """Tipo do sistema na criação: sem escolha, `deploy_only` num portal de produção e `agent`
+    nos demais; `agent` num portal de produção é recusado."""
+    if kind is None:
+        return KIND_DEPLOY_ONLY if is_production() else KIND_AGENT
+    if kind not in KINDS:
+        raise ValueError(f"tipo de sistema desconhecido: {kind!r}")
+    if kind == KIND_AGENT and is_production():
+        raise AgentNotAllowedHere("este portal é de produção e só aceita sistemas só implantação")
+    return kind
+
+
 class NotPermitted(Exception):
     pass
 
@@ -41,6 +66,7 @@ def create_system(
     provider: str | None = None,
     model: str | None = None,
     agent_profile: str | None = None,
+    kind: str | None = None,
 ) -> System:
     """Cria o sistema; criador vira dono (spec: somente editor/admin).
 
@@ -57,6 +83,7 @@ def create_system(
     agent_profile = agent_profile or DEFAULT_PROFILE
     get_profile(agent_profile)  # levanta UnknownProfile se o nome não existir
     settings = get_settings()
+    kind = resolve_kind(kind)
     # Decidido aqui, não em provision_system: o modo de execução é fixado na
     # criação do sistema e fica imutável depois (spec container-lifecycle).
     # Pode levantar SandboxUnavailable (host sem Landlock, require_sandbox
@@ -77,13 +104,17 @@ def create_system(
             execution_mode=execution_mode,
             identity_secret=generate_secret(),
             agent_profile=agent_profile,
+            kind=kind,
         )
         s.add(system)
         s.flush()
+        if kind == KIND_DEPLOY_ONLY:
+            s.add(DeploySettings(system_id=system.id))
         s.expunge(system)
     audit.record(
         actor_id=user.id, actor_email=user.email, action="system.create", resource_type="system",
-        resource_id=system.id, system_id=system.id, details={"name": system.name, "slug": system.slug},
+        resource_id=system.id, system_id=system.id,
+        details={"name": system.name, "slug": system.slug, "tipo": system.kind},
     )
     # pré-popula a lista do modo restrito desde já (task 4.2) — pronta pra
     # quando o editor ligar o modo restrito, sem pip/npm quebrar na hora

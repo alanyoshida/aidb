@@ -77,7 +77,9 @@ def register() -> None:
                 with ui.row().classes("items-center"):
                     ui.label(f"/{system.slug}").classes("text-gray-500")
                     status_badge = ui.badge(_STATUS_LABEL.get(system.status.value, system.status.value))
-                    if can_manage_system(user, system):
+                    if system.kind == "deploy_only":
+                        ui.badge("só implantação", color="grey").props("data-testid=system-kind-badge")
+                    elif can_manage_system(user, system):
                         provider_label = ui.label(f"provedor: {system.provider} / modelo: {system.model}").classes("text-sm text-gray-600")
             open_btn = ui.button("Abrir app", icon="open_in_new", on_click=lambda: ui.navigate.to(f"/entry/{system.slug}", new_tab=True)).props("size=lg unelevated data-testid=open-app").classes("mr-8")
         open_btn.set_visibility(system.status.value == "active")
@@ -101,6 +103,10 @@ def register() -> None:
         # e 3 delas (Checkpoints/Configurações/Auditoria) ficavam fora da
         # viewport sem nenhuma pista de que existiam mais abas — só rolagem
         # horizontal não-descoberta (achado do critique).
+        if system.kind == "deploy_only":
+            _render_deploy_only_tabs(system, user, name_label, breadcrumb_label)
+            return
+
         with ui.tabs().classes("mx-4 w-full").props("outside-arrows mobile-arrows") as tabs:
             chat_tab = ui.tab("chat", label="Chat", icon="chat")
             editor_tab = ui.tab("editor", label="Editor", icon="code").props("data-testid=tab-editor")
@@ -140,23 +146,72 @@ def register() -> None:
                 _render_usage(system)
 
 
+def _render_deploy_only_tabs(system, user, name_label, breadcrumb_label) -> None:
+    """Sistema só implantação (change add-deploy-only-system, D9): sem Chat nem Checkpoints; a aba
+    Implantação substitui a Repositório. O tipo do sistema não aparece como editável em lugar nenhum."""
+    from .deploy_tab import render_deploy_tab
+
+    with ui.tabs().classes("mx-4 w-full").props("outside-arrows mobile-arrows") as tabs:
+        deploy_tab = ui.tab("deploy", label="Implantação", icon="rocket_launch").props("data-testid=tab-deploy")
+        editor_tab = ui.tab("editor", label="Editor", icon="code").props("data-testid=tab-editor")
+        conn_tab = ui.tab("conn", label="Conexões", icon="storage")
+        net_tab = ui.tab("net", label="Domínios", icon="public").props("data-testid=tab-domains")
+        cfg_tab = ui.tab("cfg", label="Configurações", icon="settings")
+        audit_tab = ui.tab("audit", label="Auditoria", icon="shield")
+
+    with ui.tab_panels(tabs, value=deploy_tab).classes("mx-4 w-full"):
+        with ui.tab_panel(deploy_tab):
+            render_deploy_tab(system, user)
+        with ui.tab_panel(editor_tab):
+            _render_editor(system, user)
+        with ui.tab_panel(conn_tab):
+            _render_connections(system, user)
+        with ui.tab_panel(net_tab):
+            _render_network(system, user)
+        with ui.tab_panel(cfg_tab):
+            _render_configuration(system, user, name_label, breadcrumb_label, None)
+        with ui.tab_panel(audit_tab):
+            _render_management_audit(system)
+
+
 def _render_configuration(system, user, name_label, breadcrumb_label, provider_label) -> None:
     """Identidade (nome, provedor/modelo), rede de saída e ciclo de vida do
-    sistema (specs system-management, https-forward-proxy)."""
-    ui.label("Rede de saída do agente").classes("font-semibold mt-2")
+    sistema (specs system-management, https-forward-proxy). Num sistema só
+    implantação não há agente nem broker: os textos falam da app e dos
+    registros de pacote (change add-deploy-only-system, D2)."""
+    deploy_only = system.kind == "deploy_only"
+    if deploy_only:
+        off_notice = "desabilitado — nenhum destino externo é liberado, nem os registros de pacote"
+        internet_help = (
+            "Desligado, o proxy de saída não libera nenhum destino externo, nem os registros de pacote: "
+            "uma versão que muda o uv.lock não consegue ser implantada."
+        )
+        restricted_help = (
+            "Ligado, substitui a allow-list padrão (registros de pacote) pela lista cadastrada na aba "
+            "\"Domínios\" — só ela passa a valer. Para implantar uma versão que muda o uv.lock, inclua "
+            "pypi.org e files.pythonhosted.org."
+        )
+    else:
+        off_notice = "desabilitado — só o broker de inferência continua alcançável"
+        internet_help = (
+            "Desligado, o proxy de saída não libera nenhum destino externo; o broker de inferência "
+            "(quando habilitado) não é afetado — ele nunca passa por este proxy."
+        )
+        restricted_help = (
+            "Ligado, substitui a allow-list padrão (provedor de LLM/broker + registros de pacote) "
+            "pela lista cadastrada na aba \"Domínios\" — só ela passa a valer."
+        )
+    ui.label("Rede de saída da app" if deploy_only else "Rede de saída do agente").classes("font-semibold mt-2")
     with ui.row().classes("items-center gap-6 mb-2"):
         with ui.column().classes("gap-0"):
             ui.switch(
                 "Acesso à internet", value=system.internet_enabled,
                 on_change=lambda e: (
                     network_policy.set_internet_enabled(system.id, e.value, author_id=user.id),
-                    notify("Acesso à internet " + ("habilitado" if e.value else "desabilitado — só o broker de inferência continua alcançável") + ".", kind="positive"),
+                    notify("Acesso à internet " + ("habilitado" if e.value else off_notice) + ".", kind="positive"),
                 ),
             ).props("data-testid=toggle-internet-enabled")
-            ui.label(
-                "Desligado, o proxy de saída não libera nenhum destino externo; o broker de inferência "
-                "(quando habilitado) não é afetado — ele nunca passa por este proxy."
-            ).classes("text-xs text-gray-500")
+            ui.label(internet_help).classes("text-xs text-gray-500")
         with ui.column().classes("gap-0"):
             ui.switch(
                 "Modo restrito", value=system.restricted_network,
@@ -165,14 +220,12 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
                     notify("Modo restrito " + ("ligado — só os domínios da aba \"Domínios\" são liberados." if e.value else "desligado — voltou a usar a allow-list padrão."), kind="positive"),
                 ),
             ).props("data-testid=toggle-restricted-network")
-            ui.label(
-                "Ligado, substitui a allow-list padrão (provedor de LLM/broker + registros de pacote) "
-                "pela lista cadastrada na aba \"Domínios\" — só ela passa a valer."
-            ).classes("text-xs text-gray-500")
+            ui.label(restricted_help).classes("text-xs text-gray-500")
 
     with ui.row().classes("gap-2"):
         ui.button("Renomear sistema", icon="edit", on_click=lambda: open_rename_dialog()).props("dense outline data-testid=rename-system")
-        ui.button("Editar provedor/modelo", icon="bolt", on_click=lambda: open_provider_dialog()).props("dense outline data-testid=edit-provider")
+        if system.kind != "deploy_only":  # sem agente, sem provedor de LLM
+            ui.button("Editar provedor/modelo", icon="bolt", on_click=lambda: open_provider_dialog()).props("dense outline data-testid=edit-provider")
 
     with ui.dialog() as rename_dialog, ui.card().classes("w-96"):
         ui.label("Renomear sistema").classes("font-semibold text-lg")
@@ -530,9 +583,12 @@ def _render_network(system, user) -> None:
     efeito quando "Modo restrito" está ligado (aba Configurações), mas a
     lista pode ser editada com o modo desligado também."""
     manage = can_manage_system(user, system)
+    default_list = (
+        "registros de pacote" if system.kind == "deploy_only" else "provedor de LLM/broker + registros de pacote"
+    )
     ui.label(
         "Domínios liberados quando o \"Modo restrito\" está ligado (aba Configurações) — "
-        "substituem por completo a allow-list padrão (provedor de LLM/broker + registros de pacote)."
+        f"substituem por completo a allow-list padrão ({default_list})."
     ).classes("text-sm text-gray-500 mb-2")
 
     domains_box = ui.column().classes("w-full gap-1")

@@ -5,6 +5,9 @@ import json
 import os
 import time
 
+import pytest
+
+from afsupervisor import supervisor as _supervisor_module
 from afsupervisor.supervisor import (
     Supervisor,
     app_entry_exists,
@@ -17,6 +20,13 @@ FAKE_PROFILE = {
     "command": ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"],
     "cwd": "/opencode-config",
 }
+
+
+@pytest.fixture(autouse=True)
+def _pid_file(tmp_path, monkeypatch):
+    path = tmp_path / "aidb-app.pid"
+    monkeypatch.setattr(_supervisor_module, "APP_PID_FILE", str(path))
+    return path
 
 
 class FakeRunner:
@@ -332,3 +342,40 @@ def test_openspec_nao_sobrescreve_diretorio_global_real(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     Supervisor(runner=FakeRunner(), workspace=str(ws), agent_profile=FAKE_PROFILE).ensure_openspec()
     assert not real.is_symlink() and (real / "meu.md").exists()
+
+
+def test_supervisor_so_implantacao_sobe_so_a_app(tmp_path):
+    """change add-deploy-only-system, tarefa 2.1: sem harness e sem OpenSpec, só a app."""
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "main.py").write_text("print('app')\n")
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE,
+                     system_kind="deploy_only")
+    sup.start()
+    assert sup.harness_pid is None
+    assert runner.ran == [], "nenhum comando de preparação (OpenSpec) roda"
+    assert len(runner.spawned) == 1
+    cmd, cwd = runner.spawned[0]
+    assert cmd[-1] == "main.py" and cwd == str(app)
+    assert not (tmp_path / "openspec").exists()
+
+
+def test_supervisor_com_agente_continua_subindo_harness(tmp_path):
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE)
+    sup.start()
+    assert sup.harness_pid is not None
+    assert any(cmd == FAKE_PROFILE["command"] for cmd, _ in runner.spawned)
+
+
+def test_supervisor_grava_o_pid_da_app_a_cada_subida(tmp_path, _pid_file):
+    """O portal compara o PID antes e depois de implantar (add-deploy-only-system, D5)."""
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE, system_kind="deploy_only")
+    sup.start()
+    assert _pid_file.read_text().split() == [str(sup.app_pid), "placeholder"]
+    (tmp_path / "app").mkdir(exist_ok=True)
+    (tmp_path / "app" / "main.py").write_text("print('app')\n")
+    sup.poll()
+    assert _pid_file.read_text().split() == [str(sup.app_pid), "app"]

@@ -27,6 +27,27 @@ class WorkspaceWriteError(OSError):
     local sob o driver Docker."""
 
 
+def app_exec_command(command: list[str], env: dict[str, str] | None, timeout: int) -> list[str]:
+    """Comando de `exec_in_app` com o prazo aplicado dentro do container e as variáveis extras
+    acrescentadas ao ambiente herdado (mesma forma nos dois drivers)."""
+    extra = [f"{k}={v}" for k, v in (env or {}).items()]
+    return ["timeout", str(timeout), "env", *extra, *command]
+
+
+def files_tar(files: dict[str, bytes], uid: int = 1000, gid: int = 1000) -> bytes:
+    """Tar com `files` na raiz, do usuário da app (mesma forma nos dois drivers)."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.uid, info.gid = len(data), 0o644, uid, gid
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
 class ProvisioningDriver(Protocol):
     def ensure_ready(self) -> None:
         """Garante que a infraestrutura compartilhada do driver existe (rede/namespace)."""
@@ -68,4 +89,17 @@ class ProvisioningDriver(Protocol):
         porque nem toda rede do driver é alcançável por um processo HTTP rodando fora dela (o
         driver Kubernetes roda com o portal fora do cluster; `healthcheck_url()` aponta pra um
         nome DNS só resolvível de dentro)."""
+        ...
+
+    def exec_in_app(
+        self, system: System, command: list[str], *, env: dict[str, str] | None = None, timeout: int = 600
+    ) -> tuple[int, str, str]:
+        """Executa `command` no container da app, com a identidade da app e o ambiente dele
+        (proxy de saída incluso), e devolve (código, stdout, stderr). `env` acrescenta variáveis
+        só a esse comando (change add-deploy-only-system, D5)."""
+        ...
+
+    def write_app_files(self, system: System, directory: str, files: dict[str, bytes]) -> None:
+        """Grava `files` (nome → conteúdo) em `directory` dentro do container da app, como o
+        usuário da app — para a implantação preparar `uv sync` fora do workspace (D5)."""
         ...
