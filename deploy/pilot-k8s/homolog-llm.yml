@@ -1,0 +1,9 @@
+# Override do piloto: portal de homologação com o agente real (opencode) em vez do harness fake.
+# A chave do provedor de LLM é cadastrada pelo admin na UI (Administração), cifrada no banco.
+#
+#   docker compose -f deploy/docker-compose.e2e-gitlab.yml -f deploy/pilot-k8s/homolog-llm.yml \
+#     up -d --no-deps portal
+services:
+  portal:
+    environment:
+      APPAIFORGE_HARNESS_MODE: opencode

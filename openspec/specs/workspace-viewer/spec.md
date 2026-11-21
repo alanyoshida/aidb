@@ -28,6 +28,14 @@ Ao abrir a aba Editor, o portal SHALL listar em uma árvore, à esquerda, os arq
 - **WHEN** a pasta do projeto contém ambiente virtual ou cache de bytecode
 - **THEN** esses diretórios não aparecem na árvore
 
+#### Scenario: Planejamento do OpenSpec na árvore
+- **WHEN** o agente já criou changes ou specs do OpenSpec no workspace do sistema (por exemplo, `proposal.md`, `design.md` e `tasks.md` de uma change)
+- **THEN** a árvore mostra também uma pasta `openspec` só com as changes e as specs, que o editor abre e lê como os demais arquivos
+
+#### Scenario: OpenSpec recém-iniciado não conta como arquivo
+- **WHEN** o workspace só tem o que o `openspec init` cria (configuração e pastas vazias)
+- **THEN** a pasta `openspec` não aparece na árvore
+
 #### Scenario: Projeto ainda não gerado
 - **WHEN** o agente ainda não gerou nenhum arquivo para o sistema
 - **THEN** a aba Editor informa que não há arquivos ainda, em vez de mostrar uma árvore vazia sem explicação

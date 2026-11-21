@@ -145,3 +145,18 @@ def test_promocao_recusada_com_pendencia(linked_system, state, message):
     git_sync._update_remote(system.id, state=state)
     with pytest.raises(git_remote.InvalidRemote, match=message):
         git_sync.request_promotion(system, owner)
+
+
+def test_api_inacessivel_vira_mensagem_com_o_endereco(linked_system, gitlab):
+    """Piloto: com a URL da API errada (https://gitlab num GitLab só http), "Testar token" falhava
+    sem nada na tela, porque o erro de conexão do httpx escapava do tratamento."""
+    from appaiforge import git_sync
+
+    owner, system = linked_system
+    git_remote.configure(system, owner, url="git@gitlab.test:time/app.git", api_url="http://127.0.0.1:9")
+    git_remote.set_api_token(system, owner, TOKEN)
+    with pytest.raises(git_sync.RemoteError, match="inacessível em http://127.0.0.1:9") as exc:
+        git_sync.check_api_token(system)
+    assert exc.value.kind == "unreachable"
+    with pytest.raises(git_sync.RemoteError, match="inacessível"):
+        git_sync.request_promotion(system, owner)

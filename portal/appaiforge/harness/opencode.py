@@ -124,6 +124,8 @@ class OpencodeHarness(HarnessPort):
             log.warning("falha ao rejeitar pergunta do agente (%s): %s", request_id, exc)
 
     COMMAND_LIST_TIMEOUT = 2.0
+    # prazo de leitura do stream de eventos (o opencode manda heartbeat a cada poucos segundos)
+    EVENT_READ_TIMEOUT = 120.0
 
     def _fetch_commands(self, system: dict) -> list[dict]:
         """`GET /command` do opencode serve (confirmado na 1.19.5 — design D5)."""
@@ -231,7 +233,10 @@ class OpencodeHarness(HarnessPort):
 
     def _stream_events(self, base: str, session_id: str, on_event, on_connected=None) -> None:
         try:
-            with httpx.stream("GET", f"{base}/event", timeout=None) as sse:
+            # Prazo de leitura: o opencode manda server.heartbeat a cada poucos segundos, então
+            # 120s sem nenhuma linha significa conexão morta (ex.: container recriado no meio da
+            # execução). Sem prazo, a thread da fila do sistema ficava presa para sempre.
+            with httpx.stream("GET", f"{base}/event", timeout=httpx.Timeout(self.timeout, read=self.EVENT_READ_TIMEOUT)) as sse:
                 if on_connected is not None:
                     failure = on_connected(sse)
                     if failure:

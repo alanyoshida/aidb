@@ -244,7 +244,14 @@ def render_chat(
                 ).tooltip("Cancelar renomear")
 
             # --- log do chat ---------------------------------------------------
-            with ui.scroll_area().classes("w-full h-96 border rounded af-chat-scroll"):
+            # Rolagem automática: segue o fim da conversa enquanto o usuário estiver nele; quem
+            # subiu para reler não é puxado de volta. Enviar uma mensagem sempre leva ao fim.
+            follow = {"bottom": True}
+
+            def _on_chat_scroll(e) -> None:
+                follow["bottom"] = e.vertical_percentage >= 0.95 or e.vertical_size <= e.vertical_container_size
+
+            with ui.scroll_area(on_scroll=_on_chat_scroll).classes("w-full h-96 border rounded af-chat-scroll") as chat_scroll:
                 log_box = ui.column().classes("w-full gap-1 p-2 af-hide-debug")
                 approval_box = ui.column().classes("w-full")
             with ui.row().classes("w-full items-center justify-center gap-2"):
@@ -293,6 +300,9 @@ def render_chat(
 
     current_run: dict = {"id": None, "shown": 0}
     pending_prompt: dict = {"text": None}
+    # runs cujo pedido já está na tela: nenhum caminho desenha o mesmo pedido duas vezes (a run
+    # recém-enviada passa um tick na fila antes de começar, e refresh_state a via como "nova")
+    shown_prompts: set = set()
     empty_hint: dict = {"el": None}  # placeholder de sessão nova sem runs ainda
     # call_id -> label da linha de debug já renderizada, pra atualizar no lugar
     # em vez de empilhar uma segunda linha quando o mesmo comando muda de
@@ -300,6 +310,15 @@ def render_chat(
     # log_box é limpo (troca de sessão, nova run) — outra sessão não deve
     # reaproveitar o label de uma renderização anterior.
     debug_rows: dict = {}
+
+    def _scroll_to_end(force: bool = False) -> None:
+        if force:
+            follow["bottom"] = True
+        if follow["bottom"]:
+            # depois do desenho: rolar no mesmo ciclo em que o conteúdo entra leva ao fim antigo
+            ui.run_javascript(
+                f'setTimeout(() => getElement({chat_scroll.id}).setScrollPercentage("vertical", 1, 0), 150)'
+            )
 
     def _clear_empty_hint() -> None:
         if empty_hint["el"] is not None:
@@ -495,6 +514,7 @@ def render_chat(
         current_run["id"] = None
         current_run["shown"] = 0
         log_box.clear()
+        shown_prompts.clear()
         empty_hint["el"] = None  # log_box.clear() já removeu o elemento do DOM
         debug_rows.clear()
 
@@ -525,6 +545,7 @@ def render_chat(
             for run_id, run_prompt, run_at, run_status in run_data:
                 ui.chat_message(text=run_prompt, name=_sender_label("Você", run_at),
                                 sent=True, avatar=_AVATAR_USER)
+                shown_prompts.add(run_id)
                 # Uma run ainda em andamento (running/awaiting_approval) não
                 # tem seus eventos recarregados aqui — refresh_state() já
                 # faz esse replay a partir do buffer ao vivo assim que
@@ -534,8 +555,14 @@ def render_chat(
                 # sessão com run ativa).
                 if run_status not in (RunStatus.running, RunStatus.awaiting_approval):
                     _load_run_trace_or_events(run_id)
+                else:
+                    # o pedido desta run já está na tela: refresh_state só acrescenta os eventos
+                    # do buffer, sem limpar a conversa (antes, a limpeza apagava o pedido)
+                    current_run["id"] = run_id
+                    current_run["shown"] = 0
 
         _update_input_blocked()
+        _scroll_to_end(force=True)
         _load_sessions()
 
     def _new_session() -> None:
@@ -892,16 +919,20 @@ def render_chat(
                 _show_empty_hint("Selecione uma sessão ou crie uma nova para começar.")
         if running_here:
             if current_run["id"] != state["running"]:
+                # run desta sessão que começou sem passar por esta aba (outra aba, fila):
+                # acrescenta o pedido dela à conversa em vez de limpar o histórico
                 current_run["id"] = state["running"]
                 current_run["shown"] = 0
-                log_box.clear()
-                empty_hint["el"] = None  # log_box.clear() já removeu o elemento do DOM
+                _clear_empty_hint()
                 debug_rows.clear()
+                _append_run_prompt(current_run["id"])
             buffer = queue.buffers.get(current_run["id"])
             if buffer:
                 events = buffer.snapshot()
                 for event in events[current_run["shown"]:]:
                     render_event(log_box, event)
+                if len(events) > current_run["shown"]:
+                    _scroll_to_end()
                 current_run["shown"] = len(events)
             interrupt_btn.set_visibility(True)
             _update_input_blocked()
@@ -925,6 +956,8 @@ def render_chat(
                     events = buffer.snapshot()
                     for event in events[current_run["shown"]:]:
                         render_event(log_box, event)
+                    if len(events) > current_run["shown"]:
+                        _scroll_to_end()
                     current_run["shown"] = len(events)
             if state["running"] is not None:
                 set_state("agente ocupado em outra sessão", busy=True)
@@ -951,7 +984,25 @@ def render_chat(
             with log_box:
                 ui.chat_message(text=text, name=_sender_label("Você", datetime.now(timezone.utc)),
                                 sent=True, avatar=_AVATAR_USER)
+            shown_prompts.add(run.id)
+            _scroll_to_end(force=True)
             _load_sessions()
+
+    def _append_run_prompt(run_id: str) -> None:
+        from ..db import session_scope
+
+        if run_id in shown_prompts:
+            return
+        shown_prompts.add(run_id)
+
+        with session_scope() as s:
+            run = s.get(AgentRun, run_id)
+            data = (run.prompt, run.created_at) if run else None
+        if data is not None:
+            with log_box:
+                ui.chat_message(text=data[0], name=_sender_label("Você", data[1]),
+                                sent=True, avatar=_AVATAR_USER)
+            _scroll_to_end()
 
     def _load_run_events(run_id: str) -> None:
         from ..db import session_scope

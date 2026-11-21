@@ -59,6 +59,18 @@ class NotPermitted(Exception):
     pass
 
 
+def _default_model(provider: str) -> str:
+    """Modelo de um sistema criado sem escolher modelo: o padrão da plataforma se o provedor o
+    oferece (ou não tem lista), senão o primeiro do catálogo do provedor. Antes, um sistema
+    criado com OpenRouter ficava com glm-4.6, que não existe lá, e o agente não respondia."""
+    from . import catalog
+
+    default = get_settings().default_model
+    entry = catalog.get_provider(provider) or {}
+    models = entry.get("models") or []
+    return default if not models or default in models else models[0]
+
+
 def create_system(
     user: User,
     name: str,
@@ -98,7 +110,7 @@ def create_system(
             slug=slug,
             owner_id=user.id,
             provider=provider or settings.default_provider,
-            model=model or settings.default_model,
+            model=model or _default_model(provider or settings.default_provider),
             status=SystemStatus.provisioning,
             status_message=sandbox_warning,
             execution_mode=execution_mode,
@@ -251,8 +263,12 @@ def _reprovision_async(system_id: str) -> None:
             if fresh is not None:
                 provision_system(fresh)
                 publish_app(fresh)
-        except Exception:
+                set_status(system_id, SystemStatus.active, "")
+        except Exception as exc:
+            # sem isto a troca só aparecia no log: a página mostrava o provedor novo e o
+            # container seguia com o antigo
             log.exception("não foi possível aplicar o provedor ao sistema %s", system_id)
+            set_status(system_id, SystemStatus.error, f"não foi possível aplicar o provedor: {exc}")
 
     threading.Thread(target=work, daemon=True, name=f"refresh-provider-{system_id}").start()
 

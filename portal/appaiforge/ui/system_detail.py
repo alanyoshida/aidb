@@ -672,14 +672,32 @@ def _render_editor(system, user) -> None:
                 return
             with ui.row().classes("w-full items-center gap-2 q-mb-sm").props("data-testid=editor-file-header"):
                 ui.icon(workspace_files.icon_for(rel_path)).classes("text-sm")
-                ui.label(rel_path).classes("text-sm font-medium")
+                ui.label(workspace_files.display_path(rel_path)).classes("text-sm font-medium")
                 if content.language:
                     ui.badge(content.language, color="grey-6").props("data-testid=editor-file-language")
             ui.codemirror(content.text or "", language=content.language, theme=cm_theme).props("data-testid=editor-content").classes("w-full h-full").disable()
 
     def select_file(e) -> None:
+        # clicar no nome de uma pasta abre ou fecha a pasta, em vez de "selecionar" algo que
+        # não tem conteúdo (antes, só a setinha abria)
+        if e.value in state.get("folders", set()):
+            tree = state["tree"]
+            if e.value in (tree._props.get("expanded") or []):
+                tree.collapse([e.value])
+            else:
+                tree.expand([e.value])
+            tree.deselect()
+            return
         state["selected"] = e.value
         render_content()
+
+    def _folder_ids(nodes: list[dict]) -> set[str]:
+        ids: set[str] = set()
+        for node in nodes:
+            if node.get("children"):
+                ids.add(node["id"])
+                ids |= _folder_ids(node["children"])
+        return ids
 
     def _node_ids(nodes: list[dict]) -> set[str]:
         ids: set[str] = set()
@@ -708,7 +726,8 @@ def _render_editor(system, user) -> None:
             if not nodes:
                 ui.label("Nenhum arquivo gerado ainda.").props("data-testid=editor-empty").classes("text-gray-500 text-sm")
                 return
-            ui.tree(nodes, on_select=select_file).props("data-testid=editor-tree")
+            state["folders"] = _folder_ids(nodes)
+            state["tree"] = ui.tree(nodes, on_select=select_file).props("data-testid=editor-tree")
 
     refresh_tree()
     render_content()
