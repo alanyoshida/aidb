@@ -63,6 +63,19 @@ def app_entry_exists(app_dir: str) -> bool:
     return os.path.isfile(os.path.join(app_dir, "main.py"))
 
 
+# Texto do placeholder por tipo de sistema: o sistema só implantação não tem chat nem agente,
+# a app dele chega por uma versão implantada pela aba Implantação do portal.
+PLACEHOLDER_MESSAGES = {
+    "agent": "AIDB: app ainda nao gerada para este sistema.\nUse o chat do portal.\n",
+    "deploy_only": "AIDB: nenhuma versao implantada neste sistema ainda.\n"
+                   "Implante uma versao pela aba Implantacao do portal.\n",
+}
+
+
+def placeholder_message(system_kind: str) -> str:
+    return PLACEHOLDER_MESSAGES.get(system_kind, PLACEHOLDER_MESSAGES["agent"])
+
+
 _PLACEHOLDER_CODE = '''
 import base64, hashlib, hmac, json, os, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -123,7 +136,7 @@ class R(BaseHTTPRequestHandler):
             body = "AIDB: acesso restrito. Abra a app pelo portal.\\n".encode()
             self.send_response(401)
         else:
-            body = "AIDB: app ainda nao gerada para este sistema.\\nUse o chat do portal.\\n".encode()
+            body = {message!r}.encode()
             self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -320,7 +333,7 @@ class Supervisor:
             self.is_placeholder = False
         else:
             self.app_pid = self.runner.spawn(
-                [sys.executable, "-c", _PLACEHOLDER_CODE.format(port=self.app_port)]
+                [sys.executable, "-c", _PLACEHOLDER_CODE.format(port=self.app_port, message=placeholder_message(self.system_kind))]
             )
             self.is_placeholder = True
         self._record_app_start()

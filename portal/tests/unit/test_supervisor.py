@@ -379,3 +379,49 @@ def test_supervisor_grava_o_pid_da_app_a_cada_subida(tmp_path, _pid_file):
     (tmp_path / "app" / "main.py").write_text("print('app')\n")
     sup.poll()
     assert _pid_file.read_text().split() == [str(sup.app_pid), "app"]
+
+
+def _placeholder_text(tmp_path, system_kind: str) -> str:
+    """Sobe o código do placeholder de verdade e lê a página com um token legado válido."""
+    import base64
+    import hashlib
+    import hmac
+    import socket
+    import subprocess
+    import sys
+    import urllib.request
+
+    runner = FakeRunner()
+    sup = Supervisor(runner=runner, workspace=str(tmp_path), agent_profile=FAKE_PROFILE,
+                     system_kind=system_kind)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        sup.app_port = s.getsockname()[1]
+    sup.start_app()
+    cmd = next(c for c, _ in runner.spawned if "-c" in c)
+    secret = "segredo-de-teste"
+    body = base64.urlsafe_b64encode(json.dumps({"exp": time.time() + 60}).encode()).decode().rstrip("=")
+    token = body + "." + hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+    proc = subprocess.Popen([sys.executable, *cmd[1:]], env={**os.environ, "APP_IDENTITY_SECRET": secret})
+    try:
+        for _ in range(50):
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{sup.app_port}/?t={token}", timeout=1) as r:
+                    return r.read().decode()
+            except OSError:
+                time.sleep(0.1)
+        raise AssertionError("placeholder não respondeu")
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_placeholder_de_sistema_com_agente_aponta_para_o_chat(tmp_path):
+    text = _placeholder_text(tmp_path, "agent")
+    assert "ainda nao gerada" in text and "chat do portal" in text
+
+
+def test_placeholder_de_sistema_so_implantacao_aponta_para_a_aba_implantacao(tmp_path):
+    text = _placeholder_text(tmp_path, "deploy_only")
+    assert "chat" not in text
+    assert "nenhuma versao implantada" in text and "aba Implantacao" in text
