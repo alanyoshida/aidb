@@ -7,7 +7,7 @@ Registros existentes ficam como `run`.
 
 Revision ID: d7e8f9a0b1c2
 Revises: c5d6e7f8a9b0
-Create Date: 2026-11-21 12:00:00.000000
+Create Date: 2026-11-20 12:00:00.000000
 
 """
 import sqlalchemy as sa

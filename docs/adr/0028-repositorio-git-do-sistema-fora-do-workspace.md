@@ -1,7 +1,7 @@
 # 0028 — Repositório git do sistema fora do workspace; restauração sem reescrever histórico
 
 * Status: aceito
-* Data: 2026-11-21
+* Data: 2026-11-20
 * Decidida em: change `isolate-workspace-repository` (design D1-D5)
 * Substitui: a parte de rollback do [0009](0009-git-por-sistema-com-checkpoints.md)
 

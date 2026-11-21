@@ -72,7 +72,7 @@ Regra do projeto (`CLAUDE.md`): rodar a análise de impacto do GitNexus antes de
 ## 10. Verificação integrada
 
 - [x] 10.1 Rodar `uv run pytest tests/unit tests/bdd tests/integration` e as suítes `tests/e2e`, `tests/e2e_oidc` e `tests/e2e_gitlab`, cada uma no seu stack; verificar que todas passam
-  - Rodado em 2026-11-21: unitários + BDD 592/592; integração 119/119 (Docker e Kubernetes); `tests/e2e` 36/37 — `test_admin_gerencia_acoes_de_grupo` instável, passou isolado duas vezes, sem relação com a change; `tests/e2e_oidc` 8/8; `tests/e2e_gitlab` 6/6. A suíte E2E pegou um defeito de limpeza (vínculos de remoto impediam apagar sistemas de teste), corrigido.
+  - Rodado em 2026-11-20: unitários + BDD 592/592; integração 119/119 (Docker e Kubernetes); `tests/e2e` 36/37 — `test_admin_gerencia_acoes_de_grupo` instável, passou isolado duas vezes, sem relação com a change; `tests/e2e_oidc` 8/8; `tests/e2e_gitlab` 6/6. A suíte E2E pegou um defeito de limpeza (vínculos de remoto impediam apagar sistemas de teste), corrigido.
 - [x] 10.2 Subir o stack de desenvolvimento e verificar manualmente que um sistema sem repositório configurado se comporta como antes desta change
   - Feito pela suíte `tests/e2e` (37 cenários com sistemas sem repositório configurado), não pela stack de desenvolvimento, para não alterar os sistemas reais.
 - [x] 10.3 Rodar `openspec validate add-system-git-remote --strict` e verificar que passa

@@ -1,7 +1,7 @@
 # 0029 — Repositório remoto do sistema: envio pelo portal, chave e token fora do container
 
 * Status: aceito
-* Data: 2026-11-21
+* Data: 2026-11-20
 * Decidida em: change `add-system-git-remote` (design D1, D2, D7)
 * Retoma: a opção futura "push automático para GitHub/GitLab" do [0009](0009-git-por-sistema-com-checkpoints.md)
 
