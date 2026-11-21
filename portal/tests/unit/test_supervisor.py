@@ -54,6 +54,9 @@ class FakeRunner:
     def alive(self, pid):
         return pid not in self.dead
 
+    def reap_orphans(self):
+        return 0
+
     def kill(self, pid):
         self.killed.append(pid)
         self.dead.add(pid)
@@ -425,3 +428,55 @@ def test_placeholder_de_sistema_so_implantacao_aponta_para_a_aba_implantacao(tmp
     text = _placeholder_text(tmp_path, "deploy_only")
     assert "chat" not in text
     assert "nenhuma versao implantada" in text and "aba Implantacao" in text
+
+
+_ORPHAN_SCRIPT = r"""
+import ctypes, os, subprocess, sys, time
+sys.path.insert(0, sys.argv[1])
+from afsupervisor.supervisor import ProcessRunner
+
+# subreaper: os órfãos dos descendentes viram filhos deste processo, como no PID 1 de um container
+assert ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0  # PR_SET_CHILD_SUBREAPER
+runner = ProcessRunner()
+tracked = runner.spawn([sys.executable, "-c", "import sys; sys.exit(3)"])
+# o filho cria um neto e sai na hora; o neto sai logo depois, órfão
+subprocess.run(["sh", "-c", "(sleep 0.3; exit 0) & exit 0"])
+time.sleep(1.5)
+
+def zombies():
+    out = []
+    for e in os.listdir("/proc"):
+        if e.isdigit():
+            try:
+                st = open(f"/proc/{e}/stat").read()
+            except OSError:
+                continue
+            f = st[st.rfind(")") + 2:].split()
+            if f[0] == "Z" and int(f[1]) == os.getpid():
+                out.append(int(e))
+    return out
+
+before = zombies()
+reaped = runner.reap_orphans()
+after = zombies()
+print(len(before), reaped, after == [tracked], runner._children[tracked].poll())
+"""
+
+
+def test_supervisor_recolhe_orfaos_sem_tocar_nos_filhos_registrados():
+    """Os processos que o agente abandona viram filhos do PID 1 (o supervisor) e ficavam zumbis
+    para sempre. O supervisor recolhe só os que não registrou: o status de saída dos registrados
+    (que alive() consulta) fica intacto."""
+    import pathlib
+    import subprocess
+    import sys
+
+    base_image = pathlib.Path(__file__).parents[3] / "base-image"
+    out = subprocess.run([sys.executable, "-c", _ORPHAN_SCRIPT, str(base_image)],
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    zumbis_antes, recolhidos, so_o_registrado_sobra, status_registrado = out.stdout.split()
+    assert int(zumbis_antes) == 2  # o neto órfão e o filho registrado que já saiu
+    assert int(recolhidos) == 1
+    assert so_o_registrado_sobra == "True"
+    assert status_registrado == "3"
