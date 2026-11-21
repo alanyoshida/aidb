@@ -129,6 +129,7 @@ class KubernetesProvisioningDriver:
             ),
             spec=k8s.V1PodSpec(
                 restart_policy="Always",
+                image_pull_secrets=_image_pull_secrets(settings),
                 security_context=_pod_security_context(system.execution_mode),
                 containers=containers,
                 volumes=[
@@ -677,6 +678,12 @@ def _git_container(system: System, settings) -> k8s.V1Container:
             k8s.V1VolumeMount(name="gitdir", mount_path=GITDIR_MOUNT),
         ],
     )
+
+
+def _image_pull_secrets(settings) -> list[k8s.V1LocalObjectReference] | None:
+    """Secrets de pull dos Pods de sistema (registro privado), de `k8s_image_pull_secrets`."""
+    names = [n.strip() for n in (settings.k8s_image_pull_secrets or "").split(",") if n.strip()]
+    return [k8s.V1LocalObjectReference(name=n) for n in names] or None
 
 
 def _health_check_command(app_port: int) -> list[str]:

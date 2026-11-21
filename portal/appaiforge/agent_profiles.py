@@ -18,6 +18,10 @@ FROM_PROVIDER = "from_provider"
 # resolvida em get_profile, para que um cluster com registro próprio troque a imagem dos sistemas
 # por configuração, e não só a dos sidecars.
 BASE_IMAGE = "base_image"
+# Mesma ideia para a imagem do perfil claude-code (`settings.claude_code_image`).
+CLAUDE_CODE_IMAGE = "claude_code_image"
+# Marcador da imagem do perfil -> configuração que a define.
+_IMAGE_SETTINGS = {BASE_IMAGE: "base_image", CLAUDE_CODE_IMAGE: "claude_code_image"}
 
 PROFILES: dict[str, dict] = {
     "opencode": {
@@ -105,7 +109,7 @@ PROFILES: dict[str, dict] = {
         # invocada por prompt, como subprocesso curto, de dentro do shim.
         "command": ["python3", "/opt/claude-code-shim/shim.py"],
         "cwd": "/workspace",
-        "image": "appaiforge/claude-code:0.1.0",
+        "image": CLAUDE_CODE_IMAGE,
         # Diretório montado só-leitura, fora do workspace (spec agent-runtime,
         # "Perfil entregue ao container sem segredo") — guarda settings.json
         # (D3) e, quando o sistema tem alguma DbConnection, mcp-servers.json
@@ -179,10 +183,11 @@ def get_profile(name: str | None = None) -> dict:
     if profile is None:
         raise UnknownProfile(f"perfil de agente '{key}' não registrado")
     resolved = dict(profile)
-    if resolved["image"] == BASE_IMAGE:
+    setting = _IMAGE_SETTINGS.get(resolved["image"])
+    if setting is not None:
         from .config import get_settings
 
-        resolved["image"] = get_settings().base_image
+        resolved["image"] = getattr(get_settings(), setting)
     return resolved
 
 

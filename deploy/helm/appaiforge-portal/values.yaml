@@ -117,8 +117,15 @@ portal:
 
   # Imagem dos Pods de sistema (vazio = padrão do portal, appaiforge/base:0.1.0). Num cluster
   # real, a do seu registro, ex.: registro.exemplo.com/appaiforge/base:1.4.2. Com registro
-  # privado, anexe o Secret de pull ao ServiceAccount `default` do namespace dos sistemas.
+  # privado, liste o Secret de pull em systemImagePullSecrets.
   baseImage: ""
+
+  # Imagem dos sistemas com o perfil de agente claude-code (vazio = appaiforge/claude-code:0.1.0).
+  claudeCodeImage: ""
+
+  # Secrets de pull dos Pods de sistema (registro privado). Precisam existir no namespace dos
+  # sistemas. Ex.: [registro-credenciais]
+  systemImagePullSecrets: []
 
   # Implantação de versões dos sistemas só implantação (só vale com installationRole=production).
   deploy:

@@ -257,3 +257,12 @@ def test_imagem_do_perfil_padrao_segue_a_imagem_base_configurada(monkeypatch):
     assert get_profile("opencode")["image"] == "registro.exemplo.com/appaiforge/base:1.4.2"
     assert get_profile()["image"] == "registro.exemplo.com/appaiforge/base:1.4.2"
     assert get_profile("claude-code")["image"] == "appaiforge/claude-code:0.1.0"
+
+
+def test_imagem_do_claude_code_segue_a_configuracao(monkeypatch):
+    """Pendência do piloto: a imagem do perfil claude-code era fixa no código."""
+    from appaiforge.config import get_settings
+
+    assert get_profile("claude-code")["image"] == "appaiforge/claude-code:0.1.0"
+    monkeypatch.setattr(get_settings(), "claude_code_image", "registro.exemplo.com/appaiforge/claude-code:1.5.2")
+    assert get_profile("claude-code")["image"] == "registro.exemplo.com/appaiforge/claude-code:1.5.2"

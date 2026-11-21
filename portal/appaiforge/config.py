@@ -44,9 +44,14 @@ class Settings(BaseSettings):
     # validação, sem nenhuma ação deste driver; depender dele é frágil). Vazio = comportamento
     # do cliente padrão (current-context), só aceitável fora deste cluster de validação.
     k8s_kubeconfig_context: str = "kind-appaiforge-dev"
+    # Secrets de pull (separados por vírgula) para os Pods de sistema, quando as imagens estão
+    # num registro privado. Precisam existir no namespace dos sistemas.
+    k8s_image_pull_secrets: str = ""
 
     # Docker
     base_image: str = "appaiforge/base:0.1.0"
+    # Imagem dos sistemas com o perfil de agente claude-code (no chart, portal.claudeCodeImage).
+    claude_code_image: str = "appaiforge/claude-code:0.1.0"
     docker_network: str = "appaiforge-net"
     # Raiz dos workspaces visível ao portal (dentro do container do portal em compose).
     workspaces_dir: str = "/workspaces"

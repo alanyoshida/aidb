@@ -62,3 +62,13 @@ def test_container_do_agente_sem_liveness_probe():
                                                                     container_mem_mb=512, container_disk_gb=1))
     assert container.readiness_probe is not None
     assert container.liveness_probe is None
+
+
+def test_secrets_de_pull_dos_pods_de_sistema():
+    from types import SimpleNamespace
+
+    from appaiforge.drivers.kubernetes_driver import _image_pull_secrets
+
+    assert _image_pull_secrets(SimpleNamespace(k8s_image_pull_secrets="")) is None
+    refs = _image_pull_secrets(SimpleNamespace(k8s_image_pull_secrets=" registro-a, registro-b ,"))
+    assert [r.name for r in refs] == ["registro-a", "registro-b"]
