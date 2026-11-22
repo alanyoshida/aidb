@@ -153,6 +153,19 @@ Alternativa descartada: só o trivy. Os dois motores têm regras diferentes, e o
 
 Alternativa descartada: varrer só `/app` e `/opt`. Um segredo copiado por engano pode cair em qualquer pasta. A allowlist por caminho de sistema é mais estreita que uma lista de pastas a varrer.
 
+### D11. Testes de unidade como root na CI (achado na primeira execução)
+
+Na primeira execução no GitHub, 20 testes de provisionamento falharam com `Operation not permitted`. O provisionamento de sistemas `reduced` e `sandboxed` faz `os.chown` do workspace para o uid do agente, 1000 (ADR 0018):
+- o portal roda como root no container, então funciona;
+- na máquina de desenvolvimento, o usuário costuma ser o próprio uid 1000, e o `chown` não muda nada;
+- o usuário `runner` do GitHub não é nenhum dos dois.
+
+A etapa do pytest roda com `sudo`, preservando o ambiente. É o mesmo privilégio do portal em produção. Nenhum teste de unidade depende de rodar sem root: os `PermissionError` testados são de autorização do portal ou do Landlock, que vale também para root. Os testes de `base-image/` continuam como `runner`.
+
+Alternativa descartada: criar no runner um usuário com uid 1000. Seria mais parecido com a máquina de desenvolvimento, mas depende das permissões da pasta do runner e das ferramentas instaladas nela, que não dá para verificar fora do GitHub.
+
+Alternativa descartada: só tornar o `chown` tolerante a erro. O workspace ficaria inacessível ao container não-root, e o problema apareceria mais tarde e mais longe.
+
 ## Risks / Trade-offs
 
 - **[Testcontainers lento ou instável no runner]:** cada worker do xdist sobe um Postgres. O `-n auto` usa os núcleos do runner, quatro nos públicos. → Se ficar instável, fixar `-n 2`.

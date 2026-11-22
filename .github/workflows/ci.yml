@@ -56,7 +56,10 @@ jobs:
         run: uv sync --frozen
       - name: Unitários e BDD
         working-directory: portal
-        run: uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd
+        # como root, igual ao portal no container: o provisionamento dá o workspace ao uid do
+        # agente (os.chown para 1000), o que o usuário `runner` não pode fazer. Na máquina de
+        # desenvolvimento passa porque o próprio usuário costuma ser o uid 1000.
+        run: sudo --preserve-env env "PATH=$PATH" uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd
       - name: Componentes da imagem base
         # pasta por pasta: dois test_sidecar.py colidem numa coleta única
         run: |
