@@ -1,7 +1,7 @@
 # Roadmap — confinamento e política do agente
 
 > **Status**: plano aceito; etapas 1–8 concluídas.
-> **Última revisão**: 2026-11-11.
+> **Última revisão**: 2026-11-21.
 > Documento de trabalho de longa duração: uma change OpenSpec por etapa, na ordem abaixo.
 > Ao concluir uma etapa, marque na tabela e registre o ADR correspondente em
 > [`docs/adr/`](adr/README.md).
@@ -644,13 +644,15 @@ initContainer pro gate de rede (o texto original desta seção, abaixo) — o dr
 etapa mantém o Landlock de rede do agente como está hoje, sem reescrever a interceptação do
 gate para IP; cluster gerenciado real (EKS/GKE/AKS).
 
-**Pendência futura — Gateway API no lugar do Ingress/IngressRoute do Traefik**: o roteamento de
-`/apps/{slug}` desta etapa usa `IngressRoute`+`Middleware`, CRDs específicos do Traefik — portáveis
-pro Traefik instalado em qualquer cluster, mas não pra outro controller de ingress. Gateway API é o
-sucessor padronizado (`HTTPRoute` é da própria API do Kubernetes, não CRD de vendor), e o texto
-original do plano (abaixo) já previa Service por sandbox + Gateway API no lugar do file provider.
-Não bloqueia nada hoje; vira trabalho real só se o cluster gerenciado real (item acima) usar outro
-ingress controller.
+**Gateway API no lugar do Ingress/IngressRoute do Traefik — endereçado** pela change
+`gateway-api-traefik-subchart` ([ADR 0032](adr/0032-gateway-api-com-traefik-como-implementacao.md)).
+O Traefik passou a ser subchart do chart do portal e implementação da Gateway API: no modo de
+roteamento `gateway`, cada sistema tem um `HTTPRoute`, e a autenticação continua sendo o
+`Middleware` `forwardAuth` do Traefik, referenciado por `ExtensionRef` — o único acoplamento que
+sobra, porque a Gateway API ainda não tem `ExternalAuth` estável. Nesta versão o modo `gateway` é
+opcional; o padrão continua `ingressroute` (as rotas de antes), e uma change seguinte o remove.
+Um controlador de entrada que não seja Traefik (o gerenciado de uma nuvem, por exemplo) exigiria
+outra autenticação (sidecar no Pod ou `ExternalAuth`), registrada no ADR como alternativa.
 
 ---
 
@@ -794,17 +796,19 @@ sudo sed -i 's/^GRUB_CMDLINE_LINUX="\(.*\)"/GRUB_CMDLINE_LINUX="\1 lsm=landlock,
   specs novas (`agent-sandbox`, `agent-policy`), reescrita de `destructive-gate`, ajustes em
   `container-lifecycle` e `llm-provider-keys`.
 
-## Spikes abertos
+## Spikes
+
+Todos fechados — a tabela fica como registro das respostas.
 
 | # | Pergunta | Bloqueia |
 |---|---|---|
-| S1 | Regras de rede do Landlock se aplicam a loopback? | Etapa 5 |
+| ~~S1~~ | ✅ Sim — as regras de rede do Landlock são por porta, agnósticas de endereço, e valem em loopback: porta liberada conecta, não liberada nega com `PermissionError`; virou teste (ADR 0022) | Etapa 5 |
 | ~~S2~~ | ✅ `pyseccomp` dá conta sozinho — verificado neste host (filtro real, nega syscall com EPERM, resto passa) | Etapa 2 |
 | ~~S3~~ | ✅ `memfd_create` quebraria o JIT de Bun (sem MPK neste host) — tirado do denylist; `io_uring_setup` confirmado seguro (fallback automático do Bun) | Etapa 2 |
-| S4 | LiteLLM cobre todos os provedores do catálogo (GLM, OpenRouter, openai-compatible)? | Etapa 3 |
-| S5 | Quanto falso-positivo o modo sombra do gate revela? | Etapa 4 |
-| S6 | SSE e cancelamento atravessam o broker sem buffering? | Etapa 3 |
-| S7 | O opencode aceita token opaco como credencial, sem validar formato? | Etapa 3 |
+| ~~S4~~ | ✅ Cobre todos — OpenRouter, Anthropic e openai-compatible nativos; GLM sem provider nativo, roteado pela rota openai-compatible com `api_base` do Z.ai (design da change `inference-broker`) | Etapa 3 |
+| ~~S5~~ | ✅ Sem objeto — o ADR 0023 tornou `confirmável` recusado direto (tratamento uniforme, igual a DDL), e o default virou `enforce` por decisão do operador, sem período formal de comparação | Etapa 4 |
+| ~~S6~~ | ✅ Sim — chunks entregues incrementalmente, e fechar o cliente aborta o upstream na hora (design da change `inference-broker`) | Etapa 3 |
+| ~~S7~~ | ✅ Aceita, e repassa como `Authorization: Bearer`; achado: com o provider `openai` ele usa `/v1/responses`, que o broker também encaminha (design da change `inference-broker`) | Etapa 3 |
 
 ## Fora de escopo (limites aceitos)
 

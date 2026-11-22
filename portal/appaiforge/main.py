@@ -77,6 +77,11 @@ def create_app() -> FastAPI:
 
     recover_interrupted()  # implantação interrompida por reinício (add-deploy-only-system, D6)
 
+    from .provisioning import republish_routes
+
+    # Kubernetes: rotas dos sistemas ativos no modo de roteamento atual (gateway-api-traefik-subchart, D6)
+    republish_routes()
+
     telemetry.start_span_cleanup_timer()
 
     @application.get("/api/health")

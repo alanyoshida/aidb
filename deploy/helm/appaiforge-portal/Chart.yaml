@@ -12,3 +12,12 @@ keywords:
   - appaiforge
   - aidb
   - nicegui
+# Traefik como controlador de entrada e implementação da Gateway API (change
+# gateway-api-traefik-subchart, D3). Desligável com traefik.enabled=false para um cluster que já
+# tem um Traefik. O pacote fica versionado em charts/ (com Chart.lock) para `helm template` e o
+# teste do chart funcionarem sem rede (D7). Atualizar a versão é uma change própria.
+dependencies:
+  - name: traefik
+    version: 42.3.2
+    repository: https://traefik.github.io/charts
+    condition: traefik.enabled

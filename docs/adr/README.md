@@ -43,3 +43,4 @@ Registro das decisões arquiteturais e de produto da plataforma, em formato MADR
 | [0029](0029-repositorio-remoto-por-retransmissao-no-portal.md) | Repositório remoto do sistema: envio pelo portal por cópia de retransmissão, chave e token fora do container, API só para a promoção | aceito |
 | [0030](0030-sistema-so-implantacao-no-portal-de-producao.md) | Sistema só implantação: o portal de produção implanta tags verificadas na branch de destino, sem agente nem credencial de LLM | aceito |
 | [0031](0031-isolacao-por-instalacao-do-portal.md) | Isolação por instalação: cada portal só remove ou adota os próprios containers, e a produção exige host Docker próprio | aceito |
+| [0032](0032-gateway-api-com-traefik-como-implementacao.md) | Gateway API com o Traefik como implementação (auth por `ExtensionRef` ao `forwardAuth`), Traefik como subchart e dois modos de roteamento transitórios | aceito |

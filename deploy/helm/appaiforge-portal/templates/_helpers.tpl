@@ -60,6 +60,40 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
+Modo de roteamento (change gateway-api-traefik-subchart, D0) e o Gateway das rotas no modo
+gateway (D3): o deste chart quando o subchart do Traefik está ligado, senão `gateway.existing`.
+*/}}
+{{- define "appaiforge-portal.validateRouting" -}}
+{{- if not (has .Values.routing.mode (list "ingressroute" "gateway")) -}}
+{{- fail (printf "routing.mode deve ser ingressroute ou gateway (recebido: %s)" .Values.routing.mode) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.gatewayMode" -}}
+{{- if eq .Values.routing.mode "gateway" -}}true{{- end -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.createsGateway" -}}
+{{- if and (eq .Values.routing.mode "gateway") .Values.traefik.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.gatewayName" -}}
+{{- if .Values.traefik.enabled -}}
+{{- include "appaiforge-portal.fullname" . -}}
+{{- else -}}
+{{- required "routing.mode=gateway com traefik.enabled=false exige gateway.existing.name e gateway.existing.namespace: informe o Gateway já existente no cluster que as rotas vão usar" .Values.gateway.existing.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.gatewayNamespace" -}}
+{{- if .Values.traefik.enabled -}}
+{{- .Release.Namespace -}}
+{{- else -}}
+{{- required "routing.mode=gateway com traefik.enabled=false exige gateway.existing.name e gateway.existing.namespace: informe o Gateway já existente no cluster que as rotas vão usar" .Values.gateway.existing.namespace -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Guardas de produção (change add-production-portal-install, D4): um portal de produção não
 semeia o admin de demonstração e lê os segredos de um Secret criado fora do Helm.
 */}}
@@ -75,4 +109,20 @@ semeia o admin de demonstração e lê os segredos de um Secret criado fora do H
 {{- fail "portal.installationRole=production exige secrets.existingSecret: crie o Secret fora do Helm (chaves secretKey, dbGateProxyServiceToken, postgresPassword) em vez de usar os valores de dev" -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Namespaces cujas rotas o Gateway deste chart aceita: o da release (rota do portal) e o dos
+sistemas (rotas que o driver cria), que podem ser o mesmo.
+*/}}
+{{- define "appaiforge-portal.gatewayAllowedNamespaces" -}}
+from: Selector
+selector:
+  matchExpressions:
+    - key: kubernetes.io/metadata.name
+      operator: In
+      values:
+        {{- range uniq (list .Release.Namespace (include "appaiforge-portal.systemsNamespace" .)) }}
+        - {{ . | quote }}
+        {{- end }}
 {{- end -}}

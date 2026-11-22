@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # Secrets de pull (separados por vírgula) para os Pods de sistema, quando as imagens estão
     # num registro privado. Precisam existir no namespace dos sistemas.
     k8s_image_pull_secrets: str = ""
+    # Modo de roteamento de /apps/<slug> no driver Kubernetes (change gateway-api-traefik-subchart,
+    # D0): "ingressroute" (padrão, IngressRoute + Middleware do Traefik) ou "gateway" (HTTPRoute
+    # da Gateway API). Transitório: o "ingressroute" sai numa change seguinte.
+    k8s_routing_mode: str = "ingressroute"
+    # Gateway ao qual o HTTPRoute de cada sistema se liga (modo gateway); o chart sempre define.
+    k8s_gateway_name: str = ""
+    k8s_gateway_namespace: str = ""
+    # Host da rota do portal, repetido nas rotas dos sistemas no modo gateway para /apps/<slug>
+    # não ser capturado pela rota "/" do portal (D2). Vazio = rotas sem hostname.
+    k8s_route_hostname: str = ""
 
     # Imagens dos sistemas (os dois drivers). No Kubernetes, trocar uma delas (ou os Secrets de
     # pull) faz a reconciliação recriar os Pods que ainda usam a anterior.

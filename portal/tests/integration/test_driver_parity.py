@@ -40,7 +40,7 @@ def _cleanup(driver: str, system) -> None:
     unpublish_app(system.slug)
     stop_and_remove(system)
     if driver == "kubernetes":
-        # Service/IngressRoute/Middleware não são tocados por `stop_and_remove` (ver
+        # Service e objetos de rota não são tocados por `stop_and_remove` (ver
         # DockerProvisioningDriver.remove e KubernetesProvisioningDriver.remove) — `unpublish_app`
         # acima já cuida deles pelos dois drivers. O PVC do workspace também não é tocado por
         # `remove()` — deliberado em produção (preserva o workspace ao arquivar), mas este é um
