@@ -710,6 +710,30 @@ def publish_app_by_slug(slug: str) -> None:
         publish_app(system)
 
 
+def republish_routes() -> int:
+    """Republica a rota de todo sistema ativo, no boot do portal, sob o driver Kubernetes (change
+    gateway-api-traefik-subchart, D6): é o que faz uma troca de `k8s_routing_mode` valer para os
+    sistemas que já existem, nos dois sentidos — o `publish` de cada modo cria os objetos dele e
+    apaga os do outro, sem recriar Pods. Só as rotas: `reconcile()` (containers) não roda no boot.
+    Uma falha num sistema é registrada e não impede os demais nem a subida do portal. Devolve
+    quantos sistemas foram republicados."""
+    if get_settings().provisioning_driver != "kubernetes":
+        return 0
+    with session_scope() as s:
+        systems = list(s.execute(select(System).where(System.status == SystemStatus.active)).scalars())
+        for system in systems:
+            s.expunge(system)
+    published = 0
+    for system in systems:
+        try:
+            publish_app(system)
+            published += 1
+        except Exception:  # noqa: BLE001 - um sistema com problema não segura o boot
+            log.exception("republicação da rota de %s falhou no boot", system.slug)
+    log.info("rotas republicadas no boot: %d de %d sistemas ativos", published, len(systems))
+    return published
+
+
 def archive_system(system: System, actor_id: str | None = None, actor_email: str | None = None) -> None:
     """Arquiva: para o container, preserva workspace, remove rota (spec container-lifecycle)."""
     stop_and_remove(system)

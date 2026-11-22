@@ -28,6 +28,16 @@ from kubernetes.client.rest import ApiException
 
 _TRAEFIK_GROUP = "traefik.io"
 _TRAEFIK_VERSION = "v1alpha1"
+_GATEWAY_GROUP = "gateway.networking.k8s.io"
+_GATEWAY_VERSION = "v1"
+
+# Modos de roteamento de /apps/<slug> (change gateway-api-traefik-subchart, D0). Transitório: o
+# "ingressroute" sai numa change seguinte, junto da limpeza cruzada de `_route_objects_to_delete`.
+ROUTING_MODES = ("ingressroute", "gateway")
+
+
+class UnknownRoutingMode(ValueError):
+    """`k8s_routing_mode` fora de `ROUTING_MODES`, ou modo gateway sem o Gateway configurado."""
 
 from ..models import ExecutionMode, System
 from .base import ComputeUnitNotFound, WorkspaceWriteError
@@ -82,6 +92,7 @@ class KubernetesProvisioningDriver:
     def ensure_ready(self) -> None:
         from .. import provisioning as _p
 
+        _routing_mode(_p.get_settings())  # modo inválido impede o portal de subir (D0)
         api = _api()
         name = _p.get_settings().k8s_namespace
         try:
@@ -219,10 +230,15 @@ class KubernetesProvisioningDriver:
         _p.provision_system(system)
 
     def publish(self, system: System) -> None:
-        """Garante Service + Middleware (stripPrefix) + IngressRoute pra `/apps/{slug}` —
-        equivalente ao `apps-<slug>.yml` que o driver Docker escreve pro file provider do
-        Traefik, só que como objetos nativos do cluster (Traefik roda dentro dele, D4 do
-        design), lidos via CRD (`providers.kubernetesCRD`) em vez de arquivo compartilhado.
+        """Garante o Service e a rota de `/apps/{slug}` no modo de roteamento configurado
+        (change gateway-api-traefik-subchart): no modo `ingressroute`, Middlewares (forwardAuth +
+        stripPrefix) + IngressRoute, equivalentes ao `apps-<slug>.yml` que o driver Docker escreve
+        pro file provider do Traefik; no modo `gateway`, o Middleware de forwardAuth + um
+        HTTPRoute da Gateway API. Depois apaga os objetos de rota do OUTRO modo (D6): como a
+        republicação do boot (`provisioning.republish_routes`) chama `publish` para todo sistema
+        ativo, trocar o modo migra as rotas nos dois sentidos sem recriar Pods. Os objetos são
+        substituídos no lugar, sem apagar antes (D5), para nenhuma republicação abrir janela sem
+        rota.
 
         O `Service` também expõe `harness_port` (change `deploy-portal-in-cluster`) — o portal,
         rodando dentro do cluster, alcança o harness do agente pelo DNS deste mesmo `Service`
@@ -258,10 +274,21 @@ class KubernetesProvisioningDriver:
             else:
                 raise
 
+        mode = _routing_mode(settings)
         custom = _custom_api()
-        objects = app_route_objects(namespace, name, slug, settings.app_port)
+        if mode == "gateway":
+            objects = gateway_route_objects(
+                namespace, name, slug, settings.app_port,
+                gateway_name=settings.k8s_gateway_name,
+                gateway_namespace=settings.k8s_gateway_namespace,
+                hostname=settings.k8s_route_hostname,
+            )
+        else:
+            objects = app_route_objects(namespace, name, slug, settings.app_port)
         for plural, obj in objects:
             _upsert_custom(custom, namespace, plural, obj["metadata"]["name"], obj)
+        for group, version, plural, object_name in _other_mode_objects(mode, name):
+            _delete_custom(custom, namespace, group, version, plural, object_name)
 
     def unpublish(self, slug: str) -> None:
         from .. import provisioning as _p
@@ -276,17 +303,10 @@ class KubernetesProvisioningDriver:
             if exc.status != 404:
                 raise
 
+        # objetos de rota dos dois modos (D6), qualquer que seja o modo ativo
         custom = _custom_api()
-        for plural, object_name in (
-            ("ingressroutes", name), ("middlewares", f"{name}-strip"), ("middlewares", f"{name}-auth"),
-        ):
-            try:
-                custom.delete_namespaced_custom_object(
-                    _TRAEFIK_GROUP, _TRAEFIK_VERSION, namespace, plural, object_name
-                )
-            except ApiException as exc:
-                if exc.status != 404:
-                    raise
+        for group, version, plural, object_name in _all_route_objects(name):
+            _delete_custom(custom, namespace, group, version, plural, object_name)
 
     def healthcheck_url(self, system: System) -> str:
         from .. import provisioning as _p
@@ -348,15 +368,29 @@ class KubernetesProvisioningDriver:
         return code == 0
 
 
-def app_route_objects(namespace: str, name: str, slug: str, app_port: int) -> list[tuple[str, dict]]:
-    """Middlewares (forwardAuth + stripPrefix) e IngressRoute de `/apps/{slug}` — equivalentes
-    ao `apps-<slug>.yml` do driver Docker (`edge.app_route_config`). O forwardAuth vem ANTES do
-    strip (change add-oidc-sso, D8) e chama o portal pelo endereço interno (Service)."""
+def _routing_mode(settings) -> str:
+    """Modo de roteamento configurado, validado (D0). O modo gateway exige o Gateway das rotas,
+    que o chart sempre passa ao portal."""
+    mode = settings.k8s_routing_mode
+    if mode not in ROUTING_MODES:
+        raise UnknownRoutingMode(
+            f"modo de roteamento '{mode}' desconhecido: use {' ou '.join(ROUTING_MODES)}"
+        )
+    if mode == "gateway" and not (settings.k8s_gateway_name and settings.k8s_gateway_namespace):
+        raise UnknownRoutingMode(
+            "modo de roteamento 'gateway' exige APPAIFORGE_K8S_GATEWAY_NAME e "
+            "APPAIFORGE_K8S_GATEWAY_NAMESPACE (o Gateway ao qual as rotas dos sistemas se ligam)"
+        )
+    return mode
+
+
+def _auth_middleware(namespace: str, name: str, slug: str) -> dict:
+    """Middleware de forwardAuth de `/apps/{slug}`, o mesmo nos dois modos de roteamento: chama
+    o portal pelo endereço interno (Service) e repassa a identidade que ele emite."""
     from ..edge import EDGE_AUTH_RESPONSE_HEADERS, edge_auth_address
 
-    api_version = f"{_TRAEFIK_GROUP}/{_TRAEFIK_VERSION}"
-    auth_mw = {
-        "apiVersion": api_version,
+    return {
+        "apiVersion": f"{_TRAEFIK_GROUP}/{_TRAEFIK_VERSION}",
         "kind": "Middleware",
         "metadata": {"name": f"{name}-auth", "namespace": namespace},
         "spec": {"forwardAuth": {
@@ -364,6 +398,14 @@ def app_route_objects(namespace: str, name: str, slug: str, app_port: int) -> li
             "authResponseHeaders": list(EDGE_AUTH_RESPONSE_HEADERS),
         }},
     }
+
+
+def app_route_objects(namespace: str, name: str, slug: str, app_port: int) -> list[tuple[str, dict]]:
+    """Modo `ingressroute`: Middlewares (forwardAuth + stripPrefix) e IngressRoute de
+    `/apps/{slug}` — equivalentes ao `apps-<slug>.yml` do driver Docker (`edge.app_route_config`).
+    O forwardAuth vem ANTES do strip (change add-oidc-sso, D8)."""
+    api_version = f"{_TRAEFIK_GROUP}/{_TRAEFIK_VERSION}"
+    auth_mw = _auth_middleware(namespace, name, slug)
     strip_mw = {
         "apiVersion": api_version,
         "kind": "Middleware",
@@ -390,23 +432,103 @@ def app_route_objects(namespace: str, name: str, slug: str, app_port: int) -> li
     return [("middlewares", auth_mw), ("middlewares", strip_mw), ("ingressroutes", ingressroute)]
 
 
+def gateway_route_objects(
+    namespace: str, name: str, slug: str, app_port: int, *,
+    gateway_name: str, gateway_namespace: str, hostname: str = "",
+) -> list[tuple[str, dict]]:
+    """Modo `gateway` (change gateway-api-traefik-subchart, D1): o Middleware de forwardAuth e
+    um HTTPRoute de `/apps/{slug}` ligado ao Gateway da instalação. Filtros nesta ordem — o
+    Traefik a respeita (spike S1): o forwardAuth vê o caminho original (`X-Forwarded-Uri`, para
+    voltar à app depois do login) e só então o `URLRewrite` tira o prefixo, no lugar do
+    stripPrefix. Com `hostname` (o host da rota do portal), a rota leva o mesmo host, para não
+    ser capturada pela rota "/" do portal pela precedência de hostname da Gateway API (D2)."""
+    auth_mw = _auth_middleware(namespace, name, slug)
+    spec: dict = {
+        "parentRefs": [{"name": gateway_name, "namespace": gateway_namespace}],
+        "rules": [
+            {
+                "matches": [{"path": {"type": "PathPrefix", "value": f"/apps/{slug}"}}],
+                "filters": [
+                    {
+                        "type": "ExtensionRef",
+                        "extensionRef": {"group": _TRAEFIK_GROUP, "kind": "Middleware", "name": f"{name}-auth"},
+                    },
+                    {
+                        "type": "URLRewrite",
+                        "urlRewrite": {"path": {"type": "ReplacePrefixMatch", "replacePrefixMatch": "/"}},
+                    },
+                ],
+                "backendRefs": [{"name": name, "port": app_port}],
+            }
+        ],
+    }
+    if hostname:
+        spec["hostnames"] = [hostname]
+    httproute = {
+        "apiVersion": f"{_GATEWAY_GROUP}/{_GATEWAY_VERSION}",
+        "kind": "HTTPRoute",
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": spec,
+    }
+    return [("middlewares", auth_mw), ("httproutes", httproute)]
+
+
+def _all_route_objects(name: str) -> list[tuple[str, str, str, str]]:
+    """(grupo, versão, plural, nome) de todos os objetos de rota de um sistema, nos dois modos."""
+    return [
+        (_TRAEFIK_GROUP, _TRAEFIK_VERSION, "ingressroutes", name),
+        (_TRAEFIK_GROUP, _TRAEFIK_VERSION, "middlewares", f"{name}-strip"),
+        (_TRAEFIK_GROUP, _TRAEFIK_VERSION, "middlewares", f"{name}-auth"),
+        (_GATEWAY_GROUP, _GATEWAY_VERSION, "httproutes", name),
+    ]
+
+
+def _other_mode_objects(mode: str, name: str) -> list[tuple[str, str, str, str]]:
+    """Objetos de rota que só o OUTRO modo usa — apagados por `publish` (D6). O Middleware de
+    forwardAuth é dos dois modos e nunca entra aqui."""
+    if mode == "gateway":
+        return [
+            (_TRAEFIK_GROUP, _TRAEFIK_VERSION, "ingressroutes", name),
+            (_TRAEFIK_GROUP, _TRAEFIK_VERSION, "middlewares", f"{name}-strip"),
+        ]
+    return [(_GATEWAY_GROUP, _GATEWAY_VERSION, "httproutes", name)]
+
+
 def _custom_api() -> k8s.CustomObjectsApi:
     _load_kube_config()
     return k8s.CustomObjectsApi()
 
 
 def _upsert_custom(custom: k8s.CustomObjectsApi, namespace: str, plural: str, name: str, body: dict) -> None:
-    """Cria ou substitui um objeto de CRD do Traefik (Middleware/IngressRoute) — mesmo padrão
-    delete-then-create usado pelos containers no driver Docker, aqui adaptado porque objetos de
-    CRD precisam de `resourceVersion` pra substituir (então é mais simples apagar e recriar)."""
+    """Cria ou substitui no lugar um objeto de CRD (Middleware/IngressRoute do Traefik ou
+    HTTPRoute da Gateway API; grupo e versão vêm do `apiVersion` do corpo). Lê o objeto atual
+    para substituir com o `resourceVersion` dele, e cria se não existir — sem apagar antes (D5):
+    a rota de um sistema no ar é republicada a cada boot e a cada provisionamento, e apagar e
+    recriar abria, em cada uma dessas vezes, uma janela em que a rota não existia."""
     from kubernetes.client.rest import ApiException
 
+    group, version = body["apiVersion"].split("/", 1)
     try:
-        custom.delete_namespaced_custom_object(_TRAEFIK_GROUP, _TRAEFIK_VERSION, namespace, plural, name)
+        current = custom.get_namespaced_custom_object(group, version, namespace, plural, name)
     except ApiException as exc:
         if exc.status != 404:
             raise
-    custom.create_namespaced_custom_object(_TRAEFIK_GROUP, _TRAEFIK_VERSION, namespace, plural, body)
+        custom.create_namespaced_custom_object(group, version, namespace, plural, body)
+        return
+    replacement = {**body, "metadata": {**body["metadata"],
+                                        "resourceVersion": current["metadata"]["resourceVersion"]}}
+    custom.replace_namespaced_custom_object(group, version, namespace, plural, name, replacement)
+
+
+def _delete_custom(custom: k8s.CustomObjectsApi, namespace: str, group: str, version: str,
+                   plural: str, name: str) -> None:
+    """Apaga um objeto de CRD, tratando a ausência (404) como sucesso. Num cluster sem os CRDs
+    da Gateway API, o plural `httproutes` também responde 404, e a limpeza segue."""
+    try:
+        custom.delete_namespaced_custom_object(group, version, namespace, plural, name)
+    except ApiException as exc:
+        if exc.status != 404:
+            raise
 
 
 def _workspace_pvc_name(slug: str) -> str:

@@ -12,13 +12,13 @@ Portal AIDB instalado (driver de provisionamento: {{ .Values.portal.provisioning
 
    Deve responder 200.
 {{ if .Values.portalRoute.enabled }}
-3. Acesse o portal pela rota do Traefik:
+3. Acesse o portal pela rota do Traefik (modo de roteamento: {{ .Values.routing.mode }}):
 
    http{{ if .Values.portalRoute.tlsSecretName }}s{{ end }}://{{ .Values.portalRoute.host }}/
 
    Ou, sem DNS, por port-forward:
 {{- else }}
-3. Acesse o portal (sem Ingress/Traefik configurado para ele por este chart):
+3. Acesse o portal (sem rota configurada para ele por este chart):
 {{- end }}
 
    kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "appaiforge-portal.fullname" . }} 8080:{{ .Values.service.port }}
@@ -49,4 +49,9 @@ Portal de PRODUÇÃO: só aceita sistemas só implantação. Primeiro acesso pel
 emergência ({{ .Values.auth.breakglass.email | default "auth.breakglass.email não definido" }}) ou pelo OIDC.
 Webhook do GitLab: {{ .Values.portal.webhookBaseUrl | default .Values.auth.publicBaseUrl | default "defina portal.webhookBaseUrl" }}/hooks/gitlab/<id do sistema>
 Antes de atualizar a versão do portal: alembic upgrade head (docs/operacao.md).
+{{- end }}
+{{- if .Values.traefik.enabled }}
+
+Traefik instalado por este chart (subchart). Os CRDs dele e os da Gateway API só são instalados na
+primeira instalação: ao trocar a versão do Traefik, atualize-os à mão (docs/operacao.md).
 {{- end }}

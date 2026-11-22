@@ -1,6 +1,8 @@
-{{- if .Values.portalRoute.enabled }}
+{{- if and .Values.portalRoute.enabled (eq .Values.routing.mode "ingressroute") }}
 # Rota do próprio portal (change add-production-portal-install, D5): usuários e o webhook do
 # GitLab chegam por aqui. Prioridade 1, abaixo das rotas /apps/<slug> que o driver cria.
+# Só no modo ingressroute; no modo gateway a rota é httproute-portal.yaml (change
+# gateway-api-traefik-subchart).
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:

@@ -20,11 +20,11 @@ helm install appaiforge-portal deploy/helm/appaiforge-portal \
   --kube-context kind-appaiforge-dev
 ```
 
-Pré-requisito: o cluster `kind` já criado com Traefik como Ingress controller — ver
-`openspec/changes/archive/2026-11-11-add-kubernetes-driver/kind-cluster.yaml` e
-`traefik-values.yaml`. Esse values define `deployment.dnsPolicy: ClusterFirstWithHostNet`: o Traefik
-roda com `hostNetwork` e, sem isso, não resolve o DNS do Service do portal, que o `forwardAuth` de
-cada rota `/apps/{slug}` chama ([ADR 0027](adr/0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md)
+O chart instala o Traefik como subchart (`traefik.enabled=true`, padrão), com os CRDs dele e os da
+Gateway API. Num cluster que já tem um Traefik, desligue o subchart — ver [Roteamento](#roteamento).
+No `kind` de validação, o Traefik roda com `hostNetwork` (ver `deploy/pilot-k8s/`) e precisa de
+`deployment.dnsPolicy: ClusterFirstWithHostNet`: sem isso, não resolve o DNS do Service do portal,
+que o `forwardAuth` de cada rota `/apps/{slug}` chama ([ADR 0027](adr/0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md)
 — sintoma: as apps respondem 500 e o log do Traefik mostra `lookup … server misbehaving`). Ele também
 usa rollout `maxSurge: 0`, porque num nó só o pod novo não agenda enquanto o antigo segura as portas
 80/443.
@@ -58,3 +58,32 @@ da atualização do portal; workspace e histórico ficam nos PVCs e sobrevivem �
 operação de checkpoint nesse sistema falha com a mensagem "não tem o container 'git'". Arquivar um
 sistema preserva os dois PVCs; a exclusão definitiva remove os dois (o `Role` do chart precisa do
 verbo `delete` em `persistentvolumeclaims`).
+
+## Roteamento
+
+A rota de cada app (`/apps/{slug}`) segue o modo de roteamento da instalação
+(`APPAIFORGE_K8S_ROUTING_MODE`, valor `routing.mode` do chart; change
+`gateway-api-traefik-subchart`, [ADR 0032](adr/0032-gateway-api-com-traefik-como-implementacao.md)).
+Os dois modos convivem só nesta versão; o `ingressroute` sai numa versão seguinte.
+
+| | `ingressroute` (padrão) | `gateway` |
+|---|---|---|
+| objetos por sistema | `Middleware` `<nome>-auth` (forwardAuth), `Middleware` `<nome>-strip`, `IngressRoute` `<nome>` | `Middleware` `<nome>-auth` (forwardAuth), `HTTPRoute` `<nome>` |
+| reescrita do caminho | `stripPrefix` | filtro `URLRewrite` (`ReplacePrefixMatch: /`), depois do `ExtensionRef` do auth |
+| não ser capturada pela rota do portal | prioridade 100 contra 1 | mesmo hostname da rota do portal (`APPAIFORGE_K8S_ROUTE_HOSTNAME`) |
+| Gateway | — | `APPAIFORGE_K8S_GATEWAY_NAME` / `_NAMESPACE` |
+
+Nos dois modos a autenticação é o mesmo `Middleware` `forwardAuth`: o `HTTPRoute` o referencia por
+um filtro `ExtensionRef`, antes do `URLRewrite`, para o portal ver o caminho original e devolver o
+usuário à app depois do login. O Traefik executa os filtros na ordem declarada (verificado no
+spike da change).
+
+**Trocar de modo**: mude `routing.mode` e atualize o chart. No boot seguinte, o portal
+(`provisioning.republish_routes()`) republica a rota de todo sistema **ativo** no modo novo e apaga
+os objetos do outro modo, sem recriar os Pods; voltar é o mesmo caminho. Só as rotas: o boot não
+reconcilia containers. Os objetos de rota são substituídos no lugar (ler e substituir com o
+`resourceVersion`), sem apagar antes, para cada republicação não abrir uma janela em que a rota
+não existe. Remover a rota de um sistema apaga os objetos dos dois modos.
+
+Um modo desconhecido, ou o modo `gateway` sem o Gateway configurado, impede o portal de subir
+(`UnknownRoutingMode` no `ensure_ready()` do driver).
