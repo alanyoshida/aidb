@@ -64,7 +64,7 @@ def _wait_pod_running(pod_name: str, timeout_s: int = 30) -> None:
 
 
 def _cleanup(slug: str) -> None:
-    """Remove Pod/ConfigMap/PVC/Service/IngressRoute/Middleware do sistema de teste, se
+    """Remove Pod/ConfigMap/PVC/Service e os objetos de rota do sistema de teste, se
     existirem — mesmo racional do `remove_system_containers` dos testes Docker, pra não
     acumular objetos órfãos no cluster."""
     from kubernetes import client as k8s
@@ -89,13 +89,12 @@ def _cleanup(slug: str) -> None:
             if exc.status != 404:
                 raise
 
+    # objetos de rota dos dois modos de roteamento (change gateway-api-traefik-subchart)
+    from appaiforge.drivers.kubernetes_driver import _all_route_objects, _delete_custom
+
     custom = k8s.CustomObjectsApi()
-    for plural, object_name in (("ingressroutes", name), ("middlewares", f"{name}-strip"), ("middlewares", f"{name}-auth")):
-        try:
-            custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", namespace, plural, object_name)
-        except ApiException as exc:
-            if exc.status != 404:
-                raise
+    for group, version, plural, object_name in _all_route_objects(name):
+        _delete_custom(custom, namespace, group, version, plural, object_name)
 
 
 @pytest.fixture()
@@ -303,6 +302,186 @@ def test_publish_app_roteia_pelo_ingress_externo(system):
             break
         time.sleep(1)
     assert last_code == "302", f"último código: {last_code!r}"
+
+
+# --- modos de roteamento (change gateway-api-traefik-subchart) -------------------------------
+#
+# O modo gateway precisa, no cluster de validação: CRDs da Gateway API, o provider
+# `kubernetesGateway` no Traefik e um Gateway que aceite rotas do namespace `appaiforge-test` (o
+# do chart do portal no modo gateway, por padrão `appaiforge-portal` em `appaiforge`; outro com
+# APPAIFORGE_TEST_K8S_GATEWAY_NAME/_NAMESPACE). Sem eles, os casos do modo gateway são pulados.
+
+_EDGE = "http://localhost:18080"
+_TEST_GATEWAY = (
+    os.environ.get("APPAIFORGE_TEST_K8S_GATEWAY_NAME", "appaiforge-portal"),
+    os.environ.get("APPAIFORGE_TEST_K8S_GATEWAY_NAMESPACE", "appaiforge"),
+)
+
+
+def _gateway_available() -> bool:
+    from kubernetes import client as k8s
+    from kubernetes.client.rest import ApiException
+
+    try:
+        k8s.CustomObjectsApi().get_namespaced_custom_object(
+            "gateway.networking.k8s.io", "v1", _TEST_GATEWAY[1], "gateways", _TEST_GATEWAY[0])
+    except ApiException:
+        return False
+    return True
+
+
+def _use_mode(monkeypatch, mode: str, hostname: str = "") -> None:
+    if mode == "gateway" and not _gateway_available():
+        pytest.skip(f"Gateway {_TEST_GATEWAY[1]}/{_TEST_GATEWAY[0]} indisponível no cluster")
+    monkeypatch.setenv("APPAIFORGE_K8S_ROUTING_MODE", mode)
+    monkeypatch.setenv("APPAIFORGE_K8S_GATEWAY_NAME", _TEST_GATEWAY[0])
+    monkeypatch.setenv("APPAIFORGE_K8S_GATEWAY_NAMESPACE", _TEST_GATEWAY[1])
+    monkeypatch.setenv("APPAIFORGE_K8S_ROUTE_HOSTNAME", hostname)
+    from appaiforge.config import get_settings
+
+    get_settings.cache_clear()
+
+
+def _get(path: str, host: str | None = None, *, until=None, attempts: int = 20) -> tuple[str, str]:
+    """(código, Location) de um GET pela entrada do cluster, sem seguir redirecionamento. Repete
+    até `until(código, location)` — o Traefik observa rotas e Services por informers separados,
+    e a rota nova leva alguns segundos para valer."""
+    import subprocess
+    import time
+
+    code = location = ""
+    for _ in range(attempts):
+        cmd = ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code} %{redirect_url}"]
+        if host:
+            cmd += ["-H", f"Host: {host}"]
+        out = subprocess.run(cmd + [_EDGE + path], capture_output=True, text=True, timeout=15).stdout
+        code, _, location = out.partition(" ")
+        if until is None or until(code, location):
+            break
+        time.sleep(1)
+    return code, location
+
+
+def _route_objects(name: str) -> set[str]:
+    from kubernetes import client as k8s
+    from kubernetes.client.rest import ApiException
+
+    from appaiforge.drivers.kubernetes_driver import _all_route_objects
+
+    found = set()
+    for group, version, plural, object_name in _all_route_objects(name):
+        try:
+            k8s.CustomObjectsApi().get_namespaced_custom_object(group, version, "appaiforge-test", plural, object_name)
+            found.add(f"{plural}/{object_name}")
+        except ApiException as exc:
+            if exc.status != 404:
+                raise
+    return found
+
+
+def _is_login_redirect(code: str, location: str) -> bool:
+    return code == "302" and "/login" in location
+
+
+@pytest.mark.parametrize("mode", ["ingressroute", "gateway"])
+def test_rota_nos_dois_modos_volta_ao_caminho_original(system, monkeypatch, mode):
+    """Requirement 'Autenticação da app preservada nos dois modos de roteamento': sem sessão, o
+    forwardAuth manda ao login com o caminho ORIGINAL em `next` — no modo gateway isso prova que
+    o `ExtensionRef` do auth roda antes do `URLRewrite`."""
+    from urllib.parse import quote
+
+    from appaiforge.edge import publish_app, system_container_name
+    from appaiforge.provisioning import provision_system
+
+    _use_mode(monkeypatch, mode)
+    provision_system(system)
+    _wait_pod_running(system_container_name(system.slug))
+    publish_app(system)
+
+    path = f"/apps/{system.slug}/relatorios"
+    code, location = _get(path, until=_is_login_redirect)
+    assert _is_login_redirect(code, location), (code, location)
+    assert f"next={quote(path, safe='')}" in location
+
+
+@pytest.mark.parametrize("mode", ["ingressroute", "gateway"])
+def test_app_e_portal_no_mesmo_host(system, monkeypatch, mode):
+    """Requirement 'Rota da app não capturada pela rota do portal': com uma rota "/" de portal no
+    mesmo host, `/apps/{slug}` continua indo para a rota da app (302 do forwardAuth), e o resto do
+    host vai para a rota do portal. O "portal" aqui é o próprio Service do sistema, sem auth: o
+    que importa é qual rota casou, não o que responde atrás dela."""
+    from kubernetes import client as k8s
+
+    from appaiforge.config import get_settings
+    from appaiforge.edge import publish_app, system_container_name
+    from appaiforge.provisioning import provision_system
+
+    host = f"{system.slug}.portal.test"
+    _use_mode(monkeypatch, mode, hostname=host)
+    provision_system(system)
+    name = system_container_name(system.slug)
+    _wait_pod_running(name)
+    publish_app(system)
+
+    app_port = get_settings().app_port
+    portal_route = f"{name}-portal-route"
+    if mode == "ingressroute":
+        group, version, plural = "traefik.io", "v1alpha1", "ingressroutes"
+        body = {"apiVersion": "traefik.io/v1alpha1", "kind": "IngressRoute",
+                "metadata": {"name": portal_route},
+                "spec": {"entryPoints": ["web"], "routes": [{
+                    "match": f"Host(`{host}`) && PathPrefix(`/`)", "kind": "Rule", "priority": 1,
+                    "services": [{"name": name, "port": app_port}]}]}}
+    else:
+        group, version, plural = "gateway.networking.k8s.io", "v1", "httproutes"
+        body = {"apiVersion": "gateway.networking.k8s.io/v1", "kind": "HTTPRoute",
+                "metadata": {"name": portal_route},
+                "spec": {"parentRefs": [{"name": _TEST_GATEWAY[0], "namespace": _TEST_GATEWAY[1]}],
+                         "hostnames": [host],
+                         "rules": [{"matches": [{"path": {"type": "PathPrefix", "value": "/"}}],
+                                    "backendRefs": [{"name": name, "port": app_port}]}]}}
+    custom = k8s.CustomObjectsApi()
+    custom.create_namespaced_custom_object(group, version, "appaiforge-test", plural, body)
+    try:
+        code, location = _get(f"/apps/{system.slug}/", host, until=_is_login_redirect)
+        assert _is_login_redirect(code, location), (code, location)
+        # a rota do portal casou: nem 404 (sem rota) nem o 302 do forwardAuth da app
+        code, location = _get("/outra/pagina", host, until=lambda c, _: c not in ("404", "302"))
+        assert code not in ("404", "302"), (code, location)
+    finally:
+        custom.delete_namespaced_custom_object(group, version, "appaiforge-test", plural, portal_route)
+
+
+def test_troca_de_modo_nos_dois_sentidos_sem_recriar_pod(system, monkeypatch):
+    """Requirement 'Troca de modo de roteamento sem reprovisionamento': a passada de
+    reconciliação que o portal faz ao subir (`reconcile()`, change portal-reconcile-loop) migra a
+    rota para o modo novo e apaga a do outro, nos dois sentidos, sem recriar o Pod."""
+    from appaiforge.edge import publish_app, system_container_name
+    from appaiforge.models import SystemStatus
+    from appaiforge.provisioning import provision_system, reconcile
+    from appaiforge.services.systems import set_status
+
+    if not _gateway_available():
+        pytest.skip(f"Gateway {_TEST_GATEWAY[1]}/{_TEST_GATEWAY[0]} indisponível no cluster")
+    name = system_container_name(system.slug)
+    _use_mode(monkeypatch, "ingressroute")
+    provision_system(system)
+    _wait_pod_running(name)
+    publish_app(system)
+    set_status(system.id, SystemStatus.active, "")
+    uid = _k8s_api().read_namespaced_pod(name, "appaiforge-test").metadata.uid
+    assert _route_objects(name) == {f"ingressroutes/{name}", f"middlewares/{name}-strip", f"middlewares/{name}-auth"}
+
+    for mode, expected in (
+        ("gateway", {f"httproutes/{name}", f"middlewares/{name}-auth"}),
+        ("ingressroute", {f"ingressroutes/{name}", f"middlewares/{name}-strip", f"middlewares/{name}-auth"}),
+    ):
+        _use_mode(monkeypatch, mode)
+        reconcile()
+        assert _route_objects(name) == expected, mode
+        code, location = _get(f"/apps/{system.slug}/", until=_is_login_redirect)
+        assert _is_login_redirect(code, location), (mode, code, location)
+        assert _k8s_api().read_namespaced_pod(name, "appaiforge-test").metadata.uid == uid, mode
 
 
 def test_harness_alcancavel_pelo_service_interno(system):

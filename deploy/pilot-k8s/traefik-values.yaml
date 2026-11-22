@@ -1,35 +1,38 @@
-# Traefik como Ingress controller dentro do cluster kind (D4 do design: roteamento de
-# /apps/{slug} entra no cluster, substituindo o file-provider externo usado pelo driver Docker).
+# Valores do piloto para o subchart do Traefik do chart do portal (change
+# gateway-api-traefik-subchart: o Traefik deixou de ser um release separado). Use junto com os
+# valores do portal:
 #
-# hostNetwork: os Pods do Traefik escutam direto nas portas 80/443 do NÓ do kind — que já são
-# as portas mapeadas por extraPortMappings em kind-cluster.yaml (host 18080/18443 -> nó 80/443).
-# Só funciona porque há um único nó (control-plane) neste cluster de validação.
-deployment:
-  kind: Deployment
-  # Com hostNetwork, o padrão ClusterFirst cai no DNS do HOST e nomes *.svc.cluster.local não
-  # resolvem. O forwardAuth das rotas /apps/{slug} (change add-oidc-sso) chama o portal pelo DNS
-  # do Service dele, então o Traefik precisa do DNS do cluster.
-  dnsPolicy: ClusterFirstWithHostNet
-hostNetwork: true
-# Com hostNetwork num nó só, o pod novo não agenda enquanto o antigo segura as portas 80/443:
-# o rollout derruba o antigo antes de subir o novo (alguns segundos sem edge).
-updateStrategy:
-  type: RollingUpdate
-  rollingUpdate:
-    maxUnavailable: 1
-    maxSurge: 0
-ports:
-  web:
-    port: 80
-  websecure:
-    port: 443
-service:
-  enabled: false
-providers:
-  kubernetesIngress:
+#   helm install aidb-prod deploy/helm/appaiforge-portal -n aidb-prod \
+#     -f deploy/pilot-k8s/values-pilot.yaml -f deploy/pilot-k8s/traefik-values.yaml ...
+#
+# hostNetwork: os Pods do Traefik escutam direto nas portas 80/443 do NÓ do kind — que já são as
+# portas mapeadas por extraPortMappings em kind-cluster.yaml (host 28080 -> nó 80). Só funciona
+# porque há um único nó (control-plane) neste cluster de validação.
+traefik:
+  deployment:
+    kind: Deployment
+    # Com hostNetwork, o padrão ClusterFirst cai no DNS do HOST e nomes *.svc.cluster.local não
+    # resolvem. O forwardAuth das rotas /apps/{slug} (change add-oidc-sso) chama o portal pelo DNS
+    # do Service dele, então o Traefik precisa do DNS do cluster.
+    dnsPolicy: ClusterFirstWithHostNet
+  hostNetwork: true
+  # Com hostNetwork num nó só, o pod novo não agenda enquanto o antigo segura as portas 80/443:
+  # o rollout derruba o antigo antes de subir o novo (alguns segundos sem edge).
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  ports:
+    web:
+      port: 80
+    websecure:
+      port: 443
+  service:
     enabled: false
-  # CRDs nativas (IngressRoute/Middleware) em vez do core Ingress — espelha 1:1 o que o
-  # file-provider do driver Docker já escreve hoje (router + middleware stripPrefix +
-  # service), em vez de reconstruir o path-stripping só com anotações do core Ingress.
-  kubernetesCRD:
-    enabled: true
+
+# Modo gateway: os listeners do Gateway do chart precisam estar nas portas dos entrypoints acima.
+gateway:
+  listenerPorts:
+    web: 80
+    websecure: 443

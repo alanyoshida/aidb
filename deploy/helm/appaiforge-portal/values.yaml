@@ -154,16 +154,65 @@ portal:
   #   - name: APPAIFORGE_DISPLAY_TIMEZONE
   #     value: America/Sao_Paulo
 
-# Rota do próprio portal no Traefik (change add-production-portal-install, D5), para usuários
-# e para o webhook do GitLab. Desligada por padrão (acesso por port-forward). Prioridade 1:
-# as rotas /apps/<slug> dos sistemas continuam ganhando.
+# Modo de roteamento das rotas /apps/<slug> e da rota do portal (change
+# gateway-api-traefik-subchart, D0). Transitório: convivem nesta versão e o "ingressroute" sai numa
+# change seguinte.
+#   ingressroute (padrão): IngressRoute + Middleware do Traefik, como nas versões anteriores.
+#   gateway: HTTPRoute da Gateway API, ligado ao Gateway (deste chart ou `gateway.existing`).
+# Trocar o modo republica as rotas de todos os sistemas no boot seguinte do portal, sem recriar Pods.
+routing:
+  mode: ingressroute
+
+# Traefik como subchart (D3): controlador de entrada nos dois modos e implementação da Gateway API
+# no modo gateway. Desligue (traefik.enabled=false) se o cluster já tiver um Traefik — no modo
+# gateway, informe então o Gateway dele em `gateway.existing`. Os valores abaixo vão direto para o
+# chart traefik/traefik (ver VALUES.md dele); os providers e o GatewayClass são os que o portal
+# precisa e valem para os dois modos.
+traefik:
+  enabled: true
+  providers:
+    kubernetesIngress:
+      enabled: false
+    # IngressRoute e Middleware (o forwardAuth das apps é Middleware nos dois modos)
+    kubernetesCRD:
+      enabled: true
+    # HTTPRoute/Gateway; os CRDs da Gateway API vêm em crds/ deste chart (D4)
+    kubernetesGateway:
+      enabled: true
+  # o Gateway é deste chart (templates/gateway.yaml), não o padrão do subchart
+  gateway:
+    enabled: false
+  # GatewayClass "traefik", usado pelo Gateway deste chart
+  gatewayClass:
+    enabled: true
+
+# Gateway das rotas no modo gateway.
+gateway:
+  # Portas dos listeners do Gateway criado por este chart (modo gateway com traefik.enabled). Têm
+  # de ser as portas dos entrypoints do Traefik (traefik.ports.web.port / .websecure.port; 8000 e
+  # 8443 no padrão do subchart), não as portas expostas pelo Service dele.
+  listenerPorts:
+    web: 8000
+    websecure: 8443
+  # Gateway já existente no cluster, obrigatório no modo gateway com traefik.enabled=false.
+  existing:
+    name: ""
+    namespace: ""
+
+# Rota do próprio portal (change add-production-portal-install, D5), para usuários e para o
+# webhook do GitLab. Desligada por padrão (acesso por port-forward). Não captura as rotas
+# /apps/<slug> dos sistemas: no modo ingressroute pela prioridade 1; no modo gateway porque o
+# portal recebe este host e as rotas dos sistemas usam o mesmo.
 portalRoute:
   enabled: false
   # host público do portal (obrigatório com enabled=true), ex.: aidb-prod.exemplo.com
   host: ""
+  # só no modo ingressroute; no modo gateway a rota fica nos listeners do Gateway
   entryPoints:
     - web
-  # Secret TLS opcional (tls.secretName da IngressRoute)
+  # Secret TLS opcional. Modo ingressroute: tls.secretName da IngressRoute. Modo gateway com o
+  # Gateway deste chart: certificado do listener HTTPS (o Secret fica no namespace da release).
+  # Com `gateway.existing`, o TLS é do Gateway existente e este valor não é usado.
   tlsSecretName: ""
 
 postgres:

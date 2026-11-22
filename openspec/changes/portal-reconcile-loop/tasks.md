@@ -23,5 +23,5 @@
 
 ## Workflow follow-up
 
-- Na integração com a change `gateway-api-traefik-subchart`: remover a chamada de `republish_routes()` da subida e a função, trocando o teste dela (design D7).
+- Feito na integração com a change `gateway-api-traefik-subchart`: remover a chamada de `republish_routes()` da subida e a função, trocando o teste dela (design D7).
 - Arquivar a change depois da revisão do PR.

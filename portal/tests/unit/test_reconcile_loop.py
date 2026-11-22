@@ -207,6 +207,19 @@ def test_sistemas_arquivados_e_em_provisionamento_sao_pulados(editor, driver):
     assert get_system(provisioning_.id).status == SystemStatus.provisioning
 
 
+def test_passada_publica_a_rota_de_sistemas_ativos_e_em_erro(editor, driver):
+    """Design D7: a passada da subida substitui a republicação das rotas no boot da change
+    gateway-api-traefik-subchart (troca de modo de roteamento), para ativos e em erro."""
+    active = _active(editor, "rl-rota-ativo")
+    failed = _active(editor, "rl-rota-erro")
+    set_status(failed.id, SystemStatus.error, "falhou antes")
+
+    provisioning.reconcile()
+
+    published = {slug for call, slug in driver.calls if call == "publish"}
+    assert published == {active.slug, failed.slug}
+
+
 def test_erro_inesperado_num_sistema_nao_interrompe_a_passada_nem_muda_o_estado(editor, driver):
     broken = _active(editor, "rl-quebrado", "mensagem anterior")
     ok = _active(editor, "rl-ok")

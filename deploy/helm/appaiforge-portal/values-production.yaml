@@ -49,10 +49,22 @@ portal:
     healthTimeout: 90
     healthInterval: 2
 
+# Modo de roteamento: ingressroute (padrão desta versão) ou gateway (Gateway API). Ver o README do
+# chart, "Roteamento". Trocar republica as rotas dos sistemas no boot seguinte, sem recriar Pods.
+routing:
+  mode: ingressroute
+
+# O chart instala o Traefik (subchart). Se o cluster já tem um Traefik, desligue e, no modo
+# gateway, informe o Gateway dele em gateway.existing.
+traefik:
+  enabled: true
+
 portalRoute:
   enabled: true
   host: aidb-prod.exemplo.com
+  # só no modo ingressroute
   entryPoints:
     - web
-  # com TLS no Traefik: entryPoints [websecure] e o Secret do certificado
+  # Secret do certificado. Modo ingressroute: com entryPoints [websecure]. Modo gateway: vira o
+  # listener HTTPS do Gateway deste chart (o Secret fica no namespace da release).
   tlsSecretName: ""

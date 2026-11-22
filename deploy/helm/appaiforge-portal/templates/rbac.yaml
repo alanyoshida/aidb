@@ -45,12 +45,17 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["create", "update", "delete"]
-  # publish()/unpublish() via _upsert_custom: create_namespaced_custom_object,
-  # delete_namespaced_custom_object, para os CRDs do Traefik (Middleware
-  # stripPrefix + IngressRoute).
+  # publish()/unpublish() via _upsert_custom (change gateway-api-traefik-subchart, D5 e D6):
+  # get_namespaced_custom_object + replace_namespaced_custom_object (create se 404) para
+  # publicar sem apagar, e delete_namespaced_custom_object para tirar os objetos do outro modo
+  # de roteamento e para unpublish(). Middleware (forwardAuth nos dois modos, stripPrefix no
+  # modo ingressroute) e IngressRoute são do Traefik; HTTPRoute, da Gateway API (modo gateway).
   - apiGroups: ["traefik.io"]
     resources: ["middlewares", "ingressroutes"]
-    verbs: ["create", "delete"]
+    verbs: ["get", "create", "update", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["get", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

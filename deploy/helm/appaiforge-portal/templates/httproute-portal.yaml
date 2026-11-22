@@ -1,0 +1,27 @@
+{{- if and .Values.portalRoute.enabled (eq .Values.routing.mode "gateway") }}
+# Rota do próprio portal no modo gateway (change gateway-api-traefik-subchart, D3). Sem prioridade
+# na Gateway API: as rotas /apps/<slug> dos sistemas levam o mesmo hostname (D2) e vencem esta por
+# terem o caminho mais longo. O TLS fica no listener do Gateway, não na rota.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "appaiforge-portal.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+spec:
+  parentRefs:
+    - name: {{ include "appaiforge-portal.gatewayName" . }}
+      namespace: {{ include "appaiforge-portal.gatewayNamespace" . }}
+  hostnames:
+    - {{ required "portalRoute.host é obrigatório com portalRoute.enabled=true" .Values.portalRoute.host | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "appaiforge-portal.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

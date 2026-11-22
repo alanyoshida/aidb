@@ -77,6 +77,23 @@ spec:
               value: {{ .Values.portal.provisioningDriver | quote }}
             - name: APPAIFORGE_K8S_NAMESPACE
               value: {{ include "appaiforge-portal.systemsNamespace" . | quote }}
+            # Modo de roteamento das rotas /apps/<slug> (change gateway-api-traefik-subchart, D0).
+            {{- include "appaiforge-portal.validateRouting" . }}
+            - name: APPAIFORGE_K8S_ROUTING_MODE
+              value: {{ .Values.routing.mode | quote }}
+            {{- if include "appaiforge-portal.gatewayMode" . }}
+            # Gateway ao qual o driver liga o HTTPRoute de cada sistema (D3).
+            - name: APPAIFORGE_K8S_GATEWAY_NAME
+              value: {{ include "appaiforge-portal.gatewayName" . | quote }}
+            - name: APPAIFORGE_K8S_GATEWAY_NAMESPACE
+              value: {{ include "appaiforge-portal.gatewayNamespace" . | quote }}
+            {{- if .Values.portalRoute.enabled }}
+            # Mesmo host da rota do portal nas rotas dos sistemas, para /apps/<slug> não ser
+            # capturado por ela pela precedência de hostname da Gateway API (D2).
+            - name: APPAIFORGE_K8S_ROUTE_HOSTNAME
+              value: {{ required "portalRoute.host é obrigatório com portalRoute.enabled=true" .Values.portalRoute.host | quote }}
+            {{- end }}
+            {{- end }}
             # Nenhum APPAIFORGE_K8S_KUBECONFIG_CONTEXT aqui de propósito: rodando
             # dentro do cluster, _load_kube_config() usa a identidade do próprio
             # Pod (load_incluster_config()) antes de qualquer kubeconfig.

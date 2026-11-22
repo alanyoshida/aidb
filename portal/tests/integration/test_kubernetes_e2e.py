@@ -169,13 +169,11 @@ def k8s_e2e_system(k8s_env, clean_db, fake_anthropic_stub_k8s, monkeypatch):
                 raise
     from kubernetes import client as k8s
 
+    from appaiforge.drivers.kubernetes_driver import _all_route_objects, _delete_custom
+
     custom = k8s.CustomObjectsApi()
-    for plural, obj_name in (("ingressroutes", name), ("middlewares", f"{name}-strip"), ("middlewares", f"{name}-auth")):
-        try:
-            custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", NAMESPACE, plural, obj_name)
-        except ApiException as exc:
-            if exc.status != 404:
-                raise
+    for group, version, plural, obj_name in _all_route_objects(name):  # os dois modos de roteamento
+        _delete_custom(custom, NAMESPACE, group, version, plural, obj_name)
     get_settings.cache_clear()
 
 
@@ -524,11 +522,8 @@ def test_sistema_k8s_ponta_a_ponta_com_portal_dentro_do_cluster(_portal_real_dis
                 except ApiException as exc:
                     if exc.status != 404:
                         raise
+            from appaiforge.drivers.kubernetes_driver import _all_route_objects, _delete_custom
+
             custom = k8s.CustomObjectsApi()
-            for plural, obj_name in (("ingressroutes", sys_name), ("middlewares", f"{sys_name}-strip"),
-                                     ("middlewares", f"{sys_name}-auth")):
-                try:
-                    custom.delete_namespaced_custom_object("traefik.io", "v1alpha1", PORTAL_NAMESPACE, plural, obj_name)
-                except ApiException as exc:
-                    if exc.status != 404:
-                        raise
+            for group, version, plural, obj_name in _all_route_objects(sys_name):  # os dois modos
+                _delete_custom(custom, PORTAL_NAMESPACE, group, version, plural, obj_name)

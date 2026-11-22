@@ -1,0 +1,35 @@
+{{- if include "appaiforge-portal.createsGateway" . }}
+# Gateway das rotas do portal e dos sistemas no modo gateway, com o subchart do Traefik ligado
+# (change gateway-api-traefik-subchart, D3). Com traefik.enabled=false, as rotas usam
+# `gateway.existing` e este objeto não é criado.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "appaiforge-portal.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+spec:
+  gatewayClassName: {{ default "traefik" .Values.traefik.gatewayClass.name }}
+  listeners:
+    - name: web
+      port: {{ .Values.gateway.listenerPorts.web }}
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          {{- include "appaiforge-portal.gatewayAllowedNamespaces" . | nindent 10 }}
+    {{- if and .Values.portalRoute.enabled .Values.portalRoute.tlsSecretName }}
+    - name: websecure
+      port: {{ .Values.gateway.listenerPorts.websecure }}
+      protocol: HTTPS
+      hostname: {{ required "portalRoute.host é obrigatório com portalRoute.enabled=true" .Values.portalRoute.host | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.portalRoute.tlsSecretName }}
+      allowedRoutes:
+        namespaces:
+          {{- include "appaiforge-portal.gatewayAllowedNamespaces" . | nindent 10 }}
+    {{- end }}
+{{- end }}

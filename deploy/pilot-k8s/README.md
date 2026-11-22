@@ -19,11 +19,10 @@ repositório em `gitlab:22`, e o GitLab chama o webhook em `http://aidb-prod.pil
 docker compose -f deploy/docker-compose.e2e-gitlab.yml up -d --build postgres portal traefik gitlab gitlab-runner
 python3 deploy/e2e-gitlab/init.py
 
-# 2. Cluster de produção com Traefik. O kind troca o contexto atual do kubeconfig: volte ao seu depois.
+# 2. Cluster de produção. O kind troca o contexto atual do kubeconfig: volte ao seu depois.
+#    O Traefik vem com o chart do portal (passo 5), não é mais instalado à parte.
 kind create cluster --config deploy/pilot-k8s/kind-cluster.yaml
 kubectl config use-context <seu-contexto>
-helm --kube-context kind-aidb-prod install traefik traefik/traefik --version 42.3.2 \
-  -n traefik --create-namespace -f deploy/pilot-k8s/traefik-values.yaml --wait
 docker network connect --alias aidb-prod.pilot.test appaiforge-e2e-gitlab-net aidb-prod-control-plane
 
 # 3. Imagens: a base com um nome de registro, para exercitar portal.baseImage
@@ -53,9 +52,36 @@ kind load docker-image registro.pilot.test/appaiforge/base:1.4.2 appaiforge/port
 
    ```bash
    helm --kube-context kind-aidb-prod install aidb-prod deploy/helm/appaiforge-portal -n aidb-prod \
-     -f deploy/pilot-k8s/values-pilot.yaml --set image.tag=pilot --set image.pullPolicy=Never \
+     -f deploy/pilot-k8s/values-pilot.yaml -f deploy/pilot-k8s/traefik-values.yaml \
+     --set image.tag=pilot --set image.pullPolicy=Never \
      --set portal.baseImage=registro.pilot.test/appaiforge/base:1.4.2 --wait
    ```
+
+   O [`traefik-values.yaml`](traefik-values.yaml) configura o subchart do Traefik para o `kind`
+   (`hostNetwork` nas portas 80/443 do nó, DNS do cluster, rollout sem sobreposição) e põe os
+   listeners do `Gateway` nessas portas. O modo de roteamento é o padrão (`ingressroute`); para o
+   modo `gateway`, acrescente `--set routing.mode=gateway`.
+
+### Piloto montado antes do Traefik no chart
+
+Até a change `gateway-api-traefik-subchart`, o Traefik era um release `traefik` à parte, que
+disputaria as portas 80/443 com o do chart. O `helm upgrade` não instala os CRDs de `crds/` (o
+Helm só faz isso no `helm install`): aplique os da Gateway API antes, desinstale o Traefik antigo e
+atualize o portal:
+
+```bash
+kubectl --context kind-aidb-prod apply --server-side -f deploy/helm/appaiforge-portal/crds/
+helm --kube-context kind-aidb-prod uninstall traefik -n traefik
+helm --kube-context kind-aidb-prod upgrade aidb-prod deploy/helm/appaiforge-portal -n aidb-prod \
+  -f deploy/pilot-k8s/values-pilot.yaml -f deploy/pilot-k8s/traefik-values.yaml \
+  --set image.tag=pilot --set image.pullPolicy=Never \
+  --set portal.baseImage=registro.pilot.test/appaiforge/base:1.4.2 --wait
+```
+
+Os CRDs do Traefik já existem no cluster (vieram do release antigo) e ficam como estão. Sem os da
+Gateway API, o `upgrade` falha em `no matches for kind "GatewayClass"`. A entrada fica fora do ar
+entre o `uninstall` e o Traefik novo ficar pronto (cerca de um minuto no piloto). Logo depois de
+subir, a reconciliação do portal republica as rotas dos sistemas.
 
 ## Homologação com LLM real
 
@@ -101,3 +127,27 @@ docker compose -f deploy/docker-compose.e2e-gitlab.yml down
 - **Registro privado.** Os Pods de sistema não declaravam `imagePullSecrets`. Corrigido depois:
   `portal.systemImagePullSecrets` no chart.
 - **O `kind create cluster` troca o contexto atual** do kubeconfig para o cluster novo.
+
+## Achados (2026-11-22, change `gateway-api-traefik-subchart`)
+
+- **`helm upgrade` não instala CRDs.** Atualizar o piloto para o chart com o Traefik como subchart
+  falhou em `no matches for kind "GatewayClass"`: o Helm só aplica `crds/` no `helm install`.
+  Corrigido no passo a passo acima (aplicar os CRDs antes) e em `docs/operacao.md`.
+- **Rota de sistema ativo que faltava.** O sistema `base-registro` estava ativo sem `IngressRoute`
+  (a reconciliação nunca roda no boot). A republicação das rotas no boot, nova nesta change,
+  recriou a rota na primeira subida.
+- **Troca de modo no piloto.** `ingressroute` → `gateway` → `ingressroute` com `helm upgrade
+  --reuse-values --set routing.mode=...`: portal, webhook e as apps dos quatro sistemas responderam
+  pela rota nos dois modos (302 sem sessão, 200 com a do admin de emergência), sem recriar os Pods.
+- **Jornada nos dois modos.** Com a homologação de volta ao agente simulado (sem
+  `homolog-llm.yml`), `AIDB_PILOT_K8S=1 uv run pytest tests/e2e_gitlab/test_pilot_kubernetes.py`
+  passou no modo `ingressroute` e, depois de `--set routing.mode=gateway`, no modo `gateway`
+  (tag → implantação manual, webhook do GitLab, volta à versão anterior). Na troca, o boot do
+  portal republicou as rotas de todos os sistemas ativos, inclusive o criado pela rodada anterior.
+  Essa rodada usou o piloto já existente, atualizado pelo chart novo.
+- **Piloto do zero pelo README.** Os passos 2 a 5 num cluster novo (`aidb-prod2`, porta 28081,
+  apelido `aidb-prod2.pilot.test`, para não apagar o `aidb-prod`), com a homologação do passo 1 já
+  de pé: o `helm install` com `traefik-values.yaml` subiu o portal, o Postgres e o Traefik do
+  subchart na primeira tentativa, com os 10 CRDs da Gateway API. A jornada passou no modo
+  `ingressroute` e, depois do `helm upgrade --set routing.mode=gateway`, no modo `gateway`. Ela
+  aceita outro cluster por `AIDB_PILOT_CONTEXT`, `AIDB_PILOT_HOST` e `AIDB_PILOT_PORT`.

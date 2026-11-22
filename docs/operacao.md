@@ -66,6 +66,8 @@ O portal de produção só serve sistemas só implantação: roda as versões ap
    helm install aidb-prod deploy/helm/appaiforge-portal -n aidb-prod -f values-production.yaml
    ```
 
+O chart instala o Traefik junto (subchart, `traefik.enabled=true`), com os CRDs dele e os da Gateway API. Se o cluster já tem um Traefik, desligue o subchart; no modo de roteamento `gateway`, informe então o `Gateway` dele em `gateway.existing` (ver [Roteamento no Kubernetes](#7-roteamento-no-kubernetes)).
+
 As migrações rodam num initContainer antes de cada subida do portal (`portal.migrateOnStart`). O chart recusa renderizar em produção com o admin de demonstração ligado ou sem o Secret externo. Os sistemas ficam no namespace da release. Para separá-los, defina `portal.systemsNamespace` com um namespace criado antes do `helm install` e só deste portal; a Role do portal é criada nele.
 
 ### 3. Primeiro acesso
@@ -90,6 +92,11 @@ Com o modo automático e webhook, cadastre no projeto do GitLab o endereço e o 
    - **Compose:** os comandos `build portal` e `run --rm ... alembic upgrade head` do passo 2a, depois `up -d --build`.
    - **Helm:** com `portal.migrateOnStart: true` (ligado no `values-production.yaml`), um initContainer roda `alembic upgrade head` com a imagem nova antes de o portal subir. O `helm upgrade` já basta.
 3. Quando a versão mudar a imagem base, reconstrua-a (ou carregue-a no cluster). Os sistemas pegam a imagem nova quando são recriados.
+4. **Helm, vindo de uma versão sem o Traefik no chart** (antes da change `gateway-api-traefik-subchart`): o `helm upgrade` não instala os CRDs de `crds/` (só o `helm install` faz isso), e sem eles o upgrade falha em `no matches for kind "GatewayClass"`. Aplique antes os da Gateway API (`kubectl apply --server-side -f deploy/helm/appaiforge-portal/crds/`) e, se o cluster ainda não tiver os do Traefik, os do chart dele (ver "CRDs ao atualizar o Traefik" na seção 7). Se o Traefik do cluster era um release à parte, os dois disputariam as mesmas portas. Escolha um caminho antes do `helm upgrade`:
+   - desinstale o release antigo (`helm uninstall traefik -n traefik`) e deixe o chart instalar o dele. A entrada fica fora do ar até o Traefik novo ficar pronto;
+   - ou mantenha o Traefik antigo com `traefik.enabled=false`. No modo `ingressroute` (padrão) não é preciso mais nada. No modo `gateway`, ligue antes o provider `kubernetesGateway` nesse Traefik, instale os CRDs da Gateway API, crie um `Gateway` nele e informe-o em `gateway.existing.name` e `gateway.existing.namespace`.
+
+   O `helm upgrade` não muda o roteamento: o modo padrão continua sendo o de antes.
 
 ### 6. Backup
 
@@ -98,3 +105,29 @@ Com o modo automático e webhook, cadastre no projeto do GitLab o endereço e o 
 
 O código de cada sistema também está no GitLab, nas tags implantadas.
 
+### 7. Roteamento no Kubernetes
+
+As rotas `/apps/<slug>` e a do portal seguem `routing.mode` (change `gateway-api-traefik-subchart`, [ADR 0032](adr/0032-gateway-api-com-traefik-como-implementacao.md)): `ingressroute` (padrão desta versão, `IngressRoute` do Traefik) ou `gateway` (`HTTPRoute` da Gateway API). Os dois convivem só nesta versão; uma seguinte remove o `ingressroute`. Diferenças entre os modos no [README do chart](../deploy/helm/appaiforge-portal/README.md#roteamento).
+
+**Trocar para `gateway`:**
+
+```bash
+helm upgrade aidb-prod deploy/helm/appaiforge-portal -n aidb-prod -f values-production.yaml \
+  --set routing.mode=gateway
+```
+
+O portal reinicia com o modo novo e, logo depois de subir, a primeira passada da reconciliação republica a rota de todo sistema não arquivado (ativo ou em erro) pela Gateway API e apaga as `IngressRoute` deles, sem recriar os Pods. Um sistema em provisionamento ganha a rota nova ao terminar. Uma falha num sistema aparece no log do portal como "reconciliação do sistema <id> falhou" e é tentada de novo na passada seguinte. Confira abrindo `/apps/<slug>` de um sistema com e sem sessão: sem sessão, o login deve devolver à mesma página. Com TLS, o certificado sai da rota e vai para o listener HTTPS do `Gateway` do chart (`portalRoute.tlsSecretName`).
+
+**Voltar para `ingressroute`:** o mesmo comando com `--set routing.mode=ingressroute`. A reconciliação logo depois da subida republica as rotas como `IngressRoute` e apaga os `HTTPRoute`.
+
+**CRDs ao atualizar o Traefik.** O Helm instala os CRDs do chart (os do Traefik e os da Gateway API) só na primeira instalação e nunca os atualiza. Quando uma versão do portal trouxer outra versão do Traefik, aplique os CRDs novos antes do `helm upgrade`:
+
+```bash
+helm pull traefik/traefik --version <versão> --untar -d /tmp/traefik-chart
+kubectl apply --server-side -f /tmp/traefik-chart/traefik/crds/
+kubectl apply --server-side -f deploy/helm/appaiforge-portal/crds/
+```
+
+A versão dos CRDs da Gateway API que o chart traz está no nome do arquivo em `deploy/helm/appaiforge-portal/crds/`.
+
+**Voltar a versão do portal** (`helm rollback`) para uma anterior ao Traefik no chart: a versão anterior não sabe apagar os `HTTPRoute`. Se o modo está em `gateway`, volte antes para `ingressroute` (`helm upgrade ... --set routing.mode=ingressroute`) e espere a reconciliação depois da subida: ela recria as `IngressRoute` dos sistemas e apaga os `HTTPRoute`. Só então rode o `helm rollback`. Ele remove o Traefik do chart; reinstale o release `traefik` à parte.
