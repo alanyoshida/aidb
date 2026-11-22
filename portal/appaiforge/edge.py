@@ -38,9 +38,18 @@ def _write(file_name: str, content: dict) -> None:
     directory = get_settings().dynamic_config_dir
     os.makedirs(directory, exist_ok=True)
     path = os.path.join(directory, file_name)
+    text = yaml.safe_dump(content, sort_keys=True)
+    try:
+        with open(path) as f:
+            if f.read() == text:
+                # mesma rota: não reescreve, senão o Traefik recarrega a cada passada da
+                # reconciliação (change portal-reconcile-loop, D6)
+                return
+    except FileNotFoundError:
+        pass
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
-        yaml.safe_dump(content, f, sort_keys=True)
+        f.write(text)
     os.replace(tmp, path)  # atômico: o watcher do Traefik nunca lê arquivo parcial
     log.info("rota publicada: %s", path)
 

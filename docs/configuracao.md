@@ -23,6 +23,7 @@
 | `WEBHOOK_BASE_URL` | — | endereço do portal visto pelo GitLab, mostrado na aba Implantação para o webhook; vazio = `PUBLIC_BASE_URL` |
 | `PORTAL_INTERNAL_URL` | `http://portal:8080` | endereço do portal na rede dos containers: rota raiz do Traefik, forwardAuth das apps e chamadas dos sidecars; mude quando o serviço do portal tiver outro nome. O chart Helm passa o nome completo do Service (`<nome>.<namespace>.svc.cluster.local`), porque o Traefik chama o forwardAuth de outro namespace |
 | `HEALTH_INTERVAL` | 15 | sonda de saúde das apps (segundos) |
+| `RECONCILE_INTERVAL` | 300 | intervalo, em segundos, da reconciliação periódica dos containers ou Pods de sistema com o estado registrado: recria a unidade ausente ou divergente, republica a rota, checa a saúde das conexões e, num portal de produção, remove sistemas com agente. Uma passada sempre roda logo depois da subida, em segundo plano; `0` desliga só a periódica. No chart, via `portal.extraEnv` |
 | `WORKSPACES_DIR` / `HOST_WORKSPACES_DIR` | /workspaces | raiz dos workspaces (bind compartilhado) |
 | `DYNAMIC_CONFIG_DIR` | /dynamic | rotas dinâmicas do Traefik (volume compartilhado) |
 | `CONFIGS_DIR` / `HOST_CONFIG_DIR` | /configs | config do agente (MCP, provedor, chaves) **fora do workspace**, montada read-only no container do sistema |

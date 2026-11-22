@@ -10,7 +10,7 @@
 - **Saúde das conexões**: cada conexão é sondada periodicamente e exibe seu estado na página do sistema.
 - **Auditoria**: toda ação de escrita da gestão (sistemas, conexões, usuários, provedores) fica numa trilha sem segredos, global para o admin e por sistema.
 - **Estado da app**: o monitor marca `erro — app fora do ar` após 3 sondas falhas e recupera sozinho quando a app volta.
-- **Reconciliação**: no boot e periodicamente o portal recria containers ausentes (workspace persiste no bind).
+- **Reconciliação**: logo depois da subida (em segundo plano) e a cada `APPAIFORGE_RECONCILE_INTERVAL` segundos (padrão 300) o portal recria containers ou Pods ausentes ou divergentes (workspace persiste no bind ou na PVC), republica as rotas e checa a saúde das conexões. Um sistema recriado com sucesso volta a ativo; uma falha ao recriar deixa o sistema em erro com o motivo e é tentada de novo na passada seguinte.
 - **Backup**: volumes do Postgres do portal + diretório de workspaces (`APPAIFORGE_WORKSPACES_DIR`).
 
 ## Instalar um portal de produção

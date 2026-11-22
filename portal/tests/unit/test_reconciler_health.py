@@ -30,6 +30,13 @@ def _add_connection(system, target) -> str:
     conn = connections.register_connection(
         system, "db", target["host"], target["port"], target["database"], target["username"], target["password"]
     )
+    # Cadastrar a conexão recria a unidade numa thread própria, que segura a trava do sistema; a
+    # reconciliação pula sistema ocupado (change portal-reconcile-loop, D3), então espera ela.
+    import threading
+
+    for thread in threading.enumerate():
+        if thread.name == f"refresh-conn-{system.slug}":
+            thread.join(30)
     return conn.id
 
 

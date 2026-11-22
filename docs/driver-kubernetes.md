@@ -54,7 +54,9 @@ container `git` usa a imagem base, fica ocioso (`sleep infinity`) e tem a mesma 
 mesmas restrições do `agent`, para os arquivos que uma restauração escreve continuarem do agente.
 
 Pods criados antes do container `git` são recriados pela reconciliação na primeira passada depois
-da atualização do portal; workspace e histórico ficam nos PVCs e sobrevivem à recriação. Até lá, uma
+da atualização do portal (a reconciliação roda em segundo plano logo depois da subida e a cada
+`APPAIFORGE_RECONCILE_INTERVAL` segundos, ver [configuração](configuracao.md); o mesmo vale para um
+Pod removido por fora ou com imagem ou Secrets de pull diferentes da configuração); workspace e histórico ficam nos PVCs e sobrevivem à recriação. Até lá, uma
 operação de checkpoint nesse sistema falha com a mensagem "não tem o container 'git'". Arquivar um
 sistema preserva os dois PVCs; a exclusão definitiva remove os dois (o `Role` do chart precisa do
 verbo `delete` em `persistentvolumeclaims`).

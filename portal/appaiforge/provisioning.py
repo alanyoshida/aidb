@@ -9,10 +9,12 @@ execução em si fica no driver. Também gera o opencode.json com provedor/model
 por conexão (task 5.4).
 """
 
+import functools
 import json
 import logging
 import os
 import re
+import threading
 
 import docker
 from afsupervisor.sandbox import landlock_abi
@@ -28,6 +30,30 @@ from .services.connections import connection_string, get_connection_secret
 
 log = logging.getLogger(__name__)
 _telemetry_log = telemetry.get_logger()
+
+# Trava por sistema das operações que criam, recriam ou removem a unidade de execução (change
+# `portal-reconcile-loop`, design D3). Reentrante: a reconciliação segura a trava e chama
+# `provision_system`, que a pega de novo. Não é `git_sync.system_lock`, que protege operações git
+# longas que não conflitam com recriar a unidade.
+_operation_locks: dict[str, threading.RLock] = {}
+_operation_locks_guard = threading.Lock()
+
+
+def system_operation_lock(system_id: str) -> threading.RLock:
+    """Trava das operações sobre a unidade de execução de um sistema, neste processo."""
+    with _operation_locks_guard:
+        return _operation_locks.setdefault(system_id, threading.RLock())
+
+
+def _holding_system_lock(fn):
+    """Roda `fn(system, ...)` segurando `system_operation_lock(system.id)` (espera a vez)."""
+
+    @functools.wraps(fn)
+    def wrapper(system, *args, **kwargs):
+        with system_operation_lock(system.id):
+            return fn(system, *args, **kwargs)
+
+    return wrapper
 
 # Faixa de portas de loopback do sidecar de gate de banco (etapa 4 do
 # confinamento, change db-proxy-gate-data-plane) — cada sistema tem seu
@@ -462,6 +488,7 @@ def refresh_connections(system: System) -> None:
     publish_app(system)
 
 
+@_holding_system_lock
 def provision_system(system: System) -> str:
     """Cria a unidade de execução do sistema (container ou Pod, a depender do driver ativo —
     change `add-kubernetes-driver`); devolve o identificador opaco a persistir.
@@ -559,6 +586,7 @@ def httpsproxy_sidecar_name(slug: str) -> str:
     return f"{system_container_name(slug)}-httpsproxy"
 
 
+@_holding_system_lock
 def refresh_https_allowlist(system: System) -> None:
     """Recria só o sidecar do proxy HTTP(S) de saída com a allow-list
     recalculada (change `agent-https-forward-proxy`, controles da seção 4)
@@ -637,54 +665,108 @@ def start_provisioning_thread(system_id: str) -> None:
 
 
 def reconcile() -> None:
-    """Concilia estado real das unidades de execução (container ou Pod, a depender do driver
-    ativo — change `add-kubernetes-driver`) com o registrado (boot/periódico)."""
-    from .drivers import ComputeUnitNotFound, ComputeUnitOwnedElsewhere, get_driver
+    """Uma passada de reconciliação: concilia o estado real das unidades de execução (container ou
+    Pod, a depender do driver ativo) com o registrado no portal.
+
+    Roda logo depois da subida do portal e a cada `reconcile_interval` segundos, em segundo plano
+    (`start_reconcile_loop`, change `portal-reconcile-loop`). Para cada sistema não arquivado e
+    fora de provisionamento:
+
+    - unidade ausente — ou, no Kubernetes, Pod sem o container `git` ou com imagem/Secrets de pull
+      divergentes da configuração — é recriada (`provision_system`) e a rota republicada; um
+      sistema recriado com sucesso volta a ativo sem mensagem; falha ao recriar deixa em erro;
+    - unidade presente: sidecars ausentes são recriados (driver Docker) e a rota é republicada;
+    - num portal de produção, sistema com agente tem a unidade removida e fica em erro;
+    - unidade com o nome tomado por outra instalação: o sistema fica em erro e nada é tocado;
+    - a saúde das conexões de banco do sistema é checada.
+
+    A reconciliação não disputa as operações do próprio portal: tenta a trava do sistema
+    (`system_operation_lock`) sem esperar e pula o sistema ocupado nesta passada; com a trava,
+    relê o sistema e pula se ele sumiu, foi arquivado ou está em provisionamento. Um erro
+    inesperado num sistema (API do Docker ou do cluster fora do ar, por exemplo) vai para o log,
+    não muda o estado dele e não interrompe a passada."""
+    from .drivers import get_driver
 
     driver = get_driver()
     with session_scope() as s:
-        systems = [
-            (sys.id, sys.slug, sys.status, sys.container_id, sys.kind)
-            for sys in s.execute(select(System)).scalars()
-        ]
-    from .services.systems import KIND_AGENT, is_production
-
-    for system_id, slug, status, container_id, kind in systems:
-        if status in (SystemStatus.archived, SystemStatus.provisioning):
+        system_ids = [sys.id for sys in s.execute(select(System)).scalars()]
+    for system_id in system_ids:
+        lock = system_operation_lock(system_id)
+        if not lock.acquire(blocking=False):
+            log.debug("reconciliação: sistema %s ocupado por outra operação; fica para a próxima", system_id)
             continue
-        if kind == KIND_AGENT and is_production():
-            # portal de produção: um sistema com agente de antes da troca de papel não roda
-            from .services.systems import get_system, set_status
+        try:
+            _reconcile_system(driver, system_id)
+        except Exception:  # noqa: BLE001 - um sistema não derruba a passada (design D4)
+            log.exception("reconciliação do sistema %s falhou", system_id)
+        finally:
+            lock.release()
 
-            existing = get_system(system_id)
-            if existing is not None:
-                driver.remove(existing)
-            set_status(system_id, SystemStatus.error,
-                       "este portal é de produção: sistemas com agente não são provisionados")
-            continue
+
+def _reconcile_system(driver, system_id: str) -> None:
+    """Reconcilia um sistema; chamada com a trava dele já segura."""
+    from .drivers import ComputeUnitNotFound, ComputeUnitOwnedElsewhere
+    from .services.systems import KIND_AGENT, get_system, is_production, set_status
+
+    system = get_system(system_id)  # estado de agora, não o do início da passada
+    if system is None or system.status in (SystemStatus.archived, SystemStatus.provisioning):
+        return
+    slug = system.slug
+    if system.kind == KIND_AGENT and is_production():
+        # portal de produção: um sistema com agente de antes da troca de papel não roda
+        driver.remove(system)
+        set_status(system_id, SystemStatus.error,
+                   "este portal é de produção: sistemas com agente não são provisionados")
+        return
+    try:
         try:
             driver.reconcile_one(system_id, slug)
             publish_app_by_slug(slug)
         except ComputeUnitOwnedElsewhere as exc:
             # o nome está com outro dono (add-production-portal-install, D2): não toca nele
-            from .services.systems import set_status
-
             log.warning("reconciliação de %s: %s", slug, exc)
             set_status(system_id, SystemStatus.error, str(exc))
         except ComputeUnitNotFound:
             log.warning("reconciliação: unidade de execução ausente para %s; recriando", slug)
-            from .services.systems import get_system
-
-            system = get_system(system_id)
-            if system is not None:
-                try:
-                    provision_system(system)  # recria sistema + sidecar juntos (task 5.4)
-                    publish_app_by_slug(slug)
-                except Exception as exc:  # falha visível no estado do sistema
-                    from .services.systems import set_status
-
-                    set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
+            try:
+                provision_system(system)  # recria sistema + sidecar juntos (task 5.4)
+                publish_app_by_slug(slug)
+            except Exception as exc:  # falha visível no estado do sistema
+                set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
+            else:
+                set_status(system_id, SystemStatus.active, "")  # design D5
+    finally:
         _check_connections_health(system_id)
+
+
+def start_reconcile_loop(interval: float | None = None, stop: threading.Event | None = None) -> threading.Thread:
+    """Inicia a reconciliação em segundo plano (change `portal-reconcile-loop`, design D1/D2): uma
+    passada logo ao começar, depois uma a cada `interval` segundos (padrão
+    `settings.reconcile_interval`). Com intervalo `<= 0`, só a primeira. Uma passada que falha vai
+    para o log e não encerra o laço. Thread, não `nicegui.app.timer`: as chamadas ao Docker, ao
+    cluster e aos bancos são bloqueantes e congelariam o event loop da UI.
+
+    Pressupõe um processo do portal só (o chart e o compose sobem uma réplica): a trava por
+    sistema é deste processo."""
+    seconds = interval if interval is not None else get_settings().reconcile_interval
+    stop = stop or threading.Event()
+
+    def once() -> None:
+        try:
+            reconcile()
+        except Exception:  # noqa: BLE001 - a próxima passada tenta de novo
+            log.exception("passada de reconciliação falhou")
+
+    def loop() -> None:
+        once()
+        if seconds <= 0:
+            return
+        while not stop.wait(seconds):
+            once()
+
+    thread = threading.Thread(target=loop, daemon=True, name="reconcile-loop")
+    thread.start()
+    return thread
 
 
 def _check_connections_health(system_id: str) -> None:
@@ -710,6 +792,7 @@ def publish_app_by_slug(slug: str) -> None:
         publish_app(system)
 
 
+@_holding_system_lock
 def archive_system(system: System, actor_id: str | None = None, actor_email: str | None = None) -> None:
     """Arquiva: para o container, preserva workspace, remove rota (spec container-lifecycle)."""
     stop_and_remove(system)
@@ -723,6 +806,7 @@ def archive_system(system: System, actor_id: str | None = None, actor_email: str
     )
 
 
+@_holding_system_lock
 def delete_system(system: System, actor_id: str | None = None, actor_email: str | None = None) -> None:
     """Exclusão definitiva (somente admin): container + workspace + config do sistema (spec)."""
     _telemetry_log.info(

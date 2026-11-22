@@ -159,6 +159,11 @@ def create_app() -> FastAPI:
     from .deploy import start_poller
 
     start_poller()
+    from .provisioning import start_reconcile_loop
+
+    # Containers/Pods ausentes ou divergentes: logo agora e a cada APPAIFORGE_RECONCILE_INTERVAL,
+    # em segundo plano para não atrasar a subida (change portal-reconcile-loop, D1)
+    start_reconcile_loop()
     ui.run_with(application, title="AIDB")
     return application
 
