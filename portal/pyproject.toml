@@ -5,7 +5,7 @@ description = "AIDB — portal que gera sistemas de gestão com IA sobre bancos 
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
-    "fastapi>=0.115",
+    "fastapi>=0.162",
     "uvicorn[standard]>=0.32",
     "nicegui>=2.14",
     "sqlalchemy>=2.0.36",
@@ -25,6 +25,9 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.27",
     "authlib>=1.3",
     "joserfc>=1.0",
+    "opentelemetry-instrumentation-sqlalchemy==0.66b2",
+    "opentelemetry-instrumentation-httpx==0.66b2",
+    "opentelemetry-instrumentation-system-metrics==0.66b2",
 ]
 
 [dependency-groups]

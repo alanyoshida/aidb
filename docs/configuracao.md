@@ -43,5 +43,11 @@
 | `BREAKGLASS_SESSION_HOURS` | 8 | duração máxima da sessão do break-glass |
 | `LOGIN_RATE_LIMIT_ATTEMPTS` / `LOGIN_RATE_LIMIT_WINDOW_SECONDS` | 5 / 900 | falhas por IP+e-mail que bloqueiam o login local, e a janela |
 | `IDENTITY_TOKEN_TTL_SECONDS` | 60 | validade do JWT de identidade entregue às apps |
+| `OTEL_TRACES_ENDPOINT` | — | URL OTLP/HTTP de traços do Collector (ex.: `http://otel-collector:4318/v1/traces`); vazio = nada é exportado. Aponta sempre para um Collector, nunca para um backend ([ADR 0025](adr/0025-telemetria-otel-agnostica-de-backend.md)) |
+| `OTEL_LOGS_ENDPOINT` | — | URL OTLP/HTTP de logs do Collector (`.../v1/logs`); vazio = logs só no processo |
+| `OTEL_METRICS_ENDPOINT` | — | URL OTLP/HTTP de métricas do Collector (`.../v1/metrics`): duração de requisições HTTP, pool do banco do portal, CPU e memória do processo; vazio = nenhuma métrica ([ADR 0033](adr/0033-auto-instrumentacao-do-portal-e-elastic-apm.md)) |
+| `OTEL_SPAN_RETENTION_DAYS` | 30 | retenção dos spans guardados em Postgres para o Debug log do chat |
+
+Fora do prefixo `APPAIFORGE_`, portal e broker aceitam a variável padrão do OpenTelemetry `OTEL_RESOURCE_ATTRIBUTES` (ex.: `deployment.environment=producao,service.version=1.8.0`): ela prevalece sobre o nome, a versão e a instância que o código põe na telemetria ([ADR 0033](adr/0033-auto-instrumentacao-do-portal-e-elastic-apm.md)).
 
 Limites: CPU/memória aplicados via Docker; **quota de disco** requer storage driver com suporte a `storage-opt` (overlay2/ext4 não suporta — o container sobe sem quota e o portal registra a ressalva).

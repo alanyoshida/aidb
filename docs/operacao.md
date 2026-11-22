@@ -131,3 +131,37 @@ kubectl apply --server-side -f deploy/helm/appaiforge-portal/crds/
 A versão dos CRDs da Gateway API que o chart traz está no nome do arquivo em `deploy/helm/appaiforge-portal/crds/`.
 
 **Voltar a versão do portal** (`helm rollback`) para uma anterior ao Traefik no chart: a versão anterior não sabe apagar os `HTTPRoute`. Se o modo está em `gateway`, volte antes para `ingressroute` (`helm upgrade ... --set routing.mode=ingressroute`) e espere a reconciliação depois da subida: ela recria as `IngressRoute` dos sistemas e apaga os `HTTPRoute`. Só então rode o `helm rollback`. Ele remove o Traefik do chart; reinstale o release `traefik` à parte.
+
+## Observabilidade (Elastic APM)
+
+Portal e broker exportam traços, métricas e logs por OTLP sempre para o Collector, nunca direto para um backend ([ADR 0025](adr/0025-telemetria-otel-agnostica-de-backend.md), [ADR 0033](adr/0033-auto-instrumentacao-do-portal-e-elastic-apm.md)). Sem as variáveis `APPAIFORGE_OTEL_*`, nada é exportado e nada muda. Variáveis em [configuração](configuracao.md).
+
+**Elastic de exemplo do compose** (Elasticsearch, Kibana e APM Server 9.5.6, sem security). Defina os endpoints, no shell ou no `.env` ao lado do `docker-compose.yml`, e suba o perfil:
+
+```bash
+export APPAIFORGE_OTEL_TRACES_ENDPOINT=http://otel-collector:4318/v1/traces
+export APPAIFORGE_OTEL_LOGS_ENDPOINT=http://otel-collector:4318/v1/logs
+export APPAIFORGE_OTEL_METRICS_ENDPOINT=http://otel-collector:4318/v1/metrics
+docker compose --profile observability-elastic up -d
+```
+
+O Kibana fica em `http://localhost:5601`, em Observability → APM: `appaiforge-portal` e `appaiforge-broker` aparecem como serviços. Para separar ambientes na mesma instância, defina também `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=<nome>`.
+
+**Elastic próprio, fora do compose.** O caminho é um APM Server standalone na mesma versão do Elasticsearch, escutando em `0.0.0.0:8200` (Fleet exige o security do Elastic ligado). Suba só o Collector do perfil, apontando para ele, e recrie portal e broker com os endpoints acima:
+
+```bash
+APM_SERVER_ENDPOINT=<host-do-apm-server>:8200 docker compose --profile observability-elastic up -d --no-deps otel-collector-elastic
+docker compose up -d portal broker
+```
+
+O Collector repassa ao APM Server sem token nem TLS: serve para um Elastic de teste. Um Elastic de produção, com security, entra pela change do chart.
+
+**Vindo do perfil com Elastic 8.15.3.** O Elasticsearch 9.5.6 não abre o volume criado pelo 8.15 (a atualização oficial passa pelo 8.19). São dados de exemplo: apague o volume antes de subir de novo.
+
+```bash
+docker compose --profile observability-elastic down
+docker volume ls --format '{{.Name}}' | grep elasticsearchdata
+docker volume rm <nome-listado-acima>
+```
+
+**O que não aparece no APM:** as ações da interface (cliques, formulários) chegam pelo websocket do NiceGUI e não geram transação; o health check e os arquivos estáticos da UI ficam de fora de propósito. A query string das URLs nunca sai do processo.

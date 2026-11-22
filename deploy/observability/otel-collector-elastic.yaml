@@ -12,9 +12,18 @@ receivers:
       grpc:
         endpoint: 0.0.0.0:4317
 
+# Métricas (change portal-observability-otel, design D4): portal e broker
+# exportam cumulativo (padrão do SDK, o que o Prometheus espera); a conversão
+# para delta, que o APM Server trata melhor, fica aqui — particularidade do
+# backend no Collector, nunca na aplicação (ADR 0025).
+processors:
+  cumulativetodelta: {}
+
 exporters:
   otlp/apm:
-    endpoint: apm-server:8200
+    # APM Server do compose por padrão; um Elastic externo via
+    # APM_SERVER_ENDPOINT (ver o serviço otel-collector-elastic no compose).
+    endpoint: ${env:APM_SERVER_ENDPOINT}
     tls:
       insecure: true
 
@@ -25,4 +34,8 @@ service:
       exporters: [otlp/apm]
     logs:
       receivers: [otlp]
+      exporters: [otlp/apm]
+    metrics:
+      receivers: [otlp]
+      processors: [cumulativetodelta]
       exporters: [otlp/apm]
