@@ -127,6 +127,50 @@ helm uninstall appaiforge-portal -n appaiforge
 kubectl -n appaiforge delete pvc -l app.kubernetes.io/instance=appaiforge-portal
 ```
 
+## Observabilidade
+
+Desligada por padrão (change `chart-observability-otel`, [ADR 0034](../../../docs/adr/0034-observabilidade-no-chart-kubernetes.md)). Ligada, o chart sobe um OTel Collector que recebe OTLP do portal e do Traefik e repassa traços, métricas e logs a um destino OTLP que já existe. O destino de referência é um APM Server do Elastic. O portal só conhece o Collector ([ADR 0025](../../../docs/adr/0025-telemetria-otel-agnostica-de-backend.md)).
+
+```bash
+helm upgrade aidb-prod deploy/helm/appaiforge-portal -n aidb-prod -f values-production.yaml \
+  --set observability.enabled=true \
+  --set observability.environment=producao \
+  --set observability.exporter.endpoint=apm.exemplo.com:8200
+```
+
+| Valor | Padrão | O quê |
+|---|---|---|
+| `observability.enabled` | `false` | liga o Collector e as variáveis OTEL do portal |
+| `observability.environment` | — | `deployment.environment` da telemetria |
+| `observability.exporter.endpoint` | — | destino OTLP gRPC, ex.: `apm.exemplo.com:8200` (obrigatório com o Collector do chart) |
+| `observability.exporter.insecure` | `false` | sem TLS, para um APM Server de teste |
+| `observability.exporter.deltaMetrics` | `true` | converte métricas para delta antes de exportar (APM Server); desligue para um backend que espere cumulativo |
+| `observability.exporter.existingSecret` | — | Secret do destino, lido só pelo Collector |
+| `observability.exporter.token` / `authScheme` | `true` / `Bearer` | usa a chave `token` do Secret como `Authorization: <authScheme> <token>`; `ApiKey` para API key do Elastic |
+| `observability.exporter.ca` | `false` | usa a chave `ca.crt` do Secret como CA do destino |
+| `observability.collector.create` | `true` | `false` usa um Collector que já existe (`observability.collector.endpoint`, base OTLP/HTTP) |
+| `observability.collector.config` | — | configuração completa do Collector, no lugar da gerada (outro backend ou outro pipeline) |
+| `observability.kubeletstats.enabled` | `false` | CPU e memória dos Pods do portal e dos sistemas (ver abaixo) |
+
+**O que o portal recebe.** Os três endpoints `APPAIFORGE_OTEL_*_ENDPOINT` apontando para o Collector, e `OTEL_RESOURCE_ATTRIBUTES` com `service.version` igual à tag da imagem, o ambiente, o Pod e o namespace.
+
+**Credencial do destino.** Crie o Secret antes, no namespace da release, e ligue só as chaves que ele tem. Cada chave declarada precisa existir: sem ela, o Pod do Collector não sobe e o evento diz qual falta.
+
+```bash
+kubectl -n aidb-prod create secret generic apm-destino \
+  --from-literal=token=<secret_token do APM Server> --from-file=ca.crt=ca-do-elastic.pem
+```
+
+```bash
+--set observability.exporter.existingSecret=apm-destino --set observability.exporter.ca=true
+```
+
+**Traços e métricas do Traefik.** Ligue `traefik.tracing.otlp.enabled` e `traefik.tracing.otlp.http.enabled`, e o mesmo em `traefik.metrics.otlp`. O endpoint já vem apontando para o Collector com o `fullnameOverride` padrão. Com outro nome, ajuste `traefik.tracing.otlp.http.endpoint`: o chart recusa renderizar com um endereço que não seja o do Collector desta instalação. O Traefik mascara a query string nos traços.
+
+**CPU e memória por sistema (`kubeletstats`).** `observability.kubeletstats.enabled=true` sobe um Collector por nó (DaemonSet), que lê o kubelet e manda ao Collector central. As métricas saem com `service.name` igual ao slug do sistema dono do Pod (`appaiforge-portal` no portal). Cria o único `ClusterRole` do chart fora dos namespaces, só com `get` em `nodes/stats` e `nodes`; a leitura de Pods fica em `Role` nos namespaces da release e dos sistemas. No `kind`, o kubelet usa certificado autoassinado: ligue `observability.kubeletstats.insecureSkipVerify`.
+
+**Broker implantado à parte.** Defina no broker `APPAIFORGE_OTEL_TRACES_ENDPOINT` e `APPAIFORGE_OTEL_METRICS_ENDPOINT` com o Service do Collector (`http://<fullname>-otel-collector.<namespace>.svc.cluster.local:4318/v1/traces` e `.../v1/metrics`).
+
 ## O que este chart não faz
 
 - Não expõe o portal por padrão — só `port-forward`. Com `portalRoute.enabled=true` cria a rota
@@ -134,5 +178,8 @@ kubectl -n appaiforge delete pvc -l app.kubernetes.io/instance=appaiforge-portal
   webhook).
 - Não atualiza os CRDs da Gateway API nem os do Traefik depois da primeira instalação (limitação do
   Helm; ver [Roteamento](#roteamento)).
-- Não implanta o broker de inferência (LiteLLM) nem telemetria OTel — fora do escopo da validação
-  do driver Kubernetes; use o `docker-compose` (driver Docker) para isso.
+- Não implanta o broker de inferência (LiteLLM) — fora do escopo da validação do driver
+  Kubernetes; use o `docker-compose` (driver Docker) para isso. Um broker implantado à parte pode
+  mandar telemetria ao Collector do chart (ver [Observabilidade](#observabilidade)).
+- Não instala o backend de observabilidade (Elastic, Tempo, Prometheus): o Collector do chart
+  repassa a um destino que já existe.

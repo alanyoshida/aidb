@@ -203,6 +203,30 @@ spec:
               value: {{ .Values.portal.maxSystems | quote }}
             - name: APPAIFORGE_FAKE_DELAY
               value: {{ .Values.portal.fakeDelay | quote }}
+            {{- include "appaiforge-portal.validateObservability" . }}
+            {{- if .Values.observability.enabled }}
+            {{- $otlp := include "appaiforge-portal.otlpBase" . }}
+            # Observabilidade (change chart-observability-otel, D3): sempre o Collector, nunca o
+            # destino final (ADR 0025).
+            - name: APPAIFORGE_OTEL_TRACES_ENDPOINT
+              value: {{ printf "%s/v1/traces" $otlp | quote }}
+            - name: APPAIFORGE_OTEL_METRICS_ENDPOINT
+              value: {{ printf "%s/v1/metrics" $otlp | quote }}
+            - name: APPAIFORGE_OTEL_LOGS_ENDPOINT
+              value: {{ printf "%s/v1/logs" $otlp | quote }}
+            # POD_NAME e POD_NAMESPACE antes de OTEL_RESOURCE_ATTRIBUTES: a expansão $(VAR) só
+            # resolve variáveis definidas mais acima.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: {{ printf "service.version=%s%s,k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)" (toString .Values.image.tag) (ternary (printf ",deployment.environment=%s" .Values.observability.environment) "" (ne .Values.observability.environment "")) | quote }}
+            {{- end }}
             {{- with .Values.portal.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

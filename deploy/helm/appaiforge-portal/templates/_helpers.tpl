@@ -126,3 +126,65 @@ selector:
         - {{ . | quote }}
         {{- end }}
 {{- end -}}
+
+{{/*
+Observabilidade (change chart-observability-otel, ADR 0034). Nome do Collector central e base
+OTLP/HTTP que o portal e o agente usam: o Service do Collector deste chart, ou um Collector já
+existente (collector.create=false).
+*/}}
+{{- define "appaiforge-portal.collectorName" -}}
+{{- printf "%s-otel-collector" (include "appaiforge-portal.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.agentName" -}}
+{{- printf "%s-otel-agent" (include "appaiforge-portal.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.otlpBase" -}}
+{{- if .Values.observability.collector.create -}}
+{{- printf "http://%s.%s.svc.cluster.local:4318" (include "appaiforge-portal.collectorName" .) .Release.Namespace -}}
+{{- else -}}
+{{- trimSuffix "/" .Values.observability.collector.endpoint -}}
+{{- end -}}
+{{- end -}}
+
+{{/* Traefik do subchart com traços ou métricas OTLP ligados (true/vazio, por sinal). */}}
+{{- define "appaiforge-portal.traefikOtlp" -}}
+{{- $t := .Values.traefik | default dict -}}
+{{- if $t.enabled -}}
+{{- $o := dig .signal "otlp" dict $t -}}
+{{- if and $o.enabled (dig "http" "enabled" false $o) -}}{{- dig "http" "endpoint" "" $o -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "appaiforge-portal.validateObservability" -}}
+{{- $o := .Values.observability -}}
+{{- $collector := include "appaiforge-portal.collectorName" . -}}
+{{- range $signal := list "tracing" "metrics" -}}
+{{- $endpoint := include "appaiforge-portal.traefikOtlp" (dict "Values" $.Values "signal" $signal) -}}
+{{- if $endpoint -}}
+{{- if not $o.enabled -}}
+{{- fail (printf "traefik.%s.otlp ligado exige observability.enabled=true: o Traefik manda para o Collector da observabilidade" $signal) -}}
+{{- end -}}
+{{- if and $o.collector.create (not (contains $collector $endpoint)) -}}
+{{- fail (printf "traefik.%s.otlp.http.endpoint (%s) não aponta para o Collector desta instalação (%s): ajuste o endpoint, porque os valores do subchart não acompanham o fullnameOverride" $signal $endpoint $collector) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $o.enabled -}}
+{{- if $o.collector.create -}}
+{{- if and (not $o.exporter.endpoint) (not $o.collector.config) -}}
+{{- fail "observability.enabled=true exige o destino: informe observability.exporter.endpoint (ex.: apm.exemplo.com:8200) ou uma configuração própria em observability.collector.config" -}}
+{{- end -}}
+{{- else if not $o.collector.endpoint -}}
+{{- fail "observability.collector.create=false exige observability.collector.endpoint: a base OTLP/HTTP do Collector que já existe no cluster" -}}
+{{- end -}}
+{{- if not (has $o.exporter.authScheme (list "Bearer" "ApiKey")) -}}
+{{- fail (printf "observability.exporter.authScheme deve ser Bearer ou ApiKey (recebido: %s)" $o.exporter.authScheme) -}}
+{{- end -}}
+{{- if and $o.kubeletstats.enabled (not $o.collector.create) (not $o.collector.endpoint) -}}
+{{- fail "observability.kubeletstats.enabled exige um Collector: o deste chart ou observability.collector.endpoint" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+

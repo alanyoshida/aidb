@@ -1,0 +1,148 @@
+{{- /*
+Agente de kubeletstats (change chart-observability-otel, ADR 0034, D5): um Collector por nó,
+porque o kubelet só expõe as estatísticas dos Pods do próprio nó. Permissões mínimas: get em
+nodes/stats e nodes (o único acesso fora dos namespaces) e leitura de pods só nos namespaces da
+instalação. Não lê o Secret do destino: manda para o Collector central.
+*/ -}}
+{{- $o := .Values.observability -}}
+{{- if and $o.enabled $o.kubeletstats.enabled }}
+{{- $name := include "appaiforge-portal.agentName" . }}
+{{- $config := include "appaiforge-portal.agentConfig" . }}
+{{- $namespaces := uniq (list .Release.Namespace (include "appaiforge-portal.systemsNamespace" .)) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  # inclui o namespace: ClusterRole é do cluster, e cada portal tem o seu namespace
+  name: {{ printf "%s-%s" .Release.Namespace $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+rules:
+  - apiGroups: [""]
+    resources: ["nodes/stats", "nodes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace $name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ printf "%s-%s" .Release.Namespace $name | trunc 63 | trimSuffix "-" }}
+  apiGroup: rbac.authorization.k8s.io
+{{- range $ns := $namespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "appaiforge-portal.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "appaiforge-portal.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ $name }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+data:
+  config.yaml: |
+    {{- $config | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: otel-agent
+  template:
+    metadata:
+      labels:
+        {{- include "appaiforge-portal.labels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-agent
+      annotations:
+        checksum/config: {{ $config | sha256sum }}
+    spec:
+      serviceAccountName: {{ $name }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-agent
+          image: "{{ $o.collector.image.repository }}:{{ $o.collector.image.tag }}"
+          # CPU como uso em núcleos (k8s.pod.cpu.usage, container.cpu.usage), não a
+          # *.cpu.utilization que o kubeletstats marca como obsoleta e vai remover.
+          args: ["--config=/conf/config.yaml", "--feature-gates=receiver.kubeletstats.enableCPUUsageMetrics"]
+          env:
+            - name: K8S_NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+          {{- with $o.kubeletstats.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+{{- end }}
