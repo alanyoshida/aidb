@@ -164,4 +164,12 @@ docker volume ls --format '{{.Name}}' | grep elasticsearchdata
 docker volume rm <nome-listado-acima>
 ```
 
+**Cada app como um serviço (borda).** Com um perfil de observabilidade de pé, ligue o tracing do Traefik e recrie o `traefik`:
+
+```bash
+APPAIFORGE_TRAEFIK_CONFIG=traefik-otel.yml docker compose up -d traefik
+```
+
+Cada pedido a `/apps/<slug>` vira uma transação no serviço de nome igual ao slug, com o caminho dentro da app e identificadores trocados por `{id}` (ex.: `GET /clientes/{id}` no serviço `crm`). Os assets e o websocket da interface ficam de fora, e a query string é removida no Collector ([ADR 0035](adr/0035-borda-das-apps-como-servicos-no-apm.md)). No Kubernetes, o mesmo vale com o tracing do Traefik ligado no chart.
+
 **O que não aparece no APM:** as ações da interface (cliques, formulários) chegam pelo websocket do NiceGUI e não geram transação; o health check e os arquivos estáticos da UI ficam de fora de propósito. A query string das URLs nunca sai do processo.

@@ -25,6 +25,46 @@ processors:
   {{- if $o.exporter.deltaMetrics }}
   cumulativetodelta: {}
   {{- end }}
+  # Borda das apps (change edge-app-tracing, ADR 0035). O mesmo bloco está nos três Collectors
+  # (perfil Elastic, perfil Grafana e chart) e um teste confere que são iguais. Só toca spans do
+  # Traefik (resource service.name == "traefik"): descarta assets e websocket do NiceGUI, tira a
+  # query string, dá a cada pedido a /apps/<slug> o nome "<método> <caminho na app com {id}>" e
+  # move esses spans para um serviço com o nome do slug, o mesmo do kubeletstats.
+  filter/edge:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] == "traefik" and attributes["url.path"] != nil and IsMatch(attributes["url.path"], "/_nicegui")'
+        - 'resource.attributes["service.name"] == "traefik" and attributes["url.original"] != nil and IsMatch(attributes["url.original"], "/_nicegui")'
+        - 'resource.attributes["service.name"] == "traefik" and attributes["url.full"] != nil and IsMatch(attributes["url.full"], "/_nicegui")'
+  transform/edge:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - delete_key(attributes, "url.query") where resource.attributes["service.name"] == "traefik"
+          - replace_pattern(attributes["url.full"], "[?].*", "") where resource.attributes["service.name"] == "traefik" and attributes["url.full"] != nil
+          - replace_pattern(attributes["url.original"], "[?].*", "") where resource.attributes["service.name"] == "traefik" and attributes["url.original"] != nil
+          - replace_pattern(attributes["http.target"], "[?].*", "") where resource.attributes["service.name"] == "traefik" and attributes["http.target"] != nil
+          - replace_pattern(attributes["http.url"], "[?].*", "") where resource.attributes["service.name"] == "traefik" and attributes["http.url"] != nil
+          - set(attributes["appaiforge.slug"], attributes["url.path"]) where resource.attributes["service.name"] == "traefik" and attributes["url.path"] != nil and IsMatch(attributes["url.path"], "^/apps/[a-z0-9-]+(/|$)")
+          - replace_pattern(attributes["appaiforge.slug"], "^/apps/([a-z0-9-]+).*", "$$1") where attributes["appaiforge.slug"] != nil
+          - set(attributes["appaiforge.route"], attributes["url.path"]) where attributes["appaiforge.slug"] != nil
+          - replace_pattern(attributes["appaiforge.route"], "^/apps/[a-z0-9-]+", "") where attributes["appaiforge.route"] != nil
+          - set(attributes["appaiforge.route"], "/") where attributes["appaiforge.route"] == ""
+          - replace_pattern(attributes["appaiforge.route"], "/[0-9]+(/|$)", "/{id}$$1") where attributes["appaiforge.route"] != nil
+          - replace_pattern(attributes["appaiforge.route"], "/[0-9a-fA-F-]{16,}(/|$)", "/{id}$$1") where attributes["appaiforge.route"] != nil
+          - set(name, Concat([attributes["http.request.method"], attributes["appaiforge.route"]], " ")) where attributes["appaiforge.route"] != nil and attributes["http.request.method"] != nil
+          - set(name, Concat([attributes["http.method"], attributes["appaiforge.route"]], " ")) where attributes["appaiforge.route"] != nil and attributes["http.request.method"] == nil and attributes["http.method"] != nil
+          - delete_key(attributes, "appaiforge.route")
+  groupbyattrs/edge:
+    keys: [appaiforge.slug]
+  transform/edge-service:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], attributes["appaiforge.slug"]) where attributes["appaiforge.slug"] != nil
 exporters:
   otlp:
     endpoint: {{ $o.exporter.endpoint | quote }}
@@ -42,7 +82,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, filter/edge, transform/edge, groupbyattrs/edge, transform/edge-service, batch]
       exporters: [otlp]
     metrics:
       receivers: [otlp]

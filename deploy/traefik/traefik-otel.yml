@@ -1,0 +1,22 @@
+# Igual a traefik.yml, com tracing OTLP para o Collector do perfil de observabilidade de pé
+# (change edge-app-tracing, ADR 0035). Escolhido por APPAIFORGE_TRAEFIK_CONFIG=traefik-otel.yml no
+# compose: o Traefik não mistura arquivo e linha de comando na configuração estática, e ligar o
+# tracing sempre faria ele tentar exportar sem Collector.
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+log:
+  level: INFO
+
+accessLog: {}
+
+tracing:
+  otlp:
+    http:
+      endpoint: http://otel-collector:4318/v1/traces
