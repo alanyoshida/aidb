@@ -190,6 +190,38 @@ class ProcessRunner:
             return False
         return popen.poll() is None
 
+    def reap_orphans(self) -> int:
+        """Recolhe os filhos zumbis que este processo não criou com `spawn`.
+
+        O supervisor é o PID 1 do container: os processos que o agente cria e abandona (netos que
+        ficam órfãos quando o pai encerra) passam a ser filhos dele, e sem um `wait` ficam como
+        zumbis para sempre (achado com dezenas de `opencode <defunct>` em containers antigos).
+        Só os PIDs fora de `_children`, um a um: um `waitpid(-1)` roubaria o status de saída dos
+        filhos registrados, que `alive()` consulta. Devolve quantos recolheu."""
+        me, reaped = os.getpid(), 0
+        try:
+            entries = os.listdir("/proc")
+        except OSError:
+            return 0
+        for entry in entries:
+            if not entry.isdigit() or int(entry) in self._children:
+                continue
+            try:
+                with open(f"/proc/{entry}/stat") as f:
+                    stat = f.read()
+            except OSError:
+                continue
+            # o nome do processo vem entre parênteses e pode ter espaços: o resto vem depois do último ")"
+            fields = stat[stat.rfind(")") + 2:].split()
+            if len(fields) < 2 or fields[0] != "Z" or int(fields[1]) != me:
+                continue
+            try:
+                os.waitpid(int(entry), os.WNOHANG)
+                reaped += 1
+            except ChildProcessError:
+                pass
+        return reaped
+
     def kill(self, pid: int) -> None:
         popen = self._children.pop(pid, None)
         if popen is not None and popen.poll() is None:
@@ -383,6 +415,7 @@ class Supervisor:
         self.start()
         while True:
             time.sleep(poll_interval)
+            self.runner.reap_orphans()
             self.poll()
 
 
