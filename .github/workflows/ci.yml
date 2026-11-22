@@ -66,16 +66,19 @@ jobs:
           TEST_USER="$(getent passwd 1000 | cut -d: -f1)"
           sudo usermod -aG docker "$TEST_USER"
           sudo install -m 0755 "$(command -v uv)" "$(command -v helm)" /usr/local/bin/
-          sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
+          # cópia fora de /home/runner, que não deixa outros usuários entrarem
+          sudo cp -a "$GITHUB_WORKSPACE" /opt/aidb-tests
+          sudo chown -R 1000:1000 /opt/aidb-tests
           echo "TEST_USER=$TEST_USER" >> "$GITHUB_ENV"
       - name: Unitários e BDD
         run: |
           sudo -u "$TEST_USER" -H env CI=true PATH=/usr/local/bin:/usr/bin:/bin UV_PYTHON=3.12 \
-            bash -c 'cd portal && uv sync --frozen && uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd'
+            bash -c 'cd /opt/aidb-tests/portal && uv sync --frozen && uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd'
       - name: Componentes da imagem base
         # pasta por pasta: dois test_sidecar.py colidem numa coleta única
         run: |
           sudo -u "$TEST_USER" -H env CI=true PATH=/usr/local/bin:/usr/bin:/bin bash -c '
+            cd /opt/aidb-tests
             for d in claude-code-shim dbproxy gated-mcp httpproxy; do
               echo "== base-image/$d"
               (cd "base-image/$d" && ../../portal/.venv/bin/python -m pytest -q -p no:cacheprovider) || exit 1

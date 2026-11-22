@@ -166,7 +166,7 @@ As duas primeiras execuções no GitHub mostraram duas premissas da suíte, que 
 O job `testes`, então:
 - constrói `appaiforge/base:<versão do pyproject>`;
 - usa o usuário de uid 1000 do runner, criando um (`aidbtest`) se não houver, e o põe no grupo `docker`;
-- copia `uv` e `helm` para `/usr/local/bin` e dá o checkout a esse uid;
+- copia `uv` e `helm` para `/usr/local/bin`, e copia o checkout para `/opt/aidb-tests`, dado a esse uid. O runner já tem um usuário de uid 1000 (`packer`), mas ele não entra em `/home/runner`;
 - roda como ele o `uv sync --frozen`, os testes de unidade e BDD e os de `base-image/`. O Python e o venv ficam na pasta desse usuário, sem depender das permissões da pasta do `runner`.
 
 Alternativa descartada: rodar como root. Foi a primeira correção, e falhou pelo git (item 1).
