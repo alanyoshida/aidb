@@ -69,15 +69,21 @@ jobs:
           # cópia fora de /home/runner, que não deixa outros usuários entrarem
           sudo cp -a "$GITHUB_WORKSPACE" /opt/aidb-tests
           sudo chown -R 1000:1000 /opt/aidb-tests
-          echo "TEST_USER=$TEST_USER" >> "$GITHUB_ENV"
+          TEST_HOME="$(getent passwd 1000 | cut -d: -f6)"
+          sudo mkdir -p "$TEST_HOME" && sudo chown 1000:1000 "$TEST_HOME"
+          { echo "TEST_USER=$TEST_USER"; echo "TEST_HOME=$TEST_HOME"; } >> "$GITHUB_ENV"
       - name: Unitários e BDD
         run: |
-          sudo -u "$TEST_USER" -H env CI=true PATH=/usr/local/bin:/usr/bin:/bin UV_PYTHON=3.12 \
+          # ambiente limpo (env -i): o sudo do runner preserva variáveis do usuário `runner`, como
+          # as que o setup-helm deixa apontando para /home/runner
+          sudo -u "$TEST_USER" env -i HOME="$TEST_HOME" USER="$TEST_USER" LANG=C.UTF-8 \
+            CI=true PATH=/usr/local/bin:/usr/bin:/bin UV_PYTHON=3.12 \
             bash -c 'cd /opt/aidb-tests/portal && uv sync --frozen && uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd'
       - name: Componentes da imagem base
         # pasta por pasta: dois test_sidecar.py colidem numa coleta única
         run: |
-          sudo -u "$TEST_USER" -H env CI=true PATH=/usr/local/bin:/usr/bin:/bin bash -c '
+          sudo -u "$TEST_USER" env -i HOME="$TEST_HOME" USER="$TEST_USER" LANG=C.UTF-8 \
+            CI=true PATH=/usr/local/bin:/usr/bin:/bin bash -c '
             cd /opt/aidb-tests
             for d in claude-code-shim dbproxy gated-mcp httpproxy; do
               echo "== base-image/$d"
