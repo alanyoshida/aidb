@@ -235,8 +235,9 @@ class KubernetesProvisioningDriver:
         stripPrefix) + IngressRoute, equivalentes ao `apps-<slug>.yml` que o driver Docker escreve
         pro file provider do Traefik; no modo `gateway`, o Middleware de forwardAuth + um
         HTTPRoute da Gateway API. Depois apaga os objetos de rota do OUTRO modo (D6): como a
-        republicação do boot (`provisioning.republish_routes`) chama `publish` para todo sistema
-        ativo, trocar o modo migra as rotas nos dois sentidos sem recriar Pods. Os objetos são
+        reconciliação (`provisioning.reconcile`, que roda logo depois da subida) chama `publish`
+        para todo sistema não arquivado, trocar o modo migra as rotas nos dois sentidos sem
+        recriar Pods. Os objetos são
         substituídos no lugar, sem apagar antes (D5), para nenhuma republicação abrir janela sem
         rota.
 

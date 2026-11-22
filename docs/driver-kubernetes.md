@@ -54,7 +54,9 @@ container `git` usa a imagem base, fica ocioso (`sleep infinity`) e tem a mesma 
 mesmas restrições do `agent`, para os arquivos que uma restauração escreve continuarem do agente.
 
 Pods criados antes do container `git` são recriados pela reconciliação na primeira passada depois
-da atualização do portal; workspace e histórico ficam nos PVCs e sobrevivem à recriação. Até lá, uma
+da atualização do portal (a reconciliação roda em segundo plano logo depois da subida e a cada
+`APPAIFORGE_RECONCILE_INTERVAL` segundos, ver [configuração](configuracao.md); o mesmo vale para um
+Pod removido por fora ou com imagem ou Secrets de pull diferentes da configuração); workspace e histórico ficam nos PVCs e sobrevivem à recriação. Até lá, uma
 operação de checkpoint nesse sistema falha com a mensagem "não tem o container 'git'". Arquivar um
 sistema preserva os dois PVCs; a exclusão definitiva remove os dois (o `Role` do chart precisa do
 verbo `delete` em `persistentvolumeclaims`).
@@ -78,10 +80,10 @@ um filtro `ExtensionRef`, antes do `URLRewrite`, para o portal ver o caminho ori
 usuário à app depois do login. O Traefik executa os filtros na ordem declarada (verificado no
 spike da change).
 
-**Trocar de modo**: mude `routing.mode` e atualize o chart. No boot seguinte, o portal
-(`provisioning.republish_routes()`) republica a rota de todo sistema **ativo** no modo novo e apaga
-os objetos do outro modo, sem recriar os Pods; voltar é o mesmo caminho. Só as rotas: o boot não
-reconcilia containers. Os objetos de rota são substituídos no lugar (ler e substituir com o
+**Trocar de modo**: mude `routing.mode` e atualize o chart. Logo depois de o portal subir, a
+primeira passada da reconciliação (`provisioning.reconcile()`) republica a rota de todo sistema não
+arquivado no modo novo e apaga os objetos do outro modo, sem recriar os Pods por causa disso; voltar
+é o mesmo caminho. Os objetos de rota são substituídos no lugar (ler e substituir com o
 `resourceVersion`), sem apagar antes, para cada republicação não abrir uma janela em que a rota
 não existe. Remover a rota de um sistema apaga os objetos dos dois modos.
 

@@ -104,9 +104,9 @@ das apps é o mesmo `Middleware` `forwardAuth` do Traefik.
 | `Gateway` | nenhum | o deste chart, ou `gateway.existing` |
 
 Os dois modos convivem só nesta versão: uma versão seguinte remove o `ingressroute` e passa o
-padrão para `gateway`. Para trocar, `helm upgrade ... --set routing.mode=gateway`; no boot
-seguinte o portal republica as rotas dos sistemas ativos no modo novo e apaga as do outro, sem
-recriar os Pods. Voltar é o mesmo comando com `ingressroute`.
+padrão para `gateway`. Para trocar, `helm upgrade ... --set routing.mode=gateway`; logo
+depois de subir, a reconciliação do portal republica as rotas dos sistemas no modo novo e apaga as
+do outro, sem recriar os Pods. Voltar é o mesmo comando com `ingressroute`.
 
 **Cluster que já tem Traefik instalado à parte** (como o piloto antes desta versão): dois Traefik
 disputariam as mesmas portas. Desinstale o release antigo antes do `helm upgrade`, ou use

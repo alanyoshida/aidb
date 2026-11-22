@@ -453,12 +453,12 @@ def test_app_e_portal_no_mesmo_host(system, monkeypatch, mode):
 
 
 def test_troca_de_modo_nos_dois_sentidos_sem_recriar_pod(system, monkeypatch):
-    """Requirement 'Troca de modo de roteamento sem reprovisionamento': a republicação que o
-    boot do portal faz (`republish_routes`) migra a rota para o modo novo e apaga a do outro, nos
-    dois sentidos, sem recriar o Pod."""
+    """Requirement 'Troca de modo de roteamento sem reprovisionamento': a passada de
+    reconciliação que o portal faz ao subir (`reconcile()`, change portal-reconcile-loop) migra a
+    rota para o modo novo e apaga a do outro, nos dois sentidos, sem recriar o Pod."""
     from appaiforge.edge import publish_app, system_container_name
     from appaiforge.models import SystemStatus
-    from appaiforge.provisioning import provision_system, republish_routes
+    from appaiforge.provisioning import provision_system, reconcile
     from appaiforge.services.systems import set_status
 
     if not _gateway_available():
@@ -468,7 +468,7 @@ def test_troca_de_modo_nos_dois_sentidos_sem_recriar_pod(system, monkeypatch):
     provision_system(system)
     _wait_pod_running(name)
     publish_app(system)
-    set_status(system.id, SystemStatus.active, "")  # o boot só republica sistemas ativos
+    set_status(system.id, SystemStatus.active, "")
     uid = _k8s_api().read_namespaced_pod(name, "appaiforge-test").metadata.uid
     assert _route_objects(name) == {f"ingressroutes/{name}", f"middlewares/{name}-strip", f"middlewares/{name}-auth"}
 
@@ -477,7 +477,7 @@ def test_troca_de_modo_nos_dois_sentidos_sem_recriar_pod(system, monkeypatch):
         ("ingressroute", {f"ingressroutes/{name}", f"middlewares/{name}-strip", f"middlewares/{name}-auth"}),
     ):
         _use_mode(monkeypatch, mode)
-        assert republish_routes() >= 1
+        reconcile()
         assert _route_objects(name) == expected, mode
         code, location = _get(f"/apps/{system.slug}/", until=_is_login_redirect)
         assert _is_login_redirect(code, location), (mode, code, location)

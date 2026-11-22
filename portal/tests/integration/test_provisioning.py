@@ -90,6 +90,46 @@ def test_reconciliacao_recria_container_ausente(system):
     assert container.status in ("created", "running", "restarting")
 
 
+def test_laco_de_reconciliacao_recria_container_removido_por_fora(system):
+    """Change portal-reconcile-loop: com o laço da subida rodando, um container removido por fora
+    volta sozinho em até um intervalo, e o sistema que estava em erro fica ativo."""
+    import threading
+    import time
+
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import SystemStatus
+    from appaiforge.provisioning import provision_system, start_reconcile_loop
+    from appaiforge.services.systems import get_system, set_status
+
+    name = system_container_name(system.slug)
+    provision_system(system)
+    old_id = _client().containers.get(name).id
+    set_status(system.id, SystemStatus.error, "app fora do ar (3 checagens)")
+    _client().containers.get(name).remove(force=True)
+
+    stop = threading.Event()
+    thread = start_reconcile_loop(interval=1, stop=stop)
+    try:
+        deadline = time.monotonic() + 90
+        recreated = None
+        while time.monotonic() < deadline:
+            try:
+                recreated = _client().containers.get(name)
+            except Exception:  # noqa: BLE001 - ainda não recriado
+                recreated = None
+            fresh = get_system(system.id)
+            if recreated is not None and fresh.status == SystemStatus.active:
+                break
+            time.sleep(0.5)
+    finally:
+        stop.set()
+        thread.join(120)
+    assert recreated is not None and recreated.id != old_id
+    assert recreated.status in ("created", "running", "restarting")
+    fresh = get_system(system.id)
+    assert fresh.status == SystemStatus.active and fresh.status_message == ""
+
+
 def test_arquivamento_para_container_e_preserva_workspace(system, docker_env):
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name

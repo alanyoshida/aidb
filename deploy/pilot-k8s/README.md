@@ -80,8 +80,8 @@ helm --kube-context kind-aidb-prod upgrade aidb-prod deploy/helm/appaiforge-port
 
 Os CRDs do Traefik já existem no cluster (vieram do release antigo) e ficam como estão. Sem os da
 Gateway API, o `upgrade` falha em `no matches for kind "GatewayClass"`. A entrada fica fora do ar
-entre o `uninstall` e o Traefik novo ficar pronto (cerca de um minuto no piloto). No primeiro boot,
-o portal republica as rotas dos sistemas ativos.
+entre o `uninstall` e o Traefik novo ficar pronto (cerca de um minuto no piloto). Logo depois de
+subir, a reconciliação do portal republica as rotas dos sistemas.
 
 ## Homologação com LLM real
 

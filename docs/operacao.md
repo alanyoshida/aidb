@@ -10,7 +10,7 @@
 - **Saúde das conexões**: cada conexão é sondada periodicamente e exibe seu estado na página do sistema.
 - **Auditoria**: toda ação de escrita da gestão (sistemas, conexões, usuários, provedores) fica numa trilha sem segredos, global para o admin e por sistema.
 - **Estado da app**: o monitor marca `erro — app fora do ar` após 3 sondas falhas e recupera sozinho quando a app volta.
-- **Reconciliação**: no boot e periodicamente o portal recria containers ausentes (workspace persiste no bind).
+- **Reconciliação**: logo depois da subida (em segundo plano) e a cada `APPAIFORGE_RECONCILE_INTERVAL` segundos (padrão 300) o portal recria containers ou Pods ausentes ou divergentes (workspace persiste no bind ou na PVC), republica as rotas e checa a saúde das conexões. Um sistema recriado com sucesso volta a ativo; uma falha ao recriar deixa o sistema em erro com o motivo e é tentada de novo na passada seguinte.
 - **Backup**: volumes do Postgres do portal + diretório de workspaces (`APPAIFORGE_WORKSPACES_DIR`).
 
 ## Instalar um portal de produção
@@ -116,9 +116,9 @@ helm upgrade aidb-prod deploy/helm/appaiforge-portal -n aidb-prod -f values-prod
   --set routing.mode=gateway
 ```
 
-O portal reinicia com o modo novo e, no boot, republica a rota de todo sistema **ativo** pela Gateway API e apaga as `IngressRoute` deles, sem recriar os Pods. Um sistema em erro ou em provisionamento ganha a rota nova quando voltar a ser publicado. Uma falha ao republicar um sistema aparece no log do portal como "republicação da rota de <slug> falhou no boot", e o boot segue. Confira abrindo `/apps/<slug>` de um sistema com e sem sessão: sem sessão, o login deve devolver à mesma página. Com TLS, o certificado sai da rota e vai para o listener HTTPS do `Gateway` do chart (`portalRoute.tlsSecretName`).
+O portal reinicia com o modo novo e, logo depois de subir, a primeira passada da reconciliação republica a rota de todo sistema não arquivado (ativo ou em erro) pela Gateway API e apaga as `IngressRoute` deles, sem recriar os Pods. Um sistema em provisionamento ganha a rota nova ao terminar. Uma falha num sistema aparece no log do portal como "reconciliação do sistema <id> falhou" e é tentada de novo na passada seguinte. Confira abrindo `/apps/<slug>` de um sistema com e sem sessão: sem sessão, o login deve devolver à mesma página. Com TLS, o certificado sai da rota e vai para o listener HTTPS do `Gateway` do chart (`portalRoute.tlsSecretName`).
 
-**Voltar para `ingressroute`:** o mesmo comando com `--set routing.mode=ingressroute`. O boot seguinte republica as rotas como `IngressRoute` e apaga os `HTTPRoute`.
+**Voltar para `ingressroute`:** o mesmo comando com `--set routing.mode=ingressroute`. A reconciliação logo depois da subida republica as rotas como `IngressRoute` e apaga os `HTTPRoute`.
 
 **CRDs ao atualizar o Traefik.** O Helm instala os CRDs do chart (os do Traefik e os da Gateway API) só na primeira instalação e nunca os atualiza. Quando uma versão do portal trouxer outra versão do Traefik, aplique os CRDs novos antes do `helm upgrade`:
 
@@ -130,4 +130,4 @@ kubectl apply --server-side -f deploy/helm/appaiforge-portal/crds/
 
 A versão dos CRDs da Gateway API que o chart traz está no nome do arquivo em `deploy/helm/appaiforge-portal/crds/`.
 
-**Voltar a versão do portal** (`helm rollback`) para uma anterior ao Traefik no chart: a versão anterior não republica as rotas no boot. Se o modo está em `gateway`, volte antes para `ingressroute` (`helm upgrade ... --set routing.mode=ingressroute`) e espere o portal subir: o boot recria as `IngressRoute` dos sistemas e apaga os `HTTPRoute`. Só então rode o `helm rollback`. Ele remove o Traefik do chart; reinstale o release `traefik` à parte.
+**Voltar a versão do portal** (`helm rollback`) para uma anterior ao Traefik no chart: a versão anterior não sabe apagar os `HTTPRoute`. Se o modo está em `gateway`, volte antes para `ingressroute` (`helm upgrade ... --set routing.mode=ingressroute`) e espere a reconciliação depois da subida: ela recria as `IngressRoute` dos sistemas e apaga os `HTTPRoute`. Só então rode o `helm rollback`. Ele remove o Traefik do chart; reinstale o release `traefik` à parte.
