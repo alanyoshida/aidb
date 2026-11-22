@@ -153,18 +153,25 @@ Alternativa descartada: só o trivy. Os dois motores têm regras diferentes, e o
 
 Alternativa descartada: varrer só `/app` e `/opt`. Um segredo copiado por engano pode cair em qualquer pasta. A allowlist por caminho de sistema é mais estreita que uma lista de pastas a varrer.
 
-### D11. Testes de unidade como root na CI (achado na primeira execução)
+### D11. Testes de unidade como o uid do agente, com a imagem base (achado no GitHub)
 
-Na primeira execução no GitHub, 20 testes de provisionamento falharam com `Operation not permitted`. O provisionamento de sistemas `reduced` e `sandboxed` faz `os.chown` do workspace para o uid do agente, 1000 (ADR 0018):
-- o portal roda como root no container, então funciona;
-- na máquina de desenvolvimento, o usuário costuma ser o próprio uid 1000, e o `chown` não muda nada;
-- o usuário `runner` do GitHub não é nenhum dos dois.
+As duas primeiras execuções no GitHub mostraram duas premissas da suíte, que na máquina de desenvolvimento valem por acaso.
 
-A etapa do pytest roda com `sudo`, preservando o ambiente. É o mesmo privilégio do portal em produção. Nenhum teste de unidade depende de rodar sem root: os `PermissionError` testados são de autorização do portal ou do Landlock, que vale também para root. Os testes de `base-image/` continuam como `runner`.
+1. **Quem roda os testes é o uid 1000, o do agente (ADR 0018).** O portal faz `os.chown` do workspace dos sistemas `reduced` e `sandboxed` para 1000, e roda o git deles como esse uid.
+   - **Como o usuário `runner`:** o `chown` falha com `Operation not permitted` (20 testes).
+   - **Como root:** o `chown` passa, mas o git, rodando como 1000, não entra no diretório temporário do root (`/tmp/pytest-of-root`, modo 700), e falham 36 testes.
+   - **Na máquina de desenvolvimento:** o próprio usuário é o uid 1000, então as duas coisas funcionam.
+2. **A imagem base existe localmente.** Parte dos testes de unidade e BDD sobe containers reais de sistema com `appaiforge/base:<versão>`.
 
-Alternativa descartada: criar no runner um usuário com uid 1000. Seria mais parecido com a máquina de desenvolvimento, mas depende das permissões da pasta do runner e das ferramentas instaladas nela, que não dá para verificar fora do GitHub.
+O job `testes`, então:
+- constrói `appaiforge/base:<versão do pyproject>`;
+- usa o usuário de uid 1000 do runner, criando um (`aidbtest`) se não houver, e o põe no grupo `docker`;
+- copia `uv` e `helm` para `/usr/local/bin` e dá o checkout a esse uid;
+- roda como ele o `uv sync --frozen`, os testes de unidade e BDD e os de `base-image/`. O Python e o venv ficam na pasta desse usuário, sem depender das permissões da pasta do `runner`.
 
-Alternativa descartada: só tornar o `chown` tolerante a erro. O workspace ficaria inacessível ao container não-root, e o problema apareceria mais tarde e mais longe.
+Alternativa descartada: rodar como root. Foi a primeira correção, e falhou pelo git (item 1).
+
+Alternativa descartada: tornar o `chown` tolerante a erro, ou mudar o uid do git nos testes. Mudaria o comportamento que os testes verificam.
 
 ## Risks / Trade-offs
 

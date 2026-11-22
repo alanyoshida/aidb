@@ -51,22 +51,35 @@ jobs:
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v3.19.0
-      - name: Dependências
-        working-directory: portal
-        run: uv sync --frozen
+      - name: Imagem base dos sistemas
+        # parte dos testes de unidade e BDD sobe containers reais de sistema com a imagem padrão
+        # (appaiforge/base:<versão do pyproject>)
+        run: |
+          VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("portal/pyproject.toml","rb"))["project"]["version"])')"
+          docker build -q -t "appaiforge/base:$VERSION" -f base-image/Dockerfile base-image
+      - name: Usuário de testes com o uid do agente (1000)
+        # O portal dá o workspace ao uid do agente (os.chown para 1000) e roda o git dos sistemas
+        # reduced/sandboxed como esse uid. Os testes assumem que quem os roda é esse uid, como na
+        # máquina de desenvolvimento (design D11). O usuário `runner` não é.
+        run: |
+          getent passwd 1000 >/dev/null || sudo useradd -u 1000 -m -s /bin/bash aidbtest
+          TEST_USER="$(getent passwd 1000 | cut -d: -f1)"
+          sudo usermod -aG docker "$TEST_USER"
+          sudo install -m 0755 "$(command -v uv)" "$(command -v helm)" /usr/local/bin/
+          sudo chown -R 1000:1000 "$GITHUB_WORKSPACE"
+          echo "TEST_USER=$TEST_USER" >> "$GITHUB_ENV"
       - name: Unitários e BDD
-        working-directory: portal
-        # como root, igual ao portal no container: o provisionamento dá o workspace ao uid do
-        # agente (os.chown para 1000), o que o usuário `runner` não pode fazer. Na máquina de
-        # desenvolvimento passa porque o próprio usuário costuma ser o uid 1000.
-        run: sudo --preserve-env env "PATH=$PATH" uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd
+        run: |
+          sudo -u "$TEST_USER" -H env CI=true PATH=/usr/local/bin:/usr/bin:/bin UV_PYTHON=3.12 \
+            bash -c 'cd portal && uv sync --frozen && uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd'
       - name: Componentes da imagem base
         # pasta por pasta: dois test_sidecar.py colidem numa coleta única
         run: |
-          for d in claude-code-shim dbproxy gated-mcp httpproxy; do
-            echo "== base-image/$d"
-            (cd "base-image/$d" && ../../portal/.venv/bin/python -m pytest -q -p no:cacheprovider)
-          done
+          sudo -u "$TEST_USER" -H env CI=true PATH=/usr/local/bin:/usr/bin:/bin bash -c '
+            for d in claude-code-shim dbproxy gated-mcp httpproxy; do
+              echo "== base-image/$d"
+              (cd "base-image/$d" && ../../portal/.venv/bin/python -m pytest -q -p no:cacheprovider) || exit 1
+            done'
 
   specs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository

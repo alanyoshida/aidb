@@ -65,7 +65,7 @@ O workflow `.github/workflows/ci.yml` roda em cada push de qualquer branch, em P
 | `trivy-repo` | trivy nas dependências, na configuração (Dockerfiles e chart) e em segredos do repositório | não |
 | `publicar` | só numa release: publica as três imagens no GHCR ([Operação](operacao.md#publicar-uma-release)) | — |
 
-- **Testes de unidade como root na CI.** O provisionamento dá o workspace ao uid do agente (1000), como o portal faz no container, onde roda como root. O usuário do runner não pode fazer isso, então a etapa usa `sudo`. Na máquina de desenvolvimento, isso passa quando o seu usuário é o uid 1000, ou rodando como root.
+- **Testes de unidade como o uid 1000 na CI.** O portal dá o workspace dos sistemas ao uid do agente (1000) e roda o git deles como esse uid. Parte dos testes também sobe containers com `appaiforge/base:<versão>`. Por isso o job constrói a imagem base e roda os testes como um usuário de uid 1000, que é o ambiente em que a suíte passa na máquina de desenvolvimento. Rodando à mão como outro usuário, ou sem a imagem base, esses testes falham.
 - **Na CI, falta de ferramenta é falha.** Os testes do chart e o de health check do Kubernetes se pulam sem `helm` ou sem `curl` só fora da CI. Com `CI` definido, a falta vira falha, para a CI não ficar verde sem testar.
 - **Relatórios do trivy:** ficam na aba *Security → Code scanning* do repositório, um por categoria (`trivy-repo`, `trivy-portal`, `trivy-base`, `trivy-claude-code`). O log de cada job mostra também uma tabela com os achados altos e críticos.
 - **Fica de fora da CI:** a integração com Docker real (`tests/integration`), os E2E com browser e o kind. Rode-os à mão, como acima.
