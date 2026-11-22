@@ -26,7 +26,7 @@ O portal de produção só serve sistemas só implantação: roda as versões ap
 
 ### 2a. Instalar por compose (driver Docker)
 
-1. Construa a imagem base dos sistemas no host: `docker build -t appaiforge/base:0.1.0 -f base-image/Dockerfile base-image`.
+1. Construa a imagem base dos sistemas no host: `docker build -t appaiforge/base:1.11.0 -f base-image/Dockerfile base-image`.
 2. Copie `deploy/production.env.example` para `deploy/production.env` e preencha:
    - **Obrigatórias:** `APPAIFORGE_SECRET_KEY`, `APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN` e `APPAIFORGE_POSTGRES_PASSWORD`. O compose recusa subir sem elas.
    - **Admin de emergência:** `APPAIFORGE_BREAKGLASS_EMAIL` e `APPAIFORGE_BREAKGLASS_PASSWORD_HASH`. Ponha o hash entre aspas simples, porque ele tem `$`.
@@ -91,7 +91,15 @@ Com o modo automático e webhook, cadastre no projeto do GitLab o endereço e o 
 2. Aplique as migrações antes de reiniciar:
    - **Compose:** os comandos `build portal` e `run --rm ... alembic upgrade head` do passo 2a, depois `up -d --build`.
    - **Helm:** com `portal.migrateOnStart: true` (ligado no `values-production.yaml`), um initContainer roda `alembic upgrade head` com a imagem nova antes de o portal subir. O `helm upgrade` já basta.
-3. Quando a versão mudar a imagem base, reconstrua-a (ou carregue-a no cluster). Os sistemas pegam a imagem nova quando são recriados.
+3. **Imagens dos sistemas.** Elas têm a tag da versão do portal: `appaiforge/base:<versão>` e `appaiforge/claude-code:<versão>`. Antes de subir um portal de versão nova, construa as duas com a tag nova:
+   ```bash
+   docker build -t appaiforge/base:<versão> -f base-image/Dockerfile base-image
+   docker build -t appaiforge/claude-code:<versão> -f base-image/Dockerfile.claude-code base-image
+   ```
+   No Kubernetes, publique as duas no registro do cluster (ou carregue-as no kind) antes do `helm upgrade`.
+   - **Docker:** os containers que já existem continuam na imagem anterior até serem recriados. Um container recriado ou um sistema novo pede a imagem nova. Se ela faltar, o sistema fica em erro com o motivo, e volta quando a imagem existir.
+   - **Kubernetes:** a reconciliação recria os Pods de sistema que ainda usam a imagem anterior.
+   - **Imagens fixadas:** quem as fixa por configuração (`APPAIFORGE_BASE_IMAGE`, `APPAIFORGE_CLAUDE_CODE_IMAGE`, ou `portal.baseImage` e `portal.claudeCodeImage` no chart) não é afetado.
 4. **Helm, vindo de uma versão sem o Traefik no chart** (antes da change `gateway-api-traefik-subchart`): o `helm upgrade` não instala os CRDs de `crds/` (só o `helm install` faz isso), e sem eles o upgrade falha em `no matches for kind "GatewayClass"`. Aplique antes os da Gateway API (`kubectl apply --server-side -f deploy/helm/appaiforge-portal/crds/`) e, se o cluster ainda não tiver os do Traefik, os do chart dele (ver "CRDs ao atualizar o Traefik" na seção 7). Se o Traefik do cluster era um release à parte, os dois disputariam as mesmas portas. Escolha um caminho antes do `helm upgrade`:
    - desinstale o release antigo (`helm uninstall traefik -n traefik`) e deixe o chart instalar o dele. A entrada fica fora do ar até o Traefik novo ficar pronto;
    - ou mantenha o Traefik antigo com `traefik.enabled=false`. No modo `ingressroute` (padrão) não é preciso mais nada. No modo `gateway`, ligue antes o provider `kubernetesGateway` nesse Traefik, instale os CRDs da Gateway API, crie um `Gateway` nele e informe-o em `gateway.existing.name` e `gateway.existing.namespace`.
@@ -173,3 +181,17 @@ APPAIFORGE_TRAEFIK_CONFIG=traefik-otel.yml docker compose up -d traefik
 Cada pedido a `/apps/<slug>` vira uma transação no serviço de nome igual ao slug, com o caminho dentro da app e identificadores trocados por `{id}` (ex.: `GET /clientes/{id}` no serviço `crm`). Os assets e o websocket da interface ficam de fora, e a query string é removida no Collector ([ADR 0035](adr/0035-borda-das-apps-como-servicos-no-apm.md)). No Kubernetes, o mesmo vale com o tracing do Traefik ligado no chart.
 
 **O que não aparece no APM:** as ações da interface (cliques, formulários) chegam pelo websocket do NiceGUI e não geram transação; o health check e os arquivos estáticos da UI ficam de fora de propósito. A query string das URLs nunca sai do processo.
+
+## Publicar uma release
+
+O portal, o chart e as imagens padrão dos sistemas levam uma versão só, a do `version` em `portal/pyproject.toml`. O `__version__` do portal vem do pacote instalado, e as imagens padrão (`appaiforge/base:<versão>` e `appaiforge/claude-code:<versão>`) seguem essa versão. O teste `portal/tests/unit/test_version_alignment.py` aponta qualquer cópia que tenha ficado para trás.
+
+1. Na branch da release, suba o `version` do `pyproject.toml` e rode `cd portal && uv lock`.
+2. Rode `uv run pytest tests/unit/test_version_alignment.py`. Ele lista o que falta trocar:
+   - `version` e `appVersion` do `Chart.yaml`;
+   - `image.tag` de `values.yaml` e de `values-production.yaml`;
+   - os comandos e as tabelas dos docs.
+3. Abra a PR e faça o merge.
+4. Publique a release no merge commit: `gh release create v<versão> --target <merge commit> --notes-file <notas>`.
+
+   Se as imagens dos sistemas mudaram de tag, as notas dizem como reconstruí-las (passo 3 de [Atualizar o portal](#5-atualizar-o-portal)).

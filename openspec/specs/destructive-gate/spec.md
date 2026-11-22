@@ -22,7 +22,7 @@ O portal SHALL classificar statements SQL com parser estrutural (sqlglot) em tr�
 - **THEN** a classificação é `bloqueada`, independentemente de comentários, CTEs ou caixa alta/baixa
 
 ### Requirement: Gate do agente sobre SQL destrutivo
-O portal SHALL interceptar toda conexão a um banco cadastrado no data plane (proxy de wire protocol no caminho da conexão), classificar cada statement com o classificador canônico e responder automaticamente: `bloqueada` e `confirmável` SHALL ser recusadas sem intervenção humana, na hora, sem segurar a conexão; `normal` SHALL ser liberada sem atrito — independente de como a SQL foi emitida e do protocolo de permissão do agente. Quando houver uma run ativa do agente, a recusa de `bloqueada` ou `confirmável` SHALL aparecer no chat com a statement e o motivo.
+O portal SHALL interceptar toda conexão a um banco cadastrado no data plane (proxy de wire protocol no caminho da conexão), classificar cada statement com o classificador canônico e responder automaticamente: `bloqueada` e `confirmável` SHALL ser recusadas sem intervenção humana, na hora, sem segurar a conexão; `normal` SHALL ser liberada sem atrito — independente de como a SQL foi emitida e do protocolo de permissão do agente.
 
 #### Scenario: Agente pede TRUNCATE e é recusado automaticamente
 - **WHEN** uma conexão do container do sistema emite `TRUNCATE TABLE clientes`, por qualquer cliente (bash, MCP, script ou app)
@@ -71,3 +71,10 @@ As guidelines da plataforma SHALL exigir que toda app gerada use a camada de ace
 #### Scenario: App gerada após a change usa o gate
 - **WHEN** o agente gera uma nova app após esta mudança
 - **THEN** a app contém a camada do template e operações confirmáveis nela disparam confirmação
+
+### Requirement: Recusa do gate visível no chat
+Quando houver uma run ativa do agente, a recusa de `bloqueada` ou `confirmável` SHALL aparecer no chat com a statement e o motivo.
+
+#### Scenario: Recusa de TRUNCATE aparece no chat
+- **WHEN** o agente emite `TRUNCATE TABLE clientes` durante uma run ativa e o proxy recusa a statement
+- **THEN** o chat mostra a recusa com a statement e o motivo

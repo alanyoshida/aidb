@@ -2,6 +2,7 @@
 
 import pytest
 
+from appaiforge import __version__
 from appaiforge.agent_profiles import FROM_PROVIDER, UnknownProfile, get_profile, resolve_credential_env
 from appaiforge.services import catalog
 
@@ -21,7 +22,7 @@ def test_perfil_declara_imagem_mount_path_e_protocolo_de_harness():
     settings.base_image, o literal "/opencode-config" e settings.opencode_port
     (removido) que o provisionamento usava fixo antes desta mudança."""
     profile = get_profile("opencode")
-    assert profile["image"] == "appaiforge/base:0.1.0"
+    assert profile["image"] == f"appaiforge/base:{__version__}"
     assert profile["config_mount_path"] == "/opencode-config"
     assert profile["harness_protocol"] == "opencode-http"
 
@@ -190,7 +191,7 @@ def test_perfil_claude_code_resolvido_pelo_nome():
 
 def test_perfil_claude_code_declara_imagem_mount_path_e_protocolo_de_harness():
     profile = get_profile("claude-code")
-    assert profile["image"] == "appaiforge/claude-code:0.1.0"
+    assert profile["image"] == f"appaiforge/claude-code:{__version__}"
     assert profile["config_mount_path"] == "/claude-code-config"
     assert profile["config_path"] == "/claude-code-config/settings.json"
     assert profile["config_format"] == "claude-code-settings"
@@ -256,14 +257,14 @@ def test_imagem_do_perfil_padrao_segue_a_imagem_base_configurada(monkeypatch):
     monkeypatch.setattr(get_settings(), "base_image", "registro.exemplo.com/appaiforge/base:1.4.2")
     assert get_profile("opencode")["image"] == "registro.exemplo.com/appaiforge/base:1.4.2"
     assert get_profile()["image"] == "registro.exemplo.com/appaiforge/base:1.4.2"
-    assert get_profile("claude-code")["image"] == "appaiforge/claude-code:0.1.0"
+    assert get_profile("claude-code")["image"] == f"appaiforge/claude-code:{__version__}"
 
 
 def test_imagem_do_claude_code_segue_a_configuracao(monkeypatch):
     """Pendência do piloto: a imagem do perfil claude-code era fixa no código."""
     from appaiforge.config import get_settings
 
-    assert get_profile("claude-code")["image"] == "appaiforge/claude-code:0.1.0"
+    assert get_profile("claude-code")["image"] == f"appaiforge/claude-code:{__version__}"
     monkeypatch.setattr(get_settings(), "claude_code_image", "registro.exemplo.com/appaiforge/claude-code:1.5.2")
     assert get_profile("claude-code")["image"] == "registro.exemplo.com/appaiforge/claude-code:1.5.2"
 
@@ -277,3 +278,20 @@ def test_perfil_cru_nao_tem_imagem_so_a_configuracao_que_a_define():
         assert "image" not in raw and raw["image_setting"] in ("base_image", "claude_code_image")
         resolved = get_profile(name)
         assert "image_setting" not in resolved and resolved["image"]
+
+
+def test_imagens_padrao_levam_a_versao_do_portal_e_a_configuracao_prevalece(monkeypatch):
+    """change version-alignment: sem configuração, as imagens dos sistemas têm a tag da versão do
+    portal; APPAIFORGE_BASE_IMAGE e APPAIFORGE_CLAUDE_CODE_IMAGE continuam prevalecendo."""
+    from appaiforge.config import Settings
+
+    for var in ("APPAIFORGE_BASE_IMAGE", "APPAIFORGE_CLAUDE_CODE_IMAGE"):
+        monkeypatch.delenv(var, raising=False)
+    padrao = Settings(_env_file=None)
+    assert padrao.base_image == f"appaiforge/base:{__version__}"
+    assert padrao.claude_code_image == f"appaiforge/claude-code:{__version__}"
+    monkeypatch.setenv("APPAIFORGE_BASE_IMAGE", "registro.exemplo.com/appaiforge/base:0.1.0")
+    monkeypatch.setenv("APPAIFORGE_CLAUDE_CODE_IMAGE", "registro.exemplo.com/appaiforge/claude-code:0.1.0")
+    fixada = Settings(_env_file=None)
+    assert fixada.base_image == "registro.exemplo.com/appaiforge/base:0.1.0"
+    assert fixada.claude_code_image == "registro.exemplo.com/appaiforge/claude-code:0.1.0"

@@ -160,7 +160,7 @@ corrigir isso prende o agente (agora uid 1000) fora dos próprios arquivos. A or
 #    o container antigo ainda roda como root, o bind do host já está acessível
 #    de fora dele via outro container efêmero com a mesma imagem)
 docker run --rm --user root -v /opt/appaiforge/workspaces/<slug>:/workspace \
-  appaiforge/base:0.1.0 chown -R 1000:1000 /workspace
+  appaiforge/base:1.11.0 chown -R 1000:1000 /workspace
 
 # 2. dono do repositório git do sistema (fora do workspace) para o mesmo uid —
 #    o portal passa a rodar o git como o agente depois da troca de modo

@@ -5,7 +5,7 @@ saída HTTP(S) possível é pelo sidecar, que só libera a allow-list
 calculada para o sistema (provedor de LLM/broker + registros de pacote, ou
 a lista do modo restrito).
 
-Requer a imagem base (appaiforge/base:0.1.0) com o proxy HTTP(S) embarcado
+Requer a imagem base (appaiforge/base:<versão do portal>) com o proxy HTTP(S) embarcado
 e acesso real à internet (pypi.org, o host do provedor) de dentro do
 container — mesmo requisito já aceito por `test_network_perimeter.py`.
 """

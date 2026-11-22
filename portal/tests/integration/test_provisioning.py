@@ -1,6 +1,6 @@
 """Integração com Docker real: provisionamento, reconciliação e ciclo de vida.
 
-Requer a imagem base (appaiforge/base:0.1.0) presente no daemon local.
+Requer a imagem base (appaiforge/base:<versão do portal>) presente no daemon local.
 """
 
 import os
@@ -375,7 +375,7 @@ def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg):
 @pytest.fixture()
 def hardened_image(monkeypatch):
     """Imagem base com a identidade não-root (ADR 0018) — não é a tag de
-    produção (appaiforge/base:0.1.0); evita afetar sistemas reais do host."""
+    produção (appaiforge/base:<versão do portal>); evita afetar sistemas reais do host."""
     monkeypatch.setenv("APPAIFORGE_BASE_IMAGE", "appaiforge/base:adr18-test")
     from appaiforge.config import get_settings
 

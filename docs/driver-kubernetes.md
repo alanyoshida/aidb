@@ -12,8 +12,8 @@ Quando o driver ativo é Kubernetes, o próprio portal (e seu Postgres) também 
 cluster — instale os dois com o chart Helm em [`deploy/helm/appaiforge-portal/`](../deploy/helm/appaiforge-portal):
 
 ```bash
-docker build -f deploy/portal.Dockerfile -t appaiforge/portal:0.1.0 .
-kind load docker-image appaiforge/portal:0.1.0 --name appaiforge-dev   # nome do cluster kind de validação
+docker build -f deploy/portal.Dockerfile -t appaiforge/portal:1.11.0 .
+kind load docker-image appaiforge/portal:1.11.0 --name appaiforge-dev   # nome do cluster kind de validação
 
 helm install appaiforge-portal deploy/helm/appaiforge-portal \
   --namespace appaiforge --create-namespace \

@@ -67,7 +67,7 @@ O portal SHALL registrar, na criação de cada sistema, o modo de execução do 
 - **THEN** o modo de execução do container daquele sistema é consultável, de modo que seja possível distinguir os sistemas que ainda rodam no modo antigo
 
 ### Requirement: Containers ativos e reconciliados
-O portal SHALL manter os containers de sistemas sempre ativos com política de reinício automático e SHALL reconciliar o estado real dos containers com o estado registrado logo depois de iniciar e, a partir daí, periodicamente, num intervalo configurável pelo operador (com a opção de desligar só a reconciliação periódica, mantendo a da subida). A reconciliação SHALL rodar sem atrasar a subida do portal. Ela SHALL NOT agir sobre um sistema arquivado, em provisionamento, excluído ou que o portal esteja criando, recriando ou removendo naquele momento, e SHALL considerar o estado do sistema no momento em que age sobre ele, não o do início da passada. Uma falha inesperada ao reconciliar um sistema SHALL NOT impedir a reconciliação dos demais nem as passadas seguintes, e SHALL NOT mudar o estado registrado daquele sistema; a falha ao recriar um container SHALL deixar o sistema em erro com o motivo. Um sistema cujo container a reconciliação recria com sucesso SHALL voltar a ativo, sem mensagem de erro.
+O portal SHALL manter os containers de sistemas sempre ativos com política de reinício automático e SHALL reconciliar o estado real dos containers com o estado registrado logo depois de iniciar e, a partir daí, periodicamente, num intervalo configurável pelo operador (com a opção de desligar só a reconciliação periódica, mantendo a da subida). A reconciliação SHALL rodar sem atrasar a subida do portal.
 
 #### Scenario: Reinício do host
 - **WHEN** o host reinicia
@@ -123,3 +123,18 @@ O portal SHALL permitir que o dono arquive seu sistema — desativando acessos e
 - **WHEN** um admin exclui definitivamente um sistema
 - **THEN** a pasta de config do sistema no portal (config do agente e perfil de runtime) também é removida
 - **AND** outro sistema não é afetado
+
+### Requirement: Reconciliação respeita o estado atual do sistema
+A reconciliação SHALL NOT agir sobre um sistema arquivado, em provisionamento, excluído ou que o portal esteja criando, recriando ou removendo naquele momento, e SHALL considerar o estado do sistema no momento em que age sobre ele, não o do início da passada.
+
+#### Scenario: Sistema excluído não é recriado
+- **WHEN** a reconciliação passa por um sistema excluído cujo container não existe mais
+- **THEN** ela não recria o container
+
+### Requirement: Falha da reconciliação isolada por sistema
+Uma falha inesperada ao reconciliar um sistema SHALL NOT impedir a reconciliação dos demais nem as passadas seguintes, e SHALL NOT mudar o estado registrado daquele sistema; a falha ao recriar um container SHALL deixar o sistema em erro com o motivo. Um sistema cujo container a reconciliação recria com sucesso SHALL voltar a ativo, sem mensagem de erro.
+
+#### Scenario: Falha ao recriar deixa o sistema em erro
+- **WHEN** a reconciliação tenta recriar o container de um sistema ativo e a criação falha
+- **THEN** o sistema fica em erro com o motivo da falha
+- **AND** os demais sistemas são reconciliados na mesma passada

@@ -11,7 +11,7 @@ mesmo quando as duas são alcançáveis na rede (o teste usa o gateway Docker
 como host das duas, não "localhost", que só faz sentido do lado de fora do
 container; ver test_db_gate_proxy.py para o mesmo achado).
 
-Requer a imagem base (appaiforge/base:0.1.0) com o Landlock de rede embarcado.
+Requer a imagem base (appaiforge/base:<versão do portal>) com o Landlock de rede embarcado.
 """
 
 import json

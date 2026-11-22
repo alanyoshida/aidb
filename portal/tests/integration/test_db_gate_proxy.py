@@ -4,7 +4,7 @@ sidecar real, proxy real falando o protocolo do Postgres e um HTTP mínimo
 no lugar do portal completo (as rotas internas do gate, task 4.1) — subir o
 NiceGUI/sync do LiteLLM só pra isso seria peso morto.
 
-Requer a imagem base (appaiforge/base:0.1.0) com o dbproxy embarcado.
+Requer a imagem base (appaiforge/base:<versão do portal>) com o dbproxy embarcado.
 """
 
 import socket

@@ -2,13 +2,15 @@
 add-claude-code-agent-profile, task 5.2) — mesmo padrão de
 test_provisioning.py pro perfil opencode.
 
-Requer a imagem appaiforge/claude-code:0.1.0 presente no daemon local
+Requer a imagem appaiforge/claude-code:<versão do portal> presente no daemon local
 (task 3.1/3.2, `docker build -f base-image/Dockerfile.claude-code`).
 """
 
 import os
 
 import pytest
+
+from appaiforge import __version__
 
 pytestmark = pytest.mark.integration
 
@@ -59,7 +61,7 @@ def test_sistema_claude_code_sobe_com_imagem_mount_e_env_do_perfil(claude_code_s
 
     # imagem e mount vêm do perfil (spec agent-runtime) - não exige mudança
     # em provision_system fora do dispatch já genérico (generalize-agent-runtime-plumbing)
-    assert attrs["Config"]["Image"] == profile["image"] == "appaiforge/claude-code:0.1.0"
+    assert attrs["Config"]["Image"] == profile["image"] == f"appaiforge/claude-code:{__version__}"
     mounts = {m["Destination"]: m for m in attrs["Mounts"]}
     assert profile["config_mount_path"] in mounts
     assert mounts[profile["config_mount_path"]]["RW"] is False
