@@ -31,12 +31,17 @@ services:
       retries: 20
 
   traefik:
-    image: traefik:v3.1
-    command: ["--configFile=/etc/traefik/traefik.yml"]
+    # 3.7.17, a mesma do subchart do chart (change edge-app-tracing): o 3.1 gerava um span por
+    # router, serviço e middleware, que ficavam órfãos quando o Collector descarta os assets.
+    image: traefik:v3.7.17
+    # Configuração estática: traefik.yml (padrão) ou traefik-otel.yml, que manda traços da borda ao
+    # Collector de um perfil de observabilidade (change edge-app-tracing). Cada app vira um serviço.
+    command: ["--configFile=/etc/traefik/${APPAIFORGE_TRAEFIK_CONFIG:-traefik.yml}"]
     ports:
       - "80:80"
     volumes:
       - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/traefik-otel.yml:/etc/traefik/traefik-otel.yml:ro
       - dynamic:/etc/traefik/dynamic
     depends_on:
       portal:

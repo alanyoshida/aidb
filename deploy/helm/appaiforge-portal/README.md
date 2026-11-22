@@ -165,7 +165,7 @@ kubectl -n aidb-prod create secret generic apm-destino \
 --set observability.exporter.existingSecret=apm-destino --set observability.exporter.ca=true
 ```
 
-**Traços e métricas do Traefik.** Ligue `traefik.tracing.otlp.enabled` e `traefik.tracing.otlp.http.enabled`, e o mesmo em `traefik.metrics.otlp`. O endpoint já vem apontando para o Collector com o `fullnameOverride` padrão. Com outro nome, ajuste `traefik.tracing.otlp.http.endpoint`: o chart recusa renderizar com um endereço que não seja o do Collector desta instalação. O Traefik mascara a query string nos traços.
+**Traços e métricas do Traefik.** Ligue `traefik.tracing.otlp.enabled` e `traefik.tracing.otlp.http.enabled`, e o mesmo em `traefik.metrics.otlp`. O endpoint já vem apontando para o Collector com o `fullnameOverride` padrão. Com outro nome, ajuste `traefik.tracing.otlp.http.endpoint`: o chart recusa renderizar com um endereço que não seja o do Collector desta instalação. O Traefik mascara a query string nos traços. Cada pedido a `/apps/<slug>` vira uma transação no serviço de nome igual ao slug, o mesmo que o `kubeletstats` usa para os Pods do sistema ([ADR 0035](../../../docs/adr/0035-borda-das-apps-como-servicos-no-apm.md)).
 
 **CPU e memória por sistema (`kubeletstats`).** `observability.kubeletstats.enabled=true` sobe um Collector por nó (DaemonSet), que lê o kubelet e manda ao Collector central. As métricas saem com `service.name` igual ao slug do sistema dono do Pod (`appaiforge-portal` no portal). Cria o único `ClusterRole` do chart fora dos namespaces, só com `get` em `nodes/stats` e `nodes`; a leitura de Pods fica em `Role` nos namespaces da release e dos sistemas. No `kind`, o kubelet usa certificado autoassinado: ligue `observability.kubeletstats.insecureSkipVerify`.
 

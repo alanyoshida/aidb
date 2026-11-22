@@ -467,3 +467,25 @@ def test_agente_nao_le_o_secret_do_destino():
     docs = _docs(*OBS, *KUBELETSTATS, "--set", "observability.exporter.existingSecret=apm-destino")
     agent = [d for d in docs if "otel-agent" in d["metadata"]["name"]]
     assert agent and not [d for d in agent if "apm-destino" in yaml.safe_dump(d)]
+
+
+# --- Borda das apps (change edge-app-tracing) ---------------------------------------------
+
+EDGE_PROCESSORS = ["filter/edge", "transform/edge", "groupbyattrs/edge", "transform/edge-service"]
+EDGE_PIPELINE = ["memory_limiter", *EDGE_PROCESSORS, "batch"]
+COMPOSE_COLLECTORS = [os.path.join(CHART, "..", "..", "observability", f"otel-collector-{n}.yaml")
+                      for n in ("elastic", "tempo")]
+
+
+def test_borda_igual_nos_tres_collectors():
+    configs = [yaml.safe_load(open(p)) for p in COMPOSE_COLLECTORS]
+    configs.append(_collector_config(_docs(*OBS)))
+    reference = {n: configs[0]["processors"][n] for n in EDGE_PROCESSORS}
+    for config in configs:
+        assert {n: config["processors"][n] for n in EDGE_PROCESSORS} == reference
+        assert config["service"]["pipelines"]["traces"]["processors"] == EDGE_PIPELINE
+    # só os traços passam pela borda
+    for config in configs:
+        for signal in ("metrics", "logs"):
+            processors = config["service"]["pipelines"].get(signal, {}).get("processors", [])
+            assert not set(processors) & set(EDGE_PROCESSORS)
