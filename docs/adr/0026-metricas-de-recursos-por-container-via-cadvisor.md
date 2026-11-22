@@ -81,3 +81,22 @@ métrica, a variável textual (default 512) precisa ser mantida em sincronia man
   atualizada junto.
 - Disco permanece sem visibilidade de uso por sistema — aceito como lacuna conhecida, não resolvida
   por esta change.
+
+## Atualização (2026-11-22): disco da camada gravável reavaliado e descartado
+
+Com o driver Kubernetes pronto, o operador reavaliou o disco, restrito à camada gravável do
+container (o workspace ficou de fora). Num spike, o cAdvisor `v0.55.1`, com a métrica `disk`
+ligada, não publicou `container_fs_*` por container neste host (Docker 29.10.0 com o snapshotter
+do containerd), só as séries do cgroup raiz. A API do cAdvisor dá `has_filesystem: true` e
+estatísticas de filesystem vazias. O próprio Docker mede a camada gravável corretamente
+(`SizeRw` no `docker inspect -s`), mas só pela API dele, o que exigiria um exporter próprio. Essa é
+a alternativa que esta ADR recusou. O operador descartou a mudança, e o disco continua sem
+visibilidade.
+
+O custo do cAdvisor não pesou na decisão: com `disk` ligado, o CPU dele não mudou de forma
+mensurável (média de 45% sem e 43% com, dentro do ruído).
+
+Para reabrir, os caminhos são:
+- um exporter que leia o `SizeRw` pela API do Docker;
+- uma versão do cAdvisor que meça com o snapshotter do containerd;
+- um host sem esse snapshotter.
