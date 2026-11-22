@@ -34,7 +34,7 @@ def create_app() -> FastAPI:
 
     telemetry.configure("appaiforge-portal")
 
-    application = FastAPI(title="AIDB", version=__version__)
+    application = FastAPI(title="AIDB", version=__version__, telemetry=telemetry.fastapi_telemetry())
     from .auth_routes import router as auth_router
 
     application.include_router(auth_router)
@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
     from .deploy_routes import router as deploy_router
 
     application.include_router(deploy_router)
-    get_engine()
+    telemetry.instrument_engine(get_engine())  # só o engine do portal (portal-observability-otel, D1)
     Base.metadata.create_all(get_engine())  # Alembic é o caminho normal; create_all garante dev/boot
     from .auth_mode import check_on_boot
 

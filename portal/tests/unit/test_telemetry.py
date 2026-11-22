@@ -199,9 +199,11 @@ def test_postgres_span_exporter_falha_ao_gravar_nao_propaga_e_devolve_failure(mo
     assert result == SpanExportResult.FAILURE
 
 
-def test_postgres_span_exporter_ignora_span_sem_run_id_nos_atributos():
+def test_postgres_span_exporter_ignora_span_sem_run_id_nos_atributos(otel_span_exporter):
     """Defensivo: um span fora da instrumentação desta change (sem `run_id`
-    nos atributos) é ignorado, não gera erro nem linha vazia."""
+    nos atributos) é ignorado, não gera erro nem linha vazia. Pede o
+    `otel_span_exporter` só para garantir o TracerProvider real instalado:
+    sem ele, rodando sozinho, o tracer global devolve um `NonRecordingSpan`."""
     from opentelemetry.sdk.trace.export import SpanExportResult
 
     tracer = trace.get_tracer("teste-sem-run-id")

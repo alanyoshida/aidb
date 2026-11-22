@@ -83,3 +83,12 @@ que a aba "Auditoria" continua idêntica.
   monitorado.
 - Prometheus continua subindo no profile `observability`, mas sem instrumentação de métricas real —
   ficou de fora do escopo desta etapa (ver roadmap, próxima exploração).
+
+## Atualização (2026-11-22): métricas e auto-instrumentação
+
+A change `portal-observability-otel` ([ADR 0033](0033-auto-instrumentacao-do-portal-e-elastic-apm.md))
+estende esta decisão a métricas (`APPAIFORGE_OTEL_METRICS_ENDPOINT`, também sempre para o Collector)
+e liga a auto-instrumentação de requisições, banco do portal e chamadas de saída. O Prometheus do
+profile `metrics` passa a raspar as métricas de portal e broker expostas pelo Collector do profile
+`observability`. A conversão de temporalidade que o Elastic pede fica no Collector, nunca na
+aplicação.

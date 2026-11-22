@@ -21,6 +21,10 @@ exporters:
     endpoint: http://loki:3100/otlp
     tls:
       insecure: true
+  # Métricas de portal e broker (change portal-observability-otel): expostas
+  # para o Prometheus do profile `metrics` raspar (job `otel-collector`).
+  prometheus:
+    endpoint: 0.0.0.0:8889
 
 service:
   pipelines:
@@ -30,3 +34,6 @@ service:
     logs:
       receivers: [otlp]
       exporters: [otlphttp/loki]
+    metrics:
+      receivers: [otlp]
+      exporters: [prometheus]

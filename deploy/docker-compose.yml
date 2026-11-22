@@ -93,7 +93,11 @@ services:
       # tentativa de exportação).
       APPAIFORGE_OTEL_TRACES_ENDPOINT: ${APPAIFORGE_OTEL_TRACES_ENDPOINT:-}
       APPAIFORGE_OTEL_LOGS_ENDPOINT: ${APPAIFORGE_OTEL_LOGS_ENDPOINT:-}
+      APPAIFORGE_OTEL_METRICS_ENDPOINT: ${APPAIFORGE_OTEL_METRICS_ENDPOINT:-}
       APPAIFORGE_OTEL_SPAN_RETENTION_DAYS: ${APPAIFORGE_OTEL_SPAN_RETENTION_DAYS:-30}
+      # Ambiente e versão na telemetria (change portal-observability-otel), ex.:
+      # deployment.environment=producao,service.version=1.8.0
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
     volumes:
       - ${APPAIFORGE_WORKSPACES_DIR:-/opt/appaiforge/workspaces}:/workspaces
       - ${APPAIFORGE_CONFIGS_DIR:-/opt/appaiforge/configs}:/configs
@@ -139,6 +143,8 @@ services:
       APPAIFORGE_SECRET_KEY: ${APPAIFORGE_SECRET_KEY:-change-me-in-production}
       # Mesmo toggle do portal (ver comentário lá) — sempre o Collector, vazio por padrão.
       APPAIFORGE_OTEL_TRACES_ENDPOINT: ${APPAIFORGE_OTEL_TRACES_ENDPOINT:-}
+      APPAIFORGE_OTEL_METRICS_ENDPOINT: ${APPAIFORGE_OTEL_METRICS_ENDPOINT:-}
+      OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
     depends_on:
       - litellm
       - portal
@@ -173,6 +179,11 @@ services:
     image: otel/opentelemetry-collector-contrib:0.112.0
     profiles: ["observability-elastic"]
     command: ["--config=/etc/otel-collector-config.yaml"]
+    environment:
+      # APM Server de destino (change portal-observability-otel): o do próprio
+      # compose por padrão; para um Elastic externo, defina o endereço e suba só
+      # este serviço com `--no-deps` (ver docs/operacao.md).
+      APM_SERVER_ENDPOINT: ${APM_SERVER_ENDPOINT:-apm-server:8200}
     volumes:
       - ./observability/otel-collector-elastic.yaml:/etc/otel-collector-config.yaml:ro
     networks:
@@ -258,7 +269,7 @@ services:
   # não exige mudança na aplicação. Opt-in via `--profile observability-elastic`,
   # nunca sobe junto com o profile `observability` por padrão.
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.5.6
     profiles: ["observability-elastic"]
     environment:
       discovery.type: single-node
@@ -268,7 +279,7 @@ services:
       - elasticsearchdata:/usr/share/elasticsearch/data
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.15.3
+    image: docker.elastic.co/kibana/kibana:9.5.6
     profiles: ["observability-elastic"]
     ports:
       - "5601:5601"
@@ -278,10 +289,11 @@ services:
       - elasticsearch
 
   apm-server:
-    image: docker.elastic.co/apm/apm-server:8.15.3
+    image: docker.elastic.co/apm/apm-server:9.5.6
     profiles: ["observability-elastic"]
+    # A partir do 9.x a imagem já tem `apm-server` como entrypoint: o comando
+    # começa direto nas flags (repetir `apm-server` dá "unknown command").
     command:
-      - apm-server
       - -e
       - -E
       - apm-server.host=0.0.0.0:8200

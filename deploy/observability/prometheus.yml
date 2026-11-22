@@ -23,3 +23,10 @@ scrape_configs:
         target_label: slug
       - source_labels: [container_label_appaiforge_system_id]
         target_label: system_id
+
+  # Métricas OTLP de portal e broker (change portal-observability-otel), expostas
+  # pelo Collector do profile `observability`. Sem esse profile de pé, o alvo só
+  # fica `down`.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]

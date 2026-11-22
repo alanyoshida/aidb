@@ -14,6 +14,7 @@ import logging
 
 import httpx
 from fastapi import FastAPI, Request, Response
+from opentelemetry import trace
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .broker import (
@@ -32,7 +33,7 @@ log = logging.getLogger(__name__)
 
 telemetry.configure("appaiforge-broker")
 
-app = FastAPI(title="AIDB Inference Broker")
+app = FastAPI(title="AIDB Inference Broker", telemetry=telemetry.fastapi_telemetry())
 
 # Conexões upstream em andamento por run, para o portal cancelar de fato.
 _inflight: dict[str, set] = {}
@@ -147,7 +148,10 @@ async def proxy_v1(path: str, request: Request) -> Response:
     run_id = context["run_id"]
     span = telemetry.start_child_span(run_id, "llm.request", attributes={"system_id": system_id, "path": path})
     try:
-        return await _forward(request, f"v1/{path}", context)
+        # `llm.request` corrente: a chamada httpx ao LiteLLM nasce filha dele,
+        # no traço da execução (portal-observability-otel, design D6).
+        with trace.use_span(span, end_on_exit=False):
+            return await _forward(request, f"v1/{path}", context)
     finally:
         span.end()
 

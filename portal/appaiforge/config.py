@@ -203,6 +203,9 @@ class Settings(BaseSettings):
     # backend específico) - a escolha do backend é configuração do Collector.
     otel_traces_endpoint: str = ""
     otel_logs_endpoint: str = ""
+    # Métricas OTLP de portal e broker (change portal-observability-otel);
+    # vazio = nenhum MeterProvider com exportação, nada muda.
+    otel_metrics_endpoint: str = ""
     # Retenção dos spans persistidos em `agent_telemetry_spans` pro Debug
     # log (change agent-telemetry-backend-agnostic) - escopo estrito a essa
     # tabela; AgentRun/RunEventRecord continuam sem limpeza automática.
