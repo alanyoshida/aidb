@@ -511,7 +511,9 @@ próxima exploração.
 ([ADR 0026](adr/0026-metricas-de-recursos-por-container-via-cadvisor.md)) — cAdvisor + Prometheus em
 profile próprio (`metrics`), dashboard de CPU/memória/pids por sistema no Grafana, rotulado de
 forma portável para uma futura migração a Kubernetes. Disco ficou fora do escopo (sem equivalente
-direto em Kubernetes). Ver ADR 0026 para detalhes.
+direto em Kubernetes). Reavaliado em 2026-11-22, só para a camada gravável, e descartado: com o
+snapshotter do containerd do Docker 29, o cAdvisor não publica disco por container (ver a
+atualização no ADR 0026). Ver ADR 0026 para detalhes.
 
 **Objetivo original**: a chave Debug do chat e a página de auditoria do gate passam a ser **views
 sobre a mesma telemetria**, em vez de pipeline próprio.
