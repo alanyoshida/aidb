@@ -142,9 +142,9 @@ portal:
   dbGate:
     mode: enforce
 
-  # Broker de inferência (ADR 0020) e telemetria OTel não são implantados por
-  # este chart (os manifests originais também não os incluíam) — a chave
-  # APPAIFORGE_INFERENCE_BROKER_ENABLED fica fixa em "false" no template.
+  # Broker de inferência (ADR 0020) não é implantado por este chart (os manifests
+  # originais também não o incluíam) — a chave APPAIFORGE_INFERENCE_BROKER_ENABLED fica fixa
+  # em "false" no template. Telemetria: ver `observability`, no fim deste arquivo.
 
   maxSystems: 50
   fakeDelay: 1.5
@@ -185,6 +185,25 @@ traefik:
   # GatewayClass "traefik", usado pelo Gateway deste chart
   gatewayClass:
     enabled: true
+  # Traços e métricas OTLP do Traefik para o Collector deste chart (change
+  # chart-observability-otel, D4). Desligados; para ligar, `observability.enabled=true` e
+  # `traefik.tracing.otlp.enabled=true` + `traefik.tracing.otlp.http.enabled=true` (o mesmo em
+  # `traefik.metrics.otlp`). Os valores do subchart não aceitam template: o endpoint já vem com o
+  # Service do Collector no `fullnameOverride` padrão (mesmo namespace do Traefik); com outro
+  # nome, ajuste-o — o chart recusa renderizar com um endpoint que não aponte para o Collector.
+  # A query string sai mascarada nos traços (padrão do Traefik, `safeQueryParams: []`).
+  tracing:
+    otlp:
+      enabled: false
+      http:
+        enabled: false
+        endpoint: http://appaiforge-portal-otel-collector:4318/v1/traces
+  metrics:
+    otlp:
+      enabled: false
+      http:
+        enabled: false
+        endpoint: http://appaiforge-portal-otel-collector:4318/v1/metrics
 
 # Gateway das rotas no modo gateway.
 gateway:
@@ -229,3 +248,53 @@ postgres:
   persistence:
     size: 1Gi
     storageClassName: ""
+
+# Observabilidade (change chart-observability-otel, ADR 0034). Desligada por padrão: sem ela o
+# chart não cria Collector e o portal não exporta nada. Ligada, o chart sobe um OTel Collector que
+# recebe OTLP do portal e do Traefik e repassa a um destino OTLP externo (ADR 0025: o portal só
+# conhece o Collector). O destino de referência é um APM Server do Elastic, mas nada aqui é
+# específico dele.
+observability:
+  enabled: false
+  # deployment.environment da telemetria (ex.: producao); vazio = não enviado
+  environment: ""
+  collector:
+    # false = não criar Collector e usar um que já exista no cluster (collector.endpoint)
+    create: true
+    # base OTLP/HTTP de um Collector existente (só com create=false), ex.:
+    # http://otel-collector.observabilidade.svc.cluster.local:4318
+    endpoint: ""
+    image:
+      repository: otel/opentelemetry-collector-contrib
+      tag: "0.112.0"
+    resources: {}
+    # Configuração completa do Collector (YAML em texto) que substitui a gerada, para outro
+    # backend ou outro pipeline. As variáveis EXPORTER_TOKEN e EXPORTER_AUTHORIZATION continuam
+    # disponíveis quando há exporter.existingSecret.
+    config: ""
+  exporter:
+    # destino OTLP gRPC, ex.: apm.exemplo.com:8200 (APM Server)
+    endpoint: ""
+    # true = sem TLS (APM Server de teste sem certificado)
+    insecure: false
+    # converte métricas cumulativas para delta antes de exportar, o que o APM Server trata melhor;
+    # desligue para um backend que espere cumulativo
+    deltaMetrics: true
+    # Secret criado fora do Helm, lido só pelo Collector central. Vazio = sem autenticação e com
+    # a CA do sistema. Quais chaves dele usar fica explícito abaixo: uma chave ausente no Secret
+    # faria o Collector mandar um cabeçalho vazio ou procurar uma CA que não existe.
+    existingSecret: ""
+    # usa a chave `token` (secret_token ou API key do APM Server) no cabeçalho Authorization
+    token: true
+    # Bearer (secret_token do APM Server) ou ApiKey (API key do Elastic)
+    authScheme: Bearer
+    # usa a chave `ca.crt` como CA do destino (certificado de CA privada)
+    ca: false
+  # CPU e memória dos Pods do portal e dos sistemas, lidas do kubelet de cada nó por um Collector
+  # em DaemonSet. Cria o único ClusterRole do chart fora dos namespaces: get em nodes/stats e nodes.
+  kubeletstats:
+    enabled: false
+    # o kubelet do kind usa certificado autoassinado; num cluster gerenciado, deixe false
+    insecureSkipVerify: false
+    collectionInterval: 30s
+    resources: {}

@@ -80,3 +80,9 @@ Collector aceita um APM Server externo por `APM_SERVER_ENDPOINT`.
   (dados de exemplo).
 - O span `llm.request` termina quando a resposta do LiteLLM começa, não ao fim do streaming; a
   chamada httpx filha dele herda esse limite.
+
+## Atualização (2026-11-22): `service.version` no cluster
+
+No chart Kubernetes ([ADR 0034](0034-observabilidade-no-chart-kubernetes.md)), `service.version` vem
+da tag da imagem do portal, por `OTEL_RESOURCE_ATTRIBUTES`. A consequência acima sobre o
+`__version__` parado vale só para quem não define a variável, como o compose sem ela.

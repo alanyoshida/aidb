@@ -1,0 +1,134 @@
+{{- /*
+Collector central da observabilidade (change chart-observability-otel, ADR 0034, D6): recebe OTLP
+do portal, do Traefik e do agente de kubeletstats e repassa a um destino OTLP externo. A
+credencial do destino (D2) vem de um Secret criado fora do Helm e só este Pod o lê.
+*/ -}}
+{{- $o := .Values.observability -}}
+{{- if and $o.enabled $o.collector.create }}
+{{- $name := include "appaiforge-portal.collectorName" . }}
+{{- $secret := $o.exporter.existingSecret }}
+{{- $useToken := and $secret $o.exporter.token }}
+{{- $useCA := and $secret $o.exporter.ca }}
+{{- $config := $o.collector.config }}
+{{- if not $config }}
+{{- $config = include "appaiforge-portal.collectorConfig" (dict "o" $o "useToken" $useToken "useCA" $useCA) }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+    {{- $config | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "appaiforge-portal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "appaiforge-portal.labels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+      annotations:
+        checksum/config: {{ $config | sha256sum }}
+    spec:
+      # Não fala com a API do Kubernetes: sem token do ServiceAccount no Pod.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          image: "{{ $o.collector.image.repository }}:{{ $o.collector.image.tag }}"
+          args: ["--config=/conf/config.yaml"]
+          {{- if $useToken }}
+          env:
+            - name: EXPORTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: token
+            # Expansão $(VAR) do Kubernetes: EXPORTER_TOKEN precisa vir antes.
+            - name: EXPORTER_AUTHORIZATION
+              value: "{{ $o.exporter.authScheme }} $(EXPORTER_TOKEN)"
+          {{- end }}
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
+          {{- if not $o.collector.config }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 13133
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 13133
+            initialDelaySeconds: 10
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /conf
+            {{- if $useCA }}
+            - name: exporter-ca
+              mountPath: /etc/otel-exporter
+              readOnly: true
+            {{- end }}
+          {{- with $o.collector.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        {{- if $useCA }}
+        - name: exporter-ca
+          secret:
+            secretName: {{ $secret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+{{- end }}

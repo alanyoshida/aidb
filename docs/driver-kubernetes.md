@@ -32,10 +32,12 @@ usa rollout `maxSurge: 0`, porque num nó só o pod novo não agenda enquanto o 
 Atualizar um portal já instalado que tenha schema criado sem Alembic (sem `alembic_version`): carimbe
 a revisão anterior e aplique as novas antes de reiniciar, num pod avulso com a imagem nova —
 `alembic stamp b4c5d6e7f8a9 && alembic upgrade head` em `/app/portal`. Detalhes de valores, teardown e o que o chart não cobre (broker de
-inferência, telemetria) ficam no [README do chart](../deploy/helm/appaiforge-portal/README.md). Os
+inferência) ficam no [README do chart](../deploy/helm/appaiforge-portal/README.md). Os
 manifests antigos, aplicados manualmente com `kubectl apply`, continuam em
 `openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/` só como histórico da decisão — o
 chart é a forma recomendada de instalar hoje.
+
+**Observabilidade.** Desligada por padrão. Com `observability.enabled=true`, o chart sobe um OTel Collector que recebe traços, métricas e logs do portal e do Traefik e repassa a um destino OTLP externo, como um APM Server do Elastic. Opcionalmente, também coleta CPU e memória dos Pods de cada sistema pelo kubelet. Valores, credencial do destino e permissões em [Observabilidade, no README do chart](../deploy/helm/appaiforge-portal/README.md#observabilidade) e na [ADR 0034](adr/0034-observabilidade-no-chart-kubernetes.md).
 
 ## Composição do pod de cada sistema
 
