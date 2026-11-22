@@ -28,7 +28,7 @@ PROFILES: dict[str, dict] = {
         "command": ["opencode", "serve", "--hostname", "0.0.0.0", "--port", "4096"],
         "cwd": "/opencode-config",
         # Imagem de container do agente: a imagem base da plataforma
-        # (`settings.base_image`, padrão appaiforge/base:0.1.0), resolvida em get_profile.
+        # (`settings.base_image`, padrão appaiforge/base:<versão do portal>), resolvida em get_profile.
         "image_setting": "base_image",
         # Caminho, dentro do container, onde o portal monta (read-only, fora
         # do workspace) o diretório de config deste agente — igual ao

@@ -4,6 +4,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import __version__
+
 # Modelos conhecidos por provedor de LLM; o primeiro é o padrão (usado no select da UI).
 KNOWN_MODELS: dict[str, list[str]] = {
     "glm": ["glm-4.6"],
@@ -58,11 +60,13 @@ class Settings(BaseSettings):
     # não ser capturado pela rota "/" do portal (D2). Vazio = rotas sem hostname.
     k8s_route_hostname: str = ""
 
-    # Imagens dos sistemas (os dois drivers). No Kubernetes, trocar uma delas (ou os Secrets de
-    # pull) faz a reconciliação recriar os Pods que ainda usam a anterior.
-    base_image: str = "appaiforge/base:0.1.0"
+    # Imagens dos sistemas (os dois drivers). O padrão leva a versão do portal (change
+    # version-alignment), então cada release pede as imagens da mesma versão. No Kubernetes,
+    # trocar uma delas (ou os Secrets de pull) faz a reconciliação recriar os Pods que ainda usam
+    # a anterior.
+    base_image: str = f"appaiforge/base:{__version__}"
     # Imagem dos sistemas com o perfil de agente claude-code (no chart, portal.claudeCodeImage).
-    claude_code_image: str = "appaiforge/claude-code:0.1.0"
+    claude_code_image: str = f"appaiforge/claude-code:{__version__}"
 
     # Docker
     docker_network: str = "appaiforge-net"

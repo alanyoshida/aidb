@@ -14,9 +14,11 @@ import time
 
 import pytest
 
+from appaiforge import __version__
+
 pytestmark = [pytest.mark.integration]
 
-BASE_IMAGE = os.environ.get("APPAIFORGE_TEST_BASE_IMAGE", "appaiforge/base:0.1.0")
+BASE_IMAGE = os.environ.get("APPAIFORGE_TEST_BASE_IMAGE", f"appaiforge/base:{__version__}")
 
 # Provedor openai-compatible mínimo: grava cada corpo (uma linha) e responde um stream válido.
 FAKE_LLM = r'''

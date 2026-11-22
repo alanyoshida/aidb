@@ -26,8 +26,8 @@ kubectl config use-context <seu-contexto>
 docker network connect --alias aidb-prod.pilot.test appaiforge-e2e-gitlab-net aidb-prod-control-plane
 
 # 3. Imagens: a base com um nome de registro, para exercitar portal.baseImage
-docker build -t appaiforge/base:0.1.0 -f base-image/Dockerfile base-image
-docker tag appaiforge/base:0.1.0 registro.pilot.test/appaiforge/base:1.4.2
+docker build -t appaiforge/base:1.11.0 -f base-image/Dockerfile base-image
+docker tag appaiforge/base:1.11.0 registro.pilot.test/appaiforge/base:1.4.2
 docker build -t appaiforge/portal:pilot -f deploy/portal.Dockerfile .
 kind load docker-image registro.pilot.test/appaiforge/base:1.4.2 appaiforge/portal:pilot --name aidb-prod
 ```
@@ -119,7 +119,7 @@ docker compose -f deploy/docker-compose.e2e-gitlab.yml down
 ## Achados (2026-11-21)
 
 - **Imagem base dos sistemas fixa no código.** O container principal de cada sistema usava
-  `appaiforge/base:0.1.0`, fixo no perfil do agente. `APPAIFORGE_BASE_IMAGE` só mudava os
+  `appaiforge/base` (então com a tag 0.1.0), fixo no perfil do agente. `APPAIFORGE_BASE_IMAGE` só mudava os
   sidecars. Corrigido: o perfil padrão segue a imagem base configurada, e o chart ganhou
   `portal.baseImage`.
 - **Guia de produção por Helm incompleto.** Ele não dizia qual imagem do portal usar, nem que a

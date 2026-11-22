@@ -18,7 +18,7 @@ O portal SHALL publicar a app gerada de cada sistema ativo no caminho `/apps/{sl
 - **THEN** a app reinicia com o novo código e volta a responder no mesmo caminho
 
 ### Requirement: Acesso restrito a usuários com acesso ao sistema
-O portal SHALL verificar, em cada requisição a `/apps/{slug}` (incluindo conexões WebSocket), se ela vem de uma sessão válida do portal com acesso ao sistema — dono, admins e membros de grupos vinculados —, nos dois modos de autenticação. Sem sessão válida, o usuário SHALL ser levado ao login e, depois de entrar, de volta ao endereço da app que pediu. Com sessão mas sem acesso, o portal SHALL recusar com mensagem de permissão insuficiente. Encerrar a sessão no portal ou perder o acesso ao sistema SHALL refletir-se na app já na requisição seguinte.
+O portal SHALL verificar, em cada requisição a `/apps/{slug}` (incluindo conexões WebSocket), se ela vem de uma sessão válida do portal com acesso ao sistema — dono, admins e membros de grupos vinculados —, nos dois modos de autenticação. Com sessão mas sem acesso, o portal SHALL recusar com mensagem de permissão insuficiente.
 
 #### Scenario: app_user de grupo acessa a app
 - **WHEN** um `app_user` membro de grupo vinculado abre `/apps/{slug}`
@@ -45,7 +45,7 @@ O portal SHALL verificar, em cada requisição a `/apps/{slug}` (incluindo conex
 - **THEN** a próxima requisição dele à app é recusada
 
 ### Requirement: Identidade do usuário propagada à app
-O portal SHALL entregar à app gerada, em cada requisição autorizada, a identidade do usuário como um JWT assinado com segredo exclusivo daquele sistema e com audiência restrita àquela app, contendo identificador, e-mail, tipo global e grupos do usuário, com validade curta. A app SHALL validar assinatura, audiência e validade a cada requisição e tratar a identidade validada como o usuário da requisição, sem manter sessão própria que sobreviva ao fim da sessão no portal. Uma identidade emitida para uma app SHALL NOT ser aceita por outra app. Identidade enviada pelo cliente SHALL NOT chegar à app sem ter sido emitida pelo portal para aquela requisição.
+O portal SHALL entregar à app gerada, em cada requisição autorizada, a identidade do usuário como um JWT assinado com segredo exclusivo daquele sistema e com audiência restrita àquela app, contendo identificador, e-mail, tipo global e grupos do usuário, com validade curta.
 
 #### Scenario: App identifica o usuário
 - **WHEN** um usuário com acesso abre a app do sistema
@@ -73,3 +73,31 @@ O portal SHALL monitorar a saúde da app de cada sistema e exibir seu estado (ro
 #### Scenario: Recuperação automática
 - **WHEN** a app falha e volta a responder após reinício com backoff
 - **THEN** o estado do sistema volta a "rodando" sem intervenção
+
+### Requirement: Login a partir do link da app
+Sem sessão válida, o usuário SHALL ser levado ao login e, depois de entrar, de volta ao endereço da app que pediu.
+
+#### Scenario: Usuário sem sessão abre a página inicial da app
+- **WHEN** um usuário sem sessão abre `/apps/{slug}`
+- **THEN** é levado ao login e, depois de entrar com acesso ao sistema, volta a `/apps/{slug}`
+
+### Requirement: Fim da sessão e do acesso alcança a app
+Encerrar a sessão no portal ou perder o acesso ao sistema SHALL refletir-se na app já na requisição seguinte.
+
+#### Scenario: Conexão em tempo real depois do logout
+- **WHEN** um usuário faz logout no portal e a app aberta tenta abrir uma nova conexão WebSocket
+- **THEN** a conexão é recusada
+
+### Requirement: Identidade validada pela app
+A app SHALL validar assinatura, audiência e validade a cada requisição e tratar a identidade validada como o usuário da requisição, sem manter sessão própria que sobreviva ao fim da sessão no portal. Uma identidade emitida para uma app SHALL NOT ser aceita por outra app.
+
+#### Scenario: Cada requisição com o seu usuário
+- **WHEN** dois usuários com acesso usam a mesma app ao mesmo tempo
+- **THEN** a app trata cada requisição como do usuário da identidade validada que a acompanha
+
+### Requirement: Identidade do cliente não chega à app
+Identidade enviada pelo cliente SHALL NOT chegar à app sem ter sido emitida pelo portal para aquela requisição.
+
+#### Scenario: Identidade enviada sem sessão
+- **WHEN** um cliente sem sessão do portal envia uma identidade junto da requisição a `/apps/{slug}`
+- **THEN** a requisição não chega à app e o usuário é levado ao login

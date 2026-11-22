@@ -80,8 +80,8 @@ Sem chave de LLM cadastrada, o portal opera em **modo fake** (todo o resto funci
 ### Opção 2 — Kubernetes (driver alternativo, validação local)
 
 ```bash
-docker build -f deploy/portal.Dockerfile -t appaiforge/portal:0.1.0 .
-kind load docker-image appaiforge/portal:0.1.0 --name appaiforge-dev
+docker build -f deploy/portal.Dockerfile -t appaiforge/portal:1.11.0 .
+kind load docker-image appaiforge/portal:1.11.0 --name appaiforge-dev
 
 helm install appaiforge-portal deploy/helm/appaiforge-portal \
   --namespace appaiforge --create-namespace \
