@@ -48,6 +48,8 @@ jobs:
         with:
           version: "0.13.7"
           python-version: "3.12"
+          # o uv sync roda como o usuário de uid 1000, com o cache na pasta dele (D11)
+          enable-cache: false
       - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v3.19.0
