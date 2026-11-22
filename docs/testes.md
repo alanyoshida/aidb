@@ -51,6 +51,30 @@ Para recomeçar o GitLab do zero, remova também os volumes: `docker compose -f
 deploy/docker-compose.e2e-gitlab.yml down -v`. O token de root e as senhas do arquivo compose e de
 `deploy/e2e-gitlab/init.py` valem só para esse stack.
 
+## CI (GitHub Actions)
+
+O workflow `.github/workflows/ci.yml` roda em cada push de qualquer branch, em PRs vindas de fork e em cada release publicada. Numa PR deste repositório, o status do push no commit da cabeça já vale para a PR.
+
+| Job | O que roda | Bloqueia |
+|---|---|---|
+| `testes` | `uv run pytest -n auto tests/unit tests/bdd` e os testes de `base-image/` (claude-code-shim, dbproxy, gated-mcp, httpproxy), pasta por pasta | sim |
+| `specs` | `openspec validate --all --strict` | sim |
+| `chart` | `helm lint deploy/helm/appaiforge-portal` | sim |
+| `segredos` | gitleaks no histórico inteiro, com `.gitleaks.toml` | sim |
+| `imagens` | build de portal, base e claude-code, checagem de segredos em cada imagem (`.github/scripts/scan-image-secrets.sh`) e vulnerabilidades pelo trivy | só os segredos |
+| `trivy-repo` | trivy nas dependências, na configuração (Dockerfiles e chart) e em segredos do repositório | não |
+| `publicar` | só numa release: publica as três imagens no GHCR ([Operação](operacao.md#publicar-uma-release)) | — |
+
+- **Na CI, falta de ferramenta é falha.** Os testes do chart e o de health check do Kubernetes se pulam sem `helm` ou sem `curl` só fora da CI. Com `CI` definido, a falta vira falha, para a CI não ficar verde sem testar.
+- **Relatórios do trivy:** ficam na aba *Security → Code scanning* do repositório, um por categoria (`trivy-repo`, `trivy-portal`, `trivy-base`, `trivy-claude-code`). O log de cada job mostra também uma tabela com os achados altos e críticos.
+- **Fica de fora da CI:** a integração com Docker real (`tests/integration`), os E2E com browser e o kind. Rode-os à mão, como acima.
+- **Pinos de versão.** Subir uma versão é mudar os dois lugares:
+  - Python 3.12 e uv 0.13.7: no workflow e nos Dockerfiles;
+  - Helm 3.19.0: no workflow;
+  - OpenSpec 1.15.0: no workflow e em `base-image/Dockerfile`;
+  - gitleaks, trivy, Alpine e actions: pinados por digest ou commit no workflow e em `.github/scripts/scan-image-secrets.sh`.
+- **Exigir os checks antes do merge:** em *Settings → Branches* (ou *Rules*), crie uma regra para `main` que exige os checks `testes`, `specs`, `chart` e `segredos`. É uma configuração do repositório e não vem com o código.
+
 ## Cenário com LLM real (`@llm_real`)
 
 O caminho opencode+GLM é validado manualmente (não roda em CI):

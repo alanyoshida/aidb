@@ -185,3 +185,20 @@ provision_system(get_system(system_id))
 Recriar o container invalida qualquer sessão de chat aberta nesse sistema (reabre sozinha na
 próxima mensagem). Confirme depois: `docker inspect appaiforge-sys-<slug> --format '{{.Config.User}}'`
 deve mostrar `1000:1000`, e `docker exec appaiforge-sys-<slug> id` deve mostrar o usuário `agent`.
+
+## Nenhum segredo nas imagens
+
+Nenhuma imagem do projeto (portal, base e claude-code) chega ao registry com um segredo dentro. São três camadas: as duas primeiras evitam que o segredo entre, e a terceira bloqueia a imagem que o tenha mesmo assim.
+
+1. **Contexto de build.** O `.dockerignore` da raiz e o de `base-image/` excluem `.env`, `*.env` (os `*.env.example` entram), chaves (`*.pem`, `*.key`, `*.p12`, `id_rsa*`, `id_ed25519*`), `.npmrc`, `.pypirc` e `.netrc`.
+2. **Dockerfiles.** O teste `portal/tests/unit/test_container_hygiene.py` falha se um Dockerfile declarar `ARG` ou `ENV` com nome de segredo (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY` etc.), porque o valor ficaria no histórico da imagem. Ele também confere os padrões dos dois `.dockerignore`.
+3. **Imagem construída.** O script `.github/scripts/scan-image-secrets.sh` roda dois detectores, e qualquer achado para a CI:
+   - o detector de segredos do trivy, nas camadas e na configuração da imagem (`ENV`, labels, histórico de comandos);
+   - o gitleaks, no sistema de arquivos exportado da imagem.
+
+   Os valores saem mascarados. Na CI, ele roda em todo push e, na publicação, antes do `docker login` no GHCR, então uma imagem reprovada nunca tem como ser enviada. Para checar uma imagem local: `.github/scripts/scan-image-secrets.sh <imagem>`, a partir da raiz do repositório.
+
+**Falso positivo.** Um achado da regra genérica num arquivo do sistema operacional ou do Node pode ser falso. Hoje, os casos conhecidos são cabeçalhos em `/usr/include/linux` e `/usr/local/include/node` e módulos do Perl. Esses caminhos ficam na allowlist de `.gitleaks-image.toml`. Um caminho novo entra lá numa PR revisada, nunca uma pasta do projeto. No histórico do repositório, `.gitleaks.toml` libera só os valores fictícios das fixtures de teste, cada um comentado.
+
+Se um segredo real aparecer: revogue-o primeiro, depois tire-o do código. Um segredo que já foi commitado continua no histórico, e o gitleaks continua achando-o.
+

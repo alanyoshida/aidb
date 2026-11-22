@@ -1,0 +1,265 @@
+# CI do AIDB (change add-ci-workflow). Decisões em
+# openspec/changes/archive/*-add-ci-workflow/design.md:
+# - push em qualquer branch e PR só de fork (D1): uma PR deste repositório não roda duas vezes;
+# - testes, specs, chart e gitleaks bloqueiam; trivy só gera relatório na aba Security (D6, D7);
+# - as três imagens são construídas e checadas em todo push, e nenhuma com segredo segue (D10);
+# - só uma release (ou o disparo manual de uma release antiga) publica no GHCR (D8).
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de uma release que já existe, para publicar as imagens dela (ex.: v1.11.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # cancela a execução anterior de uma branch, nunca uma publicação
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+env:
+  OPENSPEC_TELEMETRY: "0"
+  OPENSPEC_NO_UPDATE_CHECK: "1"
+  OPENSPEC_NO_ANIMATION: "1"
+  TRIVY_IMAGE: aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+
+jobs:
+  testes:
+    # push, release e disparo; em pull_request, só PR vinda de fork (D1)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.7"
+          python-version: "3.12"
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.19.0
+      - name: Dependências
+        working-directory: portal
+        run: uv sync --frozen
+      - name: Unitários e BDD
+        working-directory: portal
+        run: uv run --no-sync pytest -n auto -p no:cacheprovider tests/unit tests/bdd
+      - name: Componentes da imagem base
+        # pasta por pasta: dois test_sidecar.py colidem numa coleta única
+        run: |
+          for d in claude-code-shim dbproxy gated-mcp httpproxy; do
+            echo "== base-image/$d"
+            (cd "base-image/$d" && ../../portal/.venv/bin/python -m pytest -q -p no:cacheprovider)
+          done
+
+  specs:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: OpenSpec 1.15.0 (o mesmo pino da imagem base)
+        run: npm install -g --no-fund --no-audit "@fission-ai/openspec@1.15.0"
+      - name: Specs no modo estrito
+        run: openspec validate --all --strict
+
+  chart:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
+        with:
+          version: v3.19.0
+      - name: helm lint
+        run: helm lint deploy/helm/appaiforge-portal
+
+  segredos:
+    # gitleaks no histórico inteiro, bloqueando (D6)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE":/repo:ro \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            "$GITLEAKS_IMAGE" git /repo --config /repo/.gitleaks.toml --redact --no-banner --log-level warn
+
+  trivy-repo:
+    # dependências, configuração e segredos do repositório, só relatório (D7)
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: trivy fs
+        run: |
+          trivy() { docker run --rm -v "$GITHUB_WORKSPACE":/src -w /src "$TRIVY_IMAGE" "$@"; }
+          opts=(fs --quiet --scanners "vuln,misconfig,secret" --skip-dirs .claude --skip-dirs openspec/changes/archive --exit-code 0)
+          trivy "${opts[@]}" --format sarif --output trivy-repo.sarif .
+          trivy "${opts[@]}" --format table --severity HIGH,CRITICAL .
+      - name: Enviar à aba Security
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: trivy-repo.sarif
+          category: trivy-repo
+
+  imagens:
+    # build e checagem das três imagens em todo push, sem publicar (D2, D10)
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: portal
+            dockerfile: deploy/portal.Dockerfile
+            context: .
+          - name: base
+            dockerfile: base-image/Dockerfile
+            context: base-image
+          - name: claude-code
+            dockerfile: base-image/Dockerfile.claude-code
+            context: base-image
+    env:
+      IMAGE: aidb-ci/${{ matrix.name }}:${{ github.sha }}
+      DOCKERFILE: ${{ matrix.dockerfile }}
+      CONTEXT: ${{ matrix.context }}
+      NAME: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          docker build -f "$DOCKERFILE" -t "$IMAGE" \
+            --label org.opencontainers.image.source="https://github.com/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            "$CONTEXT"
+      - name: Nenhum segredo na imagem (bloqueia)
+        run: .github/scripts/scan-image-secrets.sh "$IMAGE"
+      - name: Vulnerabilidades (relatório)
+        run: |
+          trivy() { docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro -v "$GITHUB_WORKSPACE":/out "$TRIVY_IMAGE" "$@"; }
+          trivy image --quiet --scanners vuln --exit-code 0 --format sarif --output "/out/trivy-$NAME.sarif" "$IMAGE"
+          trivy image --quiet --scanners vuln --exit-code 0 --format table --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE"
+      - name: Enviar à aba Security
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
+
+  publicar:
+    # só uma release publicada, ou o disparo manual a partir da main, publica no GHCR (D8)
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs: [testes, specs, chart, segredos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: portal
+            dockerfile: deploy/portal.Dockerfile
+            context: .
+          - name: base
+            dockerfile: base-image/Dockerfile
+            context: base-image
+          - name: claude-code
+            dockerfile: base-image/Dockerfile.claude-code
+            context: base-image
+    env:
+      # a tag entra só por variável, nunca interpolada no script
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      DOCKERFILE: ${{ matrix.dockerfile }}
+      CONTEXT: ${{ matrix.context }}
+      NAME: ${{ matrix.name }}
+    steps:
+      # o script e as configurações de checagem vêm do commit do workflow; o código-fonte da
+      # imagem, da tag (no disparo de uma release antiga, os dois diferem)
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          path: src
+      - name: Versão da tag igual à do pyproject
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag inválida: $RELEASE_TAG"; exit 1; }
+          VERSION="${RELEASE_TAG#v}"
+          PYPROJECT="$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["project"]["version"])' src/portal/pyproject.toml)"
+          [ "$VERSION" = "$PYPROJECT" ] || { echo "tag $RELEASE_TAG, mas o pyproject diz $PYPROJECT"; exit 1; }
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          {
+            echo "VERSION=$VERSION"
+            echo "IMAGE=ghcr.io/$OWNER/appaiforge/$NAME"
+          } >> "$GITHUB_ENV"
+      - name: Build
+        run: |
+          docker build -f "src/$DOCKERFILE" -t "$IMAGE:$VERSION" -t "$IMAGE:latest" \
+            --label org.opencontainers.image.source="https://github.com/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.version="$VERSION" \
+            --label org.opencontainers.image.revision="$(git -C src rev-parse HEAD)" \
+            "src/$CONTEXT"
+      - name: Nenhum segredo na imagem (bloqueia, antes do login)
+        run: .github/scripts/scan-image-secrets.sh "$IMAGE:$VERSION"
+      - name: Vulnerabilidades (relatório)
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock:ro -v "$GITHUB_WORKSPACE":/out "$TRIVY_IMAGE" \
+            image --quiet --scanners vuln --exit-code 0 --format sarif --output "/out/trivy-$NAME.sarif" "$IMAGE:$VERSION"
+      - name: Enviar à aba Security
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
+      - name: Publicar no GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$VERSION"
+          docker push "$IMAGE:latest"
+          docker logout ghcr.io

@@ -1,0 +1,19 @@
+# Gitleaks no sistema de arquivos exportado de cada imagem construída (change add-ci-workflow,
+# design D10). A CI bloqueia o push da imagem em qualquer achado. Usa as regras padrão e só
+# libera caminhos de arquivos do sistema operacional e do Node que dão falso positivo na regra
+# genérica: cabeçalhos do kernel e do Node e módulos do Perl do Debian. Nada do projeto mora
+# nesses caminhos. Um falso positivo novo de sistema entra aqui numa PR revisada.
+
+title = "aidb-imagens"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Arquivos do sistema operacional e do Node nas imagens"
+paths = [
+  '''^usr/include/linux/''',
+  '''^usr/lib/x86_64-linux-gnu/perl''',
+  '''^usr/share/perl''',
+  '''^usr/local/include/node/''',
+]
