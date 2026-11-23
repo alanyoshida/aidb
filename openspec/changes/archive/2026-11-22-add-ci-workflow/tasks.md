@@ -39,13 +39,45 @@
 
 ## 5. Verificação no GitHub
 
-- [ ] 5.1 Com o ok do operador para commitar e empurrar a branch, que dispara a CI (D1), conferir com `gh run watch` que `testes`, `specs`, `chart`, `segredos`, `trivy-repo` e `imagens` terminam verdes no commit da branch. Conferir também:
+- [x] 5.1 Com o ok do operador para commitar e empurrar a branch, que dispara a CI (D1), conferir com `gh run watch` que `testes`, `specs`, `chart`, `segredos`, `trivy-repo` e `imagens` terminam verdes no commit da branch. Conferir também:
   - nos logs de `testes`, que os testes do chart rodaram, sem pulo;
   - nos logs de `imagens`, que as duas checagens de segredo rodaram nas três imagens, com zero achados;
   - na aba Security, os quatro relatórios do trivy, um por categoria;
   - que `publicar` não rodou.
 
   Se um job falhar por diferença do runner, corrigir e repetir. Registrar o tempo de cada job.
+
+- Resultado da verificação (execução 45085279906, commit `824870f`, todos os jobs verdes):
+  - Tempo de cada job:
+
+    | Job | Tempo |
+    |---|---|
+    | `testes` | 4 min 46 s |
+    | `imagens` | 2 min 13 s (portal), 2 min 58 s (base), 3 min 02 s (claude-code) |
+    | `trivy-repo` | 38 s |
+    | `segredos` | 12 s |
+    | `specs` | 8 s |
+    | `chart` | 5 s |
+
+    `publicar` foi pulado, como devia.
+  - `testes`: 792 passados, sem nenhum pulo, então os 52 testes do chart rodaram, mais os 87 de `base-image/`.
+  - `imagens`: as duas checagens de segredo, trivy e gitleaks, rodaram nas três imagens, e todas deram "nenhum segredo".
+  - Aba Security, quatro categorias no commit:
+    - `trivy-repo`: 50 resultados;
+    - `trivy-portal`: 474;
+    - `trivy-base`: 1776;
+    - `trivy-claude-code`: 1776.
+
+    A base, construída do zero, pegou as libs do MariaDB corrigidas. As duas imagens ficaram com os mesmos 40 achados com correção, do npm.
+  - Foram necessárias seis execuções. Três premissas da suíte só apareceram no GitHub, e entraram no design como D11:
+    - o portal faz `chown` do workspace para o uid 1000 e roda o git dos sistemas como esse uid;
+    - parte dos testes sobe a imagem base;
+    - o uid 1000 do runner (`packer`) não entra em `/home/runner`.
+
+    Duas coisas do runner também atrapalharam e foram resolvidas:
+    - o `sudo` dele preserva o ambiente, o que fazia o `helm` procurar `/home/runner`. Resolvido com `env -i`;
+    - o cache do `setup-uv` ficava vazio, porque o `uv sync` roda como o uid 1000, e o salvamento falhava. O cache foi desligado no job.
+  - O primeiro push foi barrado pela proteção de push do GitHub, porque o `.gitleaks.toml` tinha o token fictício do E2E escrito literalmente. A allowlist passou a usar regex equivalentes, sem o valor literal, e nada foi liberado no GitHub.
 
 ## Workflow follow-up
 
