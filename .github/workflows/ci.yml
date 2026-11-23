@@ -153,7 +153,7 @@ jobs:
       - name: trivy fs
         run: |
           trivy() { docker run --rm -v "$GITHUB_WORKSPACE":/src -w /src "$TRIVY_IMAGE" "$@"; }
-          opts=(fs --quiet --scanners "vuln,misconfig,secret" --skip-dirs .claude --skip-dirs openspec/changes/archive --exit-code 0)
+          opts=(fs --quiet --scanners "vuln,misconfig,secret" --ignorefile .trivyignore.yaml --skip-dirs .claude --skip-dirs openspec/changes/archive --exit-code 0)
           trivy "${opts[@]}" --format sarif --output trivy-repo.sarif .
           trivy "${opts[@]}" --format table --severity HIGH,CRITICAL .
       - name: Enviar à aba Security

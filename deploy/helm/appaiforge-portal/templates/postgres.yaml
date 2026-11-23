@@ -41,6 +41,9 @@ spec:
         {{- include "appaiforge-portal.labels" . | nindent 8 }}
         app.kubernetes.io/component: portal-postgres
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
@@ -56,9 +59,23 @@ spec:
               value: {{ .Values.postgres.database | quote }}
           ports:
             - containerPort: 5432
+          # Contexto restrito (change fix-trivy-high-critical, D5). O entrypoint da imagem oficial
+          # começa como root, acerta o dono do diretório de dados e troca para o usuário postgres
+          # (su-exec): por isso as cinco capabilities abaixo, e nenhuma outra.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"]
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            # socket local (pg_isready) e temporários, com a raiz somente leitura
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}]
@@ -68,6 +85,11 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data

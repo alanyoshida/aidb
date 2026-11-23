@@ -202,3 +202,18 @@ Nenhuma imagem do projeto (portal, base e claude-code) chega ao registry com um 
 
 Se um segredo real aparecer: revogue-o primeiro, depois tire-o do código. Um segredo que já foi commitado continua no histórico, e o gitleaks continua achando-o.
 
+
+## Portal e Postgres no cluster
+
+No chart, o portal e o Postgres rodam com contexto de segurança restrito: sem escalada de privilégio, perfil seccomp `RuntimeDefault` e raiz somente leitura.
+
+- **Portal** (e o initContainer das migrações): sem nenhuma capability. Ele grava só em volumes `emptyDir`:
+  - `/configs` e `/git-relays`, como antes;
+  - `/tmp`;
+  - `/dynamic`, a rota do portal para o Traefik do compose, que no cluster ninguém lê;
+  - `/workspaces`, onde o harness fake grava a app de exemplo.
+
+  Ele continua rodando com o usuário da imagem, root. No compose, o portal precisa de root para acertar o dono dos workspaces e rodar o git com o uid de cada sistema.
+- **Postgres:** só as cinco capabilities de que o entrypoint da imagem oficial precisa para acertar o dono do diretório de dados e trocar para o usuário `postgres`: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID` e `SETUID`. O socket e os temporários ficam em `emptyDir`, e os dados continuam na PVC.
+
+Um upgrade de uma instalação anterior preserva o banco: o contexto muda, mas a PVC e o dono dos arquivos são os mesmos.

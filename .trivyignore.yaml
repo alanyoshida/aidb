@@ -1,0 +1,31 @@
+# Exceções do trivy na varredura do repositório (change fix-trivy-high-critical, D6). Cada entrada
+# é um achado alto ou crítico que fica por desenho ou por ser de terceiros, limitado ao arquivo
+# onde ele aparece: o mesmo achado em outro arquivo continua no relatório.
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - deploy/portal.Dockerfile
+    statement: >-
+      O portal roda como root: no modo compose ele acerta o dono dos workspaces (chown para o uid
+      do agente) e roda o git dos sistemas com o uid de cada um. Trocar para não-root é uma
+      change própria. No chart, o container roda sem capabilities, sem escalada e com a raiz
+      somente leitura.
+  - id: DS-0002
+    paths:
+      - portal/tests/integration/fixtures/git-ssh-server/Dockerfile
+    statement: >-
+      Servidor SSH de teste dos testes de integração. O sshd precisa de root, e a imagem nunca é
+      publicada.
+  - id: KSV-0056
+    paths:
+      - deploy/helm/appaiforge-portal/templates/rbac.yaml
+    statement: >-
+      O portal publica a rota de cada sistema (IngressRoute ou HTTPRoute) e a NetworkPolicy que
+      isola o Pod dele. A permissão fica num Role, só no namespace dos sistemas, e o comentário de
+      cada regra em rbac.yaml diz quem a usa.
+  - id: KSV-0041
+    paths:
+      - deploy/helm/appaiforge-portal/charts/traefik/templates/rbac/clusterrole.yaml
+    statement: >-
+      Subchart oficial do Traefik, sem alteração. O Traefik lê Secrets para os certificados TLS
+      e as credenciais dos middlewares.

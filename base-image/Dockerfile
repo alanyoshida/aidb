@@ -4,18 +4,26 @@ FROM python:3.12-slim
 
 ARG OPENCODE_VERSION=1.19.5
 ARG MCP_POSTGRES_VERSION=0.6.2
-ENV NODE_VERSION=22.14.0
+# Node 22 mais recente e o npm 11, que traz tar, glob, minimatch, pacote e sigstore sem os CVEs
+# altos e críticos do npm 10 embutido no Node (change fix-trivy-high-critical, D1).
+ENV NODE_VERSION=22.23.5
+ARG NPM_VERSION=11.21.3
 
 # node é necessário para os MCP servers (npx); default-libmysqlclient-dev
 # + pkg-config para o build do pacote python mysqlclient; libseccomp2/-dev
 # para o pyseccomp do supervisor (etapa 2 do confinamento, ADR em curso)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# `apt-get upgrade`: as correções de segurança do Debian publicadas depois da imagem python
+# (change fix-trivy-high-critical, D2).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
         curl xz-utils ca-certificates git bash procps \
         default-libmysqlclient-dev pkg-config gcc \
         libseccomp2 libseccomp-dev \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
-        | tar -xJ -C /usr/local --strip-components=1
+        | tar -xJ -C /usr/local --strip-components=1 \
+    && npm install -g --no-fund --no-audit "npm@${NPM_VERSION}" \
+    && npm cache clean --force
 
 # opencode em versão pinada (ADR 0004). O instalador grava em $HOME (ainda
 # /root nesta etapa do build); ADR 0018 reloca para fora de /root, que é
