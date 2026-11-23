@@ -7,3 +7,18 @@ docs
 openspec
 *.md
 .env
+
+# Segredos nunca entram no contexto de build (change add-ci-workflow, D10). A CI ainda checa a
+# imagem construída antes de publicar; isto evita que o segredo chegue lá.
+**/.env
+**/.env.*
+**/*.env
+!**/*.env.example
+**/*.pem
+**/*.key
+**/*.p12
+**/id_rsa*
+**/id_ed25519*
+**/.npmrc
+**/.pypirc
+**/.netrc

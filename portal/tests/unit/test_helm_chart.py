@@ -1,5 +1,6 @@
 """Chart Helm do portal para produção (change add-production-portal-install, tarefas 4.1 a 4.3).
-Renderiza com `helm template`; pula se o helm não estiver instalado."""
+Renderiza com `helm template`; pula se o helm não estiver instalado, salvo na CI (`CI` definido),
+onde a falta do helm é falha (change add-ci-workflow, D4)."""
 
 import os
 import shutil
@@ -11,7 +12,7 @@ import yaml
 CHART = os.path.join(os.path.dirname(__file__), "..", "..", "..", "deploy", "helm", "appaiforge-portal")
 PROD_VALUES = os.path.join(CHART, "values-production.yaml")
 
-pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm não instalado")
+pytestmark = pytest.mark.skipif(shutil.which("helm") is None and not os.environ.get("CI"), reason="helm não instalado")
 
 
 def _render(*args: str) -> subprocess.CompletedProcess:

@@ -1,0 +1,30 @@
+# Gitleaks do repositório (change add-ci-workflow, design D6). A CI roda `gitleaks git` no
+# histórico inteiro e falha em qualquer achado. Usa as regras padrão do gitleaks e só libera os
+# valores fictícios abaixo. Cada entrada casa com o valor inteiro, não com um prefixo genérico:
+# um token real no mesmo formato continua sendo pego.
+
+title = "aidb"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Valores fictícios conhecidos, em fixtures de teste e exemplos de documentação"
+# comparado com a linha inteira: algumas regras (gitlab-pat) casam só um prefixo do valor
+regexTarget = "line"
+# Os tokens no formato do GitLab vão como regex equivalente (quantificador no lugar dos zeros),
+# não como texto literal: assim este arquivo não contém um valor com cara de token, que a
+# proteção de push do GitHub barraria. Cada regex continua casando só com o valor fictício inteiro.
+regexes = [
+  # tokens de root e de release do GitLab descartável do E2E (deploy/e2e-gitlab/init.py,
+  # portal/tests/e2e_gitlab/gitlab.py): o GitLab local é criado com eles a cada subida
+  '''glpat-aidbE2Eroot0{9}1\b''',
+  '''glpat-aidbE2Erelease0{5}1\b''',
+  # token de API inventado do teste unitário do vínculo com o GitLab
+  # (portal/tests/unit/test_git_remote_config.py)
+  '''glpat-segredo-de-teste-12[3]\b''',
+  # senha de banco inventada do teste unitário de conexões (portal/tests/unit/test_connections.py)
+  '''sup3r-senha-do-banco''',
+  # placeholder dos exemplos de curl (README.md, docs/llm-e-broker.md)
+  '''Bearer SUA_CHAVE''',
+]

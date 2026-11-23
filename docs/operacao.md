@@ -191,7 +191,27 @@ O portal, o chart e as imagens padrão dos sistemas levam uma versão só, a do 
    - `version` e `appVersion` do `Chart.yaml`;
    - `image.tag` de `values.yaml` e de `values-production.yaml`;
    - os comandos e as tabelas dos docs.
-3. Abra a PR e faça o merge.
+3. Abra a PR, espere a CI ficar verde no último commit e faça o merge.
 4. Publique a release no merge commit: `gh release create v<versão> --target <merge commit> --notes-file <notas>`.
 
    Se as imagens dos sistemas mudaram de tag, as notas dizem como reconstruí-las (passo 3 de [Atualizar o portal](#5-atualizar-o-portal)).
+5. A release publicada dispara o job `publicar` da CI, que envia as três imagens ao GHCR. Confira em *Actions* e em *Packages* do repositório.
+
+### Imagens no GitHub Container Registry
+
+Cada release publica, com as tags `<versão>` e `latest`:
+- `ghcr.io/alanyoshida/appaiforge/portal` (portal e broker);
+- `ghcr.io/alanyoshida/appaiforge/base`;
+- `ghcr.io/alanyoshida/appaiforge/claude-code`.
+
+A publicação só acontece se os testes, as specs, o chart e a busca de segredos passarem, e se a versão da tag for igual à do `pyproject.toml`. Antes do envio, cada imagem passa pela checagem de segredos ([Segurança](seguranca.md#nenhum-segredo-nas-imagens)). Branches e PRs só constroem e checam, sem publicar.
+
+- **Release antiga, de antes da CI:** dispare a publicação a partir da `main`, com `gh workflow run ci.yml --ref main -f tag=v1.11.0`. O código da imagem vem da tag. O script e as configurações de checagem vêm da `main`.
+- **Pacotes privados:** os pacotes nascem privados. Para puxar sem login, abra cada pacote em *Packages*, depois *Package settings*, e mude a visibilidade para pública. Com eles privados, faça `docker login ghcr.io` com um token que tenha `read:packages`.
+- **Usar as imagens do GHCR.** Os padrões do portal e do chart continuam com os nomes locais (`appaiforge/<nome>:<versão>`). Para usar as do GHCR:
+  - **compose:** `APPAIFORGE_BASE_IMAGE=ghcr.io/alanyoshida/appaiforge/base:<versão>` e `APPAIFORGE_CLAUDE_CODE_IMAGE=ghcr.io/alanyoshida/appaiforge/claude-code:<versão>`. Ou puxe e dê o nome local:
+    ```bash
+    docker pull ghcr.io/alanyoshida/appaiforge/base:<versão>
+    docker tag ghcr.io/alanyoshida/appaiforge/base:<versão> appaiforge/base:<versão>
+    ```
+  - **chart:** `--set image.repository=ghcr.io/alanyoshida/appaiforge/portal`, `--set portal.baseImage=ghcr.io/alanyoshida/appaiforge/base:<versão>` e `--set portal.claudeCodeImage=ghcr.io/alanyoshida/appaiforge/claude-code:<versão>`. Com os pacotes privados, use também `imagePullSecrets` e `portal.systemImagePullSecrets`.

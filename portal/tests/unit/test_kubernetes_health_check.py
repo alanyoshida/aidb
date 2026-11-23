@@ -3,6 +3,7 @@ comando de verdade num shell, contra um servidor HTTP local. Achado no piloto: c
 fechada o teste antigo passava ("000" + "000"), e a implantação aprovou uma app morta."""
 
 import http.server
+import os
 import shutil
 import socket
 import subprocess
@@ -12,7 +13,8 @@ import pytest
 
 from appaiforge.drivers.kubernetes_driver import _agent_container, _health_check_command
 
-pytestmark = pytest.mark.skipif(shutil.which("curl") is None, reason="curl não instalado")
+# Na CI (`CI` definido), a falta do curl é falha, não pulo (change add-ci-workflow, D4).
+pytestmark = pytest.mark.skipif(shutil.which("curl") is None and not os.environ.get("CI"), reason="curl não instalado")
 
 
 def _free_port() -> int:

@@ -1,0 +1,17 @@
+# Contexto de build das imagens base e claude-code. Os Dockerfiles copiam pastas inteiras
+# (gated-mcp, dbproxy, httpproxy, afsupervisor, claude-code-shim), então segredos e caches
+# esquecidos nelas entrariam na imagem (change add-ci-workflow, D10).
+**/__pycache__
+**/.pytest_cache
+**/.env
+**/.env.*
+**/*.env
+!**/*.env.example
+**/*.pem
+**/*.key
+**/*.p12
+**/id_rsa*
+**/id_ed25519*
+**/.npmrc
+**/.pypirc
+**/.netrc
