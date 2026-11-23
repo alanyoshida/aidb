@@ -22,6 +22,11 @@ spec:
         app.kubernetes.io/component: portal
     spec:
       serviceAccountName: {{ include "appaiforge-portal.serviceAccountName" . }}
+      # Contexto de segurança restrito (change fix-trivy-high-critical, D4). O portal continua
+      # rodando com o usuário da imagem; trocar para não-root é outra change.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -37,6 +42,14 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           workingDir: /app/portal
           command: ["alembic", "upgrade", "head"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           env:
             - name: POSTGRES_PASSWORD
               valueFrom:
@@ -57,6 +70,11 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           env:
             # Precisa vir antes de APPAIFORGE_DATABASE_URL: a interpolação
             # $(POSTGRES_PASSWORD) do Kubernetes só resolve env vars já
@@ -237,6 +255,17 @@ spec:
             # add-system-git-remote): cache reconstruível, só do portal.
             - name: git-relays
               mountPath: /git-relays
+            # Raiz somente leitura: o que o portal grava fora dos volumes acima.
+            # - /dynamic recebe a rota do portal para o Traefik do compose, gravada em todo startup
+            #   (edge.py); aqui ninguém a lê.
+            # - /workspaces é onde o harness fake (portal.harnessMode=fake) grava a app de exemplo.
+            #   O workspace real de cada sistema é a PVC dele, escrita por exec no Pod.
+            - name: tmp
+              mountPath: /tmp
+            - name: dynamic
+              mountPath: /dynamic
+            - name: workspaces-scratch
+              mountPath: /workspaces
           readinessProbe:
             httpGet:
               path: /api/health
@@ -259,6 +288,12 @@ spec:
         - name: configs-scratch
           emptyDir: {}
         - name: git-relays
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: dynamic
+          emptyDir: {}
+        - name: workspaces-scratch
           emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector:

@@ -2,7 +2,11 @@ FROM python:3.12-slim
 
 # openssh-client: o portal fala com o repositório remoto de cada sistema por SSH (change
 # add-system-git-remote); o container do sistema nunca recebe a chave.
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client && rm -rf /var/lib/apt/lists/*
+# `apt-get upgrade`: as correções de segurança do Debian publicadas depois da imagem python
+# (change fix-trivy-high-critical, D2).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends git openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

@@ -68,11 +68,13 @@ O workflow `.github/workflows/ci.yml` roda em cada push de qualquer branch, em P
 - **Testes de unidade como o uid 1000 na CI.** O portal dá o workspace dos sistemas ao uid do agente (1000) e roda o git deles como esse uid. Parte dos testes também sobe containers com `appaiforge/base:<versão>`. Por isso o job constrói a imagem base e roda os testes como um usuário de uid 1000, que é o ambiente em que a suíte passa na máquina de desenvolvimento. Rodando à mão como outro usuário, ou sem a imagem base, esses testes falham.
 - **Na CI, falta de ferramenta é falha.** Os testes do chart e o de health check do Kubernetes se pulam sem `helm` ou sem `curl` só fora da CI. Com `CI` definido, a falta vira falha, para a CI não ficar verde sem testar.
 - **Relatórios do trivy:** ficam na aba *Security → Code scanning* do repositório, um por categoria (`trivy-repo`, `trivy-portal`, `trivy-base`, `trivy-claude-code`). O log de cada job mostra também uma tabela com os achados altos e críticos.
+- **Achados altos e críticos.** Os que têm correção são corrigidos. Os de pacotes do Debian sem correção publicada continuam no relatório, e o `apt-get upgrade` dos Dockerfiles traz a correção no primeiro build depois que o Debian a publicar. Os achados de configuração que ficam por desenho, ou que vêm do subchart do Traefik, estão em `.trivyignore.yaml`, cada um com o motivo e limitado ao arquivo onde aparece. Um achado novo do mesmo tipo em outro arquivo volta ao relatório.
 - **Fica de fora da CI:** a integração com Docker real (`tests/integration`), os E2E com browser e o kind. Rode-os à mão, como acima.
 - **Pinos de versão.** Subir uma versão é mudar os dois lugares:
   - Python 3.12 e uv 0.13.7: no workflow e nos Dockerfiles;
   - Helm 3.19.0: no workflow;
   - OpenSpec 1.15.0: no workflow e em `base-image/Dockerfile`;
+  - Node 22.23.5 e npm 11.21.3: nos dois Dockerfiles de `base-image/`;
   - gitleaks, trivy, Alpine e actions: pinados por digest ou commit no workflow e em `.github/scripts/scan-image-secrets.sh`.
 - **Exigir os checks antes do merge:** em *Settings → Branches* (ou *Rules*), crie uma regra para `main` que exige os checks `testes`, `specs`, `chart` e `segredos`. É uma configuração do repositório e não vem com o código.
 
