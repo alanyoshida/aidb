@@ -25,11 +25,11 @@ auth:
 image:
   # imagem do portal no seu registro, na versão que vai instalar
   repository: appaiforge/portal
-  tag: "1.12.0"
+  tag: "1.13.0"
 
 portal:
   installationRole: production
-  # imagem dos Pods de sistema no seu registro (vazio = appaiforge/base:1.12.0)
+  # imagem dos Pods de sistema no seu registro (vazio = appaiforge/base:1.13.0)
   baseImage: ""
   # Secret de pull dos Pods de sistema, se o registro for privado (criado no namespace dos sistemas)
   systemImagePullSecrets: []
