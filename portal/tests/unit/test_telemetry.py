@@ -3,6 +3,7 @@ determinismo de IDs (permite ao broker, processo separado, reconstruir o
 mesmo span pai sem chamada de rede nova) e o ciclo de vida do span raiz
 `agent.run` + spans filhos de ferramenta na fila de execução real."""
 
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -106,6 +107,23 @@ class _ToolHarness(HarnessPort):
         on_event(RunEvent("run_finished"))
 
 
+class _GatedToolHarness(_ToolHarness):
+    """Como `_ToolHarness`, mas a ferramenta só termina quando o teste solta `release`. Sem a
+    trava, a run termina logo depois de começar, e o span raiz pode ser aberto e encerrado antes
+    de o teste olhar `trace_contexts` (achado real: falhou na CI da release v1.12.0)."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def run(self, system: dict, session_id: str, prompt: str, on_event) -> None:
+        on_event(RunEvent("run_started"))
+        on_event(RunEvent("command_run", text="", meta={"tool": "bash", "command": "ls -la", "status": "running", "call_id": "c1"}))
+        if not self.release.wait(timeout=10.0):
+            raise TimeoutError("o teste não soltou a ferramenta")
+        on_event(RunEvent("command_run", text="total 0", meta={"tool": "bash", "command": "ls -la", "status": "completed", "call_id": "c1"}))
+        on_event(RunEvent("run_finished"))
+
+
 class _InterruptedToolHarness(HarnessPort):
     """Ferramenta aberta (pending) cuja run é interrompida antes de "completed"."""
 
@@ -125,14 +143,18 @@ class _InterruptedToolHarness(HarnessPort):
 
 
 def test_span_raiz_abre_e_encerra_com_a_run_e_cobre_o_tool_span(editor, fake_workspace, finished_spans):
-    queue = AgentQueue(_ToolHarness())
+    harness = _GatedToolHarness()
+    queue = AgentQueue(harness)
     system = create_system(editor, "Telemetria", "telemetria-tool")
     run = queue.enqueue(system.id, editor.id, "liste os arquivos", chat_session_id=None)
 
     deadline = time.time() + 5.0
     while run.id not in queue.trace_contexts and time.time() < deadline:
         time.sleep(0.01)
-    assert run.id in queue.trace_contexts, "span raiz não foi aberto no início da execução"
+    try:
+        assert run.id in queue.trace_contexts, "span raiz não foi aberto no início da execução"
+    finally:
+        harness.release.set()
 
     _wait_run(queue, run.id)
     assert run.id not in queue.trace_contexts, "span raiz não foi encerrado/removido ao fim da execução"

@@ -23,8 +23,8 @@ Docker, `deploy/docker-compose.yml`) não tem nenhuma relação com este chart.
   igual às imagens dos sistemas):
 
   ```bash
-  docker build -f deploy/portal.Dockerfile -t appaiforge/portal:1.11.0 .
-  kind load docker-image appaiforge/portal:1.11.0 --name appaiforge-dev
+  docker build -f deploy/portal.Dockerfile -t appaiforge/portal:1.12.0 .
+  kind load docker-image appaiforge/portal:1.12.0 --name appaiforge-dev
   ```
 
 ## Instalar
@@ -44,10 +44,10 @@ admin semeado em dev.
 
 | Valor | Default | O quê |
 |---|---|---|
-| `image.repository` / `image.tag` | `appaiforge/portal` / `1.11.0` | imagem do portal |
+| `image.repository` / `image.tag` | `appaiforge/portal` / `1.12.0` | imagem do portal |
 | `portal.harnessMode` | `fake` | `fake` = sem LLM real (dev/E2E); `opencode` = chat real |
-| `portal.baseImage` | `appaiforge/base:1.11.0` (padrão do portal) | imagem dos Pods de sistema |
-| `portal.claudeCodeImage` | `appaiforge/claude-code:1.11.0` (padrão do portal) | imagem dos sistemas com o perfil de agente `claude-code` |
+| `portal.baseImage` | `appaiforge/base:1.12.0` (padrão do portal) | imagem dos Pods de sistema |
+| `portal.claudeCodeImage` | `appaiforge/claude-code:1.12.0` (padrão do portal) | imagem dos sistemas com o perfil de agente `claude-code` |
 | `portal.systemImagePullSecrets` | `[]` | Secrets de pull dos Pods de sistema (registro privado), criados no namespace dos sistemas |
 | `portal.systemsNamespace` | namespace da release | onde o driver provisiona os Pods de sistema; a Role do portal é criada nele, e um namespace diferente do da release precisa existir antes do `helm install` |
 | `portal.seedDemoAdmin` | `true` | semeia `admin@appaiforge.local` / `admin123` (nunca em produção) |

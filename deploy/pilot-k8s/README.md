@@ -26,8 +26,8 @@ kubectl config use-context <seu-contexto>
 docker network connect --alias aidb-prod.pilot.test appaiforge-e2e-gitlab-net aidb-prod-control-plane
 
 # 3. Imagens: a base com um nome de registro, para exercitar portal.baseImage
-docker build -t appaiforge/base:1.11.0 -f base-image/Dockerfile base-image
-docker tag appaiforge/base:1.11.0 registro.pilot.test/appaiforge/base:1.4.2
+docker build -t appaiforge/base:1.12.0 -f base-image/Dockerfile base-image
+docker tag appaiforge/base:1.12.0 registro.pilot.test/appaiforge/base:1.4.2
 docker build -t appaiforge/portal:pilot -f deploy/portal.Dockerfile .
 kind load docker-image registro.pilot.test/appaiforge/base:1.4.2 appaiforge/portal:pilot --name aidb-prod
 ```

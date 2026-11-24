@@ -6,8 +6,8 @@ description: >-
   container-driver-kubernetes). Equivalente em Helm aos manifests aplicados
   manualmente em openspec/changes/archive/2026-11-14-deploy-portal-in-cluster/.
 type: application
-version: 1.11.0
-appVersion: "1.11.0"
+version: 1.12.0
+appVersion: "1.12.0"
 keywords:
   - appaiforge
   - aidb
