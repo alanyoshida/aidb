@@ -26,7 +26,7 @@ O portal de produção só serve sistemas só implantação: roda as versões ap
 
 ### 2a. Instalar por compose (driver Docker)
 
-1. Construa a imagem base dos sistemas no host: `docker build -t appaiforge/base:1.11.0 -f base-image/Dockerfile base-image`.
+1. Construa a imagem base dos sistemas no host: `docker build -t appaiforge/base:1.12.0 -f base-image/Dockerfile base-image`.
 2. Copie `deploy/production.env.example` para `deploy/production.env` e preencha:
    - **Obrigatórias:** `APPAIFORGE_SECRET_KEY`, `APPAIFORGE_DB_GATE_PROXY_SERVICE_TOKEN` e `APPAIFORGE_POSTGRES_PASSWORD`. O compose recusa subir sem elas.
    - **Admin de emergência:** `APPAIFORGE_BREAKGLASS_EMAIL` e `APPAIFORGE_BREAKGLASS_PASSWORD_HASH`. Ponha o hash entre aspas simples, porque ele tem `$`.
