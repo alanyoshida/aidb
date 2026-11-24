@@ -390,3 +390,47 @@ def test_sombra_drop_table_executa_e_e_auditado(monkeypatch):
     _run(go())
     assert bytes(up_writer.buf) == drop + quit_pkt
     assert audited == ["DROP TABLE clientes"]
+
+
+# ---------- schema_admin: DDL e DML em massa liberados só no listener do agente (add-db-manager-role) ----------
+
+def _pump_queries(ctx, *sqls, monkeypatch, audited):
+    async def fake_audit_shadow(c, sql, **kwargs):
+        audited.append((sql, kwargs))
+
+    monkeypatch.setattr(mysql_proxy.portal_gate, "audit_shadow", fake_audit_shadow)
+    packets = [_query_packet(0, s) for s in sqls]
+    quit_pkt = _quit_packet(0)
+    client_writer, up_writer = _MemoryWriter(), _MemoryWriter()
+
+    async def go():
+        await _pump_client_to_upstream(_reader_with(b"".join(packets) + quit_pkt), client_writer, up_writer,
+                                       ctx, "enforce")
+
+    _run(go())
+    return bytes(up_writer.buf), bytes(client_writer.buf), b"".join(packets), quit_pkt
+
+
+def test_schema_admin_agente_repassa_drop_e_delete_em_massa(monkeypatch):
+    audited: list = []
+    ctx = GateContext(system_id="s", origin="agente", allow_destructive=True)
+    up, client, packets, quit_pkt = _pump_queries(ctx, "DROP TABLE t", "DELETE FROM t",
+                                                  monkeypatch=monkeypatch, audited=audited)
+    assert up == packets + quit_pkt
+    assert client == b""
+    assert [kw.get("released") for _sql, kw in audited] == [True, True]
+
+
+def test_schema_admin_app_continua_recusando(monkeypatch):
+    audited: list = []
+    ctx = GateContext(system_id="s", origin="app", allow_destructive=False)
+    up, client, _packets, quit_pkt = _pump_queries(ctx, "DROP TABLE t", monkeypatch=monkeypatch, audited=audited)
+    assert up == quit_pkt
+    assert client[4:5] == b"\xff"
+
+
+def test_read_write_recusa_nas_duas_origens(monkeypatch):
+    for origin in ("agente", "app"):
+        up, _c, _p, quit_pkt = _pump_queries(GateContext(system_id="s", origin=origin), "DROP TABLE t",
+                                             "DELETE FROM t", monkeypatch=monkeypatch, audited=[])
+        assert up == quit_pkt

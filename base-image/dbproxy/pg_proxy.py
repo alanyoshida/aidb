@@ -296,6 +296,10 @@ async def _pump_client_to_upstream(client_reader: asyncio.StreamReader, client_w
     só então o `ReadyForQuery` libera o cliente — mesma recuperação de erro
     do protocolo estendido real do Postgres.
 
+    Exceção (change add-db-manager-role, D8): com `gate_ctx.allow_destructive` — só no
+    listener do agente de uma conexão em `schema_admin` —, as duas classes passam e ficam
+    auditadas como liberadas.
+
     `gate_mode="shadow"` (default, task 6.1): classifica e audita no portal
     (sem segurar nada — `bloqueada`/`confirmável` passam igual à `normal`);
     os globs de `permission.bash` e o `reply_gate` do harness continuam
@@ -323,6 +327,9 @@ async def _pump_client_to_upstream(client_reader: asyncio.StreamReader, client_w
                     if gate_mode != "enforce":
                         log(f"SOMBRA (seria {label.lower()}):", sql, "-", result.reason)
                         await portal_gate.audit_shadow(gate_ctx, sql, log=log)
+                    elif gate_ctx.allow_destructive:
+                        log(f"LIBERADA ({label.lower()}, schema_admin):", sql)
+                        await portal_gate.audit_shadow(gate_ctx, sql, log=log, released=True)
                     else:
                         log(f"{label}:", sql, "-", result.reason)
                         discarding = await _refuse(client_writer, tag, result.reason)

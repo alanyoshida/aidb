@@ -11,7 +11,7 @@ from ..auth_mode import is_oidc
 from ..config import get_settings
 from ..db import session_scope
 from ..models import System, User
-from ..services import audit, catalog, connections, directory, provider_keys
+from ..services import audit, catalog, directory, provider_keys
 from .common import get_current_user, redirect_to_login, notify, render_header
 
 _USER_TYPES = ["admin", "editor", "app_user"]
@@ -42,7 +42,6 @@ def register() -> None:
             keys_tab = ui.tab("Provedores de LLM", icon="vpn_key")
             audit_tab = ui.tab("Auditoria de gestão", icon="history")
             guidelines_tab = ui.tab("Guidelines", icon="description")
-            health_tab = ui.tab("Conexões degradadas", icon="warning")
         with ui.tab_panels(tabs, value=usuarios_tab).classes("w-full"):
             with ui.tab_panel(usuarios_tab):
                 _users_panel(user)
@@ -54,8 +53,6 @@ def register() -> None:
                 _audit_panel()
             with ui.tab_panel(guidelines_tab):
                 _guidelines_panel(user)
-            with ui.tab_panel(health_tab):
-                _degraded_connections_panel()
 
 
 def _users_panel(user: User) -> None:
@@ -82,6 +79,8 @@ def _users_panel(user: User) -> None:
                         )
                         if row["break_glass"]:
                             ui.badge("break-glass").props("color=negative data-testid=user-breakglass")
+                        if row["db_manager"]:
+                            ui.badge("DB Manager").props("color=primary data-testid=user-db-manager")
                     if oidc_mode:
                         ui.label(_last_login(row["last_login_at"])).classes("text-xs text-gray-500").props(
                             "data-testid=user-last-login"
@@ -95,6 +94,10 @@ def _users_panel(user: User) -> None:
                     with ui.row().classes("gap-2"):
                         ui.button("Editar tipo", icon="badge", on_click=lambda e=email, t=utype: open_type_dialog(e, t)).props("dense outline data-testid=user-edit-type")
                         ui.button("Desativar" if active else "Ativar", icon="toggle_off" if active else "toggle_on", on_click=lambda e=email, a=active: toggle_active(e, a)).props("dense outline data-testid=user-toggle-active")
+                        ui.button(
+                            "Retirar DB Manager" if row["db_manager"] else "Tornar DB Manager", icon="storage",
+                            on_click=lambda e=email, d=row["db_manager"]: toggle_db_manager(e, d),
+                        ).props("dense outline data-testid=user-toggle-db-manager")
                         ui.button("Excluir", icon="delete", on_click=lambda e=email: ask_delete(e)).props("dense outline color=negative data-testid=user-delete")
 
     with ui.dialog() as dialog, ui.card().classes("w-96"):
@@ -102,11 +105,16 @@ def _users_panel(user: User) -> None:
         email = ui.input("E-mail").classes("w-full").props("data-testid=new-user-email")
         password = ui.input("Senha", password=True).classes("w-full").props("data-testid=new-user-password")
         utype = ui.select(_USER_TYPES, value="app_user", label="Tipo").classes("w-full").props("data-testid=new-user-type")
+        new_db_manager = ui.checkbox("DB Manager (gere o catálogo de bancos de dados)").props(
+            "data-testid=new-user-db-manager"
+        )
         feedback = ui.label("").classes("text-sm")
 
         def create() -> None:
             try:
-                directory.create_user_as_admin(email.value, password.value, utype.value, actor=user)
+                directory.create_user_as_admin(
+                    email.value, password.value, utype.value, actor=user, db_manager=bool(new_db_manager.value),
+                )
             except Exception as exc:
                 feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"falha: {exc}")
                 return
@@ -122,6 +130,7 @@ def _users_panel(user: User) -> None:
         email.set_value("")
         password.set_value("")
         utype.set_value("app_user")
+        new_db_manager.set_value(False)
         feedback.set_text("")
         dialog.open()
 
@@ -149,6 +158,10 @@ def _users_panel(user: User) -> None:
         directory.set_user_active(target_email, not active, actor=user)
         refresh()
 
+    def toggle_db_manager(target_email: str, current: bool) -> None:
+        directory.set_db_manager(target_email, not current, user)
+        refresh()
+
     delete_target: dict = {"email": None}
 
     with ui.dialog() as delete_dialog, ui.card().classes("w-96"):
@@ -173,8 +186,8 @@ def _users_panel(user: User) -> None:
 
     if oidc_mode:
         ui.label(
-            "Usuários, tipos e desativação são geridos pelo IdP (SSO). Aqui aparecem os que já "
-            "entraram no portal."
+            "Usuários, tipos, DB Managers e desativação são geridos pelo IdP (SSO). Aqui aparecem "
+            "os que já entraram no portal."
         ).classes("text-sm text-gray-600 mb-3").props("data-testid=users-managed-by-idp")
     else:
         ui.button("Novo usuário", icon="add", on_click=open_create_dialog).classes("mb-3")
@@ -606,34 +619,3 @@ def _guidelines_panel(user: User) -> None:
         feedback.classes("text-green-600 text-sm").set_text(f"guidelines v{version} salvas")
 
     ui.button("Salvar", icon="save", on_click=save).props("data-testid=save-guidelines mx-4")
-
-
-def _degraded_connections_panel() -> None:
-    """Conexões degradadas em todos os sistemas (spec db-connection-health)."""
-    ui.label("Conexões degradadas").classes("text-xl font-bold m-4")
-    ui.label("Conexões de banco com falha de conectividade detectada pelo reconciliador.").classes(
-        "text-sm text-gray-500 m-4"
-    )
-    box = ui.column().classes("w-full max-w-4xl gap-2").props("data-testid=degraded-connections-box")
-
-    def refresh() -> None:
-        box.clear()
-        items = connections.list_degraded_connections()
-        with box:
-            if not items:
-                ui.label("Nenhuma conexão degradada no momento.").classes(
-                    "text-gray-500 text-sm"
-                ).props("data-testid=no-degraded-connections")
-                return
-            for item in items:
-                with ui.card().classes("w-full").props(f"data-testid=degraded-conn:{item['system_slug']}:{item['name']}"):
-                    with ui.row().classes("items-center gap-2"):
-                        ui.icon("warning").classes("text-red-500")
-                        ui.label(item["system_name"]).classes("font-semibold")
-                        ui.label(f"/ {item['name']}").classes("text-gray-600")
-                    ui.label(
-                        f"{item['kind']} · {item['host']}"
-                    ).classes("text-sm text-gray-500")
-
-    refresh()
-    ui.timer(30.0, refresh)

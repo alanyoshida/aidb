@@ -290,3 +290,119 @@ def sem_aviso_renomear():
     from appaiforge.services.directory import rename_warning
 
     assert rename_warning() is None
+
+
+# --- Capacidade de DB Manager (change add-db-manager-role) ---
+
+def _reload(email: str):
+    from sqlalchemy import select
+
+    from appaiforge.db import session_scope
+    from appaiforge.models import User
+
+    with session_scope() as s:
+        user = s.execute(select(User).where(User.email == email)).scalar_one()
+        s.expunge(user)
+        return user
+
+
+@given(parsers.parse('um usuário do tipo "{user_type}" que é DB Manager'))
+def usuario_db_manager(clean_db, user_type):
+    from appaiforge.db import session_scope
+    from appaiforge.models import User
+
+    user = _mk(f"{user_type.replace('_', '')}-dba@vis.local", user_type)
+    with session_scope() as s:
+        s.get(User, user.id).db_manager = True
+    _ctx["user"] = _reload(user.email)
+
+
+@then("ele pode gerir o catálogo de conexões")
+def pode_gerir_catalogo():
+    from appaiforge.rbac import can_manage_catalog
+
+    assert can_manage_catalog(_ctx["user"])
+
+
+@then("ele não pode gerir o catálogo de conexões")
+def nao_pode_gerir_catalogo():
+    from appaiforge.rbac import can_manage_catalog
+
+    assert not can_manage_catalog(_ctx["user"])
+
+
+@then("ele não pode usar o chat de geração")
+def nao_pode_chat():
+    from appaiforge.rbac import can_chat
+
+    assert not can_chat(_ctx["user"])
+
+
+@given(parsers.parse('um admin no modo local e um usuário "{email}" do tipo "{user_type}"'))
+def admin_e_usuario(clean_db, email, user_type):
+    _ctx.clear()
+    _ctx["admin"] = _mk("boss@t.local", "admin")
+    _mk(email, user_type)
+
+
+@when(parsers.parse('o admin marca "{email}" como DB Manager'))
+def admin_marca(email):
+    from appaiforge.services import directory
+
+    directory.set_db_manager(email, True, _ctx["admin"])
+
+
+@when(parsers.parse('o admin retira de "{email}" a capacidade de DB Manager'))
+def admin_retira(email):
+    from appaiforge.services import directory
+
+    directory.set_db_manager(email, False, _ctx["admin"])
+
+
+@then(parsers.parse('"{email}" pode gerir o catálogo e continua do tipo "{user_type}"'))
+def pode_e_continua(email, user_type):
+    from appaiforge.rbac import can_manage_catalog
+
+    user = _reload(email)
+    assert can_manage_catalog(user) and user.type.value == user_type
+
+
+@then(parsers.parse('"{email}" não pode gerir o catálogo'))
+def nao_pode_mais(email):
+    from appaiforge.rbac import can_manage_catalog
+
+    assert not can_manage_catalog(_reload(email))
+
+
+@then(parsers.parse('"{email}" não consegue conceder a capacidade a outro usuário'))
+def nao_concede(email):
+    from appaiforge.services import directory
+
+    _mk("outro@t.local", "editor")
+    with pytest.raises(PermissionError):
+        directory.set_db_manager("outro@t.local", True, _reload(email))
+
+
+@given("um usuário que entrou pelo IdP com o papel de DB Manager")
+def usuario_idp_dba():
+    from appaiforge.models import UserType
+    from appaiforge.oidc import upsert_shadow_user
+
+    upsert_shadow_user("sub-dba", "dba@corp.example", UserType.editor, [], db_manager=True)
+
+
+@then("a lista de usuários mostra que ele é DB Manager")
+def lista_mostra_dba():
+    from appaiforge.services import directory
+
+    rows = {u["email"]: u for u in directory.list_users_overview()}
+    assert rows["dba@corp.example"]["db_manager"] is True
+
+
+@then("o admin não consegue conceder nem retirar a capacidade")
+def admin_nao_concede_oidc():
+    from appaiforge.services import directory
+
+    for value in (True, False):
+        with pytest.raises(directory.ManagedByIdp):
+            directory.set_db_manager("dba@corp.example", value, _ctx["admin"])

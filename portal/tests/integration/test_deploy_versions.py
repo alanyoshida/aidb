@@ -201,7 +201,7 @@ def test_versao_que_nao_sobe_volta_para_a_anterior(prod, git_ssh_server):
 def test_manifesto_confere_as_conexoes(prod, git_ssh_server):
     from appaiforge import deploy
     from appaiforge.db import session_scope
-    from appaiforge.models import DbConnection
+    from appaiforge.models import DbConnection, DbConnectionGrant
 
     system, owner = prod
     manifest = json.dumps({"version": 1, "connections": [{"name": "vendas", "kind": "postgres"}]})
@@ -214,9 +214,14 @@ def test_manifesto_confere_as_conexoes(prod, git_ssh_server):
     assert missing["status"] == "failed" and "vendas" in missing["detail"]
     assert _probe(system) == "SEM-MANIFESTO"
 
+    # conexão do catálogo ativa no sistema com o alias exigido (change add-db-manager-role)
     with session_scope() as s:
-        s.add(DbConnection(system_id=system.id, name="vendas", kind="postgres", host="db", port=5432,
-                           database="vendas", username="u", password_encrypted="x"))
+        conn = DbConnection(name="vendas (catálogo)", kind="postgres", host="db", port=5432,
+                            database="vendas", username="u", password_encrypted="x")
+        s.add(conn)
+        s.flush()
+        s.add(DbConnectionGrant(connection_id=conn.id, system_id=system.id, max_mode="read_write",
+                                mode="read_write", active=True, alias="vendas", alias_key="VENDAS"))
     complete = deploy.deploy(system, "v1.1.0", actor=owner)
     assert complete["status"] == "succeeded" and complete["detail"] == ""
 

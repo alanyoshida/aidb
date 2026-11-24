@@ -72,7 +72,7 @@ def _wait_dbgate_port_ready(container, port: int, deadline_s: float = 20) -> Non
     raise AssertionError(f"proxy de gate de banco não respondeu em {port} a tempo")
 
 
-def test_agente_sandboxed_alcanca_o_proxy_mas_nao_o_postgres_real(system, docker_env, live_pg):
+def test_agente_sandboxed_alcanca_o_proxy_mas_nao_o_postgres_real(system, docker_env, live_pg, register_connection):
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
     from appaiforge.models import ExecutionMode
@@ -88,7 +88,7 @@ def test_agente_sandboxed_alcanca_o_proxy_mas_nao_o_postgres_real(system, docker
     gateway = _gateway_ip(get_settings().docker_network)
 
     provision_system(system)
-    connections.register_connection(
+    register_connection(
         system, "vendas", gateway, live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"],
     )
     _wait_sidecar_running(system.slug)

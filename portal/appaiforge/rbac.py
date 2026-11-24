@@ -11,6 +11,12 @@ def can_create_systems(user: User) -> bool:
     return user.type in (UserType.editor, UserType.admin)
 
 
+def can_manage_catalog(user: User) -> bool:
+    """Catálogo de conexões e autorizações por sistema (change add-db-manager-role, D1):
+    admin ou quem tem a capacidade de DB Manager, qualquer que seja o tipo global."""
+    return user.type == UserType.admin or bool(getattr(user, "db_manager", False))
+
+
 def can_chat(user: User) -> bool:
     return user.type in (UserType.editor, UserType.admin)
 

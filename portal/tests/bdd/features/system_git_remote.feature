@@ -94,3 +94,24 @@ Feature: Vínculo do sistema com um repositório git remoto
     Given um sistema vinculado ao repositório remoto
     When o editor desativa o vínculo e um novo checkpoint é criado
     Then nada novo chega ao remoto
+
+  # --- Manifesto de conexões pelo alias (change add-db-manager-role) ---
+
+  Scenario: Manifesto acompanha o checkpoint
+    Given um sistema vinculado ao repositório remoto
+    And as conexões ativas "vendas" (postgres) e "estoque" (mysql) no sistema
+    When um checkpoint é criado com o manifesto de conexões
+    Then o manifesto no remoto lista "estoque" (mysql) e "vendas" (postgres)
+
+  Scenario: Nenhuma credencial no manifesto
+    Given um sistema vinculado ao repositório remoto
+    And as conexões ativas "vendas" (postgres) e "estoque" (mysql) no sistema
+    When um checkpoint é criado com o manifesto de conexões
+    Then o manifesto no remoto não tem endereço, usuário nem nome do catálogo
+
+  Scenario: Conexão não ativada fica fora
+    Given um sistema vinculado ao repositório remoto
+    And as conexões ativas "vendas" (postgres) e "estoque" (mysql) no sistema
+    And a conexão "rascunho" autorizada e não ativada no sistema
+    When um checkpoint é criado com o manifesto de conexões
+    Then o manifesto no remoto lista "estoque" (mysql) e "vendas" (postgres)

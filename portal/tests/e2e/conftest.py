@@ -40,7 +40,8 @@ DELETE FROM checkpoints WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM token_usage WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM agent_runs WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM chat_sessions WHERE system_id IN (SELECT id FROM _e2e_systems);
-DELETE FROM db_connections WHERE system_id IN (SELECT id FROM _e2e_systems);
+DELETE FROM system_connection_notices WHERE system_id IN (SELECT id FROM _e2e_systems);
+DELETE FROM db_connection_grants WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM allowed_domains WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM system_groups WHERE system_id IN (SELECT id FROM _e2e_systems);
 DELETE FROM group_members WHERE user_id IN (SELECT id FROM _e2e_users);
@@ -105,6 +106,11 @@ _LOCAL_RESET_SQL = _RESET_SQL.replace(
     "WHERE owner_id IN (SELECT id FROM _e2e_users)\n"
     "  OR owner_id IN (SELECT id FROM users WHERE email = 'admin@appaiforge.local');",
     1,
+) + (
+    # Catálogo de conexões (change add-db-manager-role): o nome é único na instalação e a conexão
+    # não tem dono. Neste stack dedicado, as que ficaram sem autorização são sobras dos testes.
+    "DELETE FROM db_connections WHERE NOT EXISTS "
+    "(SELECT 1 FROM db_connection_grants g WHERE g.connection_id = db_connections.id);\n"
 )
 assert _LOCAL_RESET_SQL != _RESET_SQL
 

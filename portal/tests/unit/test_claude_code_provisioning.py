@@ -73,15 +73,14 @@ def test_sem_conexao_nao_grava_mcp_servers_json(editor, tmp_path):
     assert not (tmp_path / "mcp-servers.json").exists()
 
 
-def test_com_conexao_grava_mcp_servers_json_com_dsn_de_loopback(editor, tmp_path, target):
+def test_com_conexao_grava_mcp_servers_json_com_dsn_de_loopback(editor, tmp_path, target, active_connection):
     """Mesmo padrão de write_opencode_config: com o manifesto do sidecar, o
     comando do MCP aponta pro loopback (porta agent_port) sem credencial."""
     system = create_system(editor, "CC5", "cc-com-conexao", agent_profile="claude-code")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "vendas", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-        )
+    active_connection(
+        system, "vendas", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"],
+    )
     manifest = db_connections_manifest(system.id)
     write_claude_code_config(system, str(tmp_path), manifest)
 

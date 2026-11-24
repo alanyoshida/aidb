@@ -33,11 +33,19 @@ Sem emissor, client ou URL pública, o portal não sobe e diz qual variável fal
 
 - client confidencial com *standard flow*, PKCE `S256`, redirect `<PUBLIC_BASE_URL>/auth/callback`
   e post-logout redirect `<PUBLIC_BASE_URL>/login`;
-- realm roles `admin`, `editor`, `app_user` atribuídas pelo processo de aprovação de acesso;
+- realm roles `admin`, `editor`, `app_user` atribuídas pelo processo de aprovação de acesso, e
+  `db_manager` para quem gere o catálogo de bancos de dados;
 - mapper *Group Membership* com **Full group path desligado**, no ID token e no access token.
 
 **Papel**: vale o maior entre `admin` > `editor` > `app_user`. Sem nenhum deles o login é recusado
 ("acesso não concedido").
+
+**DB Manager**: o papel `db_manager`, no mesmo claim de papéis, concede a capacidade de gerir o
+catálogo de conexões de banco e as autorizações por sistema. Ele se soma ao tipo e não o define: o
+usuário precisa também de `admin`, `editor` ou `app_user`, e só `db_manager` não entra. Para criar
+o papel no Keycloak: *Realm roles* → *Create role* `db_manager`; para conceder: *Users* → usuário →
+*Role mapping* → *Assign role*. Retirar o papel vale na próxima revalidação, como os demais.
+No modo `local`, o admin concede a capacidade em *Administração* → *Usuários*.
 
 **Grupos**: o admin cadastra no portal um grupo com **exatamente** o nome que vem no token
 (maiúsculas contam) e o vincula a sistemas. Nomes do token sem grupo cadastrado não dão acesso. Ao
@@ -93,5 +101,6 @@ cd portal && uv run pytest tests/e2e_oidc
 ```
 
 Realm importado de [`deploy/keycloak/aidb-realm.json`](../deploy/keycloak/aidb-realm.json) (usuários
-`e2e-admin`, `e2e-editor`, `e2e-financeiro`, `e2e-vendas`, `e2e-semrole`, senha `e2e-senha`; console
+`e2e-admin`, `e2e-editor`, `e2e-dba` (editor e DB Manager), `e2e-financeiro`, `e2e-vendas`,
+`e2e-semrole`, senha `e2e-senha`; console
 admin `admin`/`admin`). Não rode junto com a suíte `tests/e2e` (stack 8081).

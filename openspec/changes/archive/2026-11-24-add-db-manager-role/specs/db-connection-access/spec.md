@@ -79,7 +79,7 @@ Ao ativar uma conexão, quem gerencia o sistema SHALL informar um alias, que ide
 
 #### Scenario: Alias pré-preenchido na primeira ativação
 - **WHEN** o dono abre a ativação de uma conexão nunca ativada no sistema
-- **THEN** o campo de alias vem preenchido com o nome da conexão no catálogo e pode ser alterado
+- **THEN** o campo de alias vem preenchido a partir do nome da conexão no catálogo, já no formato aceito (por exemplo, `Estoque legado` vira `estoque-legado`), e pode ser alterado
 
 #### Scenario: Alias em uso é recusado
 - **WHEN** o dono tenta ativar uma conexão com um alias que outra conexão ativa do mesmo sistema já usa, ou que geraria a mesma variável de ambiente

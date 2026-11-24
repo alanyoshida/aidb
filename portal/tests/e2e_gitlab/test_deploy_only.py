@@ -24,14 +24,20 @@ PYPROJECT = '[project]\nname = "app"\nversion = "0.1.0"\nrequires-python = ">=3.
 LOCK = ('version = 1\nrequires-python = ">=3.9"\n\n[[package]]\nname = "app"\nversion = "0.1.0"\n'
         'source = { virtual = "." }\n')
 
+# Conexão do catálogo já autorizada e ativa com o alias "vendas" (change add-db-manager-role): é o
+# alias que o manifesto grava e o deploy confere.
 _ADD_CONNECTION = """
 from appaiforge.db import session_scope
-from appaiforge.models import DbConnection, System
+from appaiforge.models import DbConnection, DbConnectionGrant, System
 from sqlalchemy import select
 with session_scope() as s:
     sid = s.execute(select(System.id).where(System.slug == {slug!r})).scalar_one()
-    s.add(DbConnection(system_id=sid, name="vendas", kind="postgres", host="db-{where}", port=5432,
-                       database="vendas", username="app", password_encrypted="x"))
+    conn = DbConnection(name="vendas ({slug})", kind="postgres", host="db-{where}", port=5432,
+                        database="vendas", username="app", password_encrypted="x")
+    s.add(conn)
+    s.flush()
+    s.add(DbConnectionGrant(connection_id=conn.id, system_id=sid, max_mode="read_write", mode="read_write",
+                            active=True, alias="vendas", alias_key="VENDAS"))
 """
 
 _CURRENT = """

@@ -100,3 +100,52 @@ def test_rename_group_nome_duplicado(admin):
     directory.create_group("b", actor=admin)
     with pytest.raises(directory.NameTaken):
         directory.rename_group("b", "a", admin)
+
+# --- Capacidade de DB Manager (change add-db-manager-role, task 2.2) ---
+
+def _db_managers() -> dict:
+    return {u["email"]: u["db_manager"] for u in directory.list_users_overview()}
+
+
+def test_admin_concede_e_retira_db_manager(admin):
+    u = auth.create_user("dba@adm.local", "pw", UserType.editor.value)
+    directory.set_db_manager(u.email, True, admin)
+    assert _db_managers()["dba@adm.local"] is True
+    assert _user_types()["dba@adm.local"] == "editor"  # o tipo não muda
+    directory.set_db_manager(u.email, False, admin)
+    assert _db_managers()["dba@adm.local"] is False
+    actions = [e["action"] for e in audit.list_global()]
+    assert "user.db_manager.grant" in actions and "user.db_manager.revoke" in actions
+
+
+def test_admin_cria_usuario_ja_db_manager(admin):
+    directory.create_user_as_admin("novo@adm.local", "pw", "app_user", admin, db_manager=True)
+    assert _db_managers()["novo@adm.local"] is True
+
+
+def test_nao_admin_nao_concede_db_manager(admin):
+    u = auth.create_user("alvo@adm.local", "pw", UserType.editor.value)
+    dba = auth.create_user("dba2@adm.local", "pw", UserType.editor.value)
+    directory.set_db_manager(dba.email, True, admin)
+    dba.db_manager = True
+    with pytest.raises(PermissionError):
+        directory.set_db_manager(u.email, True, dba)
+
+
+def test_db_manager_indisponivel_no_modo_oidc(admin, monkeypatch):
+    from appaiforge import auth_mode
+
+    u = auth.create_user("oidc@adm.local", "pw", UserType.editor.value)
+    monkeypatch.setattr(auth_mode, "current_mode", lambda: "oidc")
+    with pytest.raises(directory.ManagedByIdp):
+        directory.set_db_manager(u.email, True, admin)
+
+
+def test_breakglass_nao_e_alteravel(admin):
+    from appaiforge.models import User
+
+    bg = auth.create_user("bg@adm.local", "pw", UserType.admin.value)
+    with session_scope() as s:
+        s.get(User, bg.id).break_glass = True
+    with pytest.raises(directory.ProtectedUser):
+        directory.set_db_manager(bg.email, True, admin)

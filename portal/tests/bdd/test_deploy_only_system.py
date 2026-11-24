@@ -201,6 +201,20 @@ def versao_com_manifesto(tag, name):
     release(_ctx["server"], tag, {**app_files("COM-MANIFESTO"), ".aidb/manifest.json": manifest})
 
 
+@given(parsers.parse('a conexão "{name}" autorizada para o sistema e ainda não ativada'))
+def conexao_autorizada_inativa(name):
+    from appaiforge.db import session_scope
+    from appaiforge.models import DbConnection, DbConnectionGrant
+
+    with session_scope() as s:
+        conn = DbConnection(name=name, kind="postgres", host="db", port=5432, database="vendas",
+                            username="app", password_encrypted="x")
+        s.add(conn)
+        s.flush()
+        s.add(DbConnectionGrant(connection_id=conn.id, system_id=_ctx["system"].id, max_mode="read_write",
+                                mode="read_write", active=False))
+
+
 @given(parsers.parse('o editor implantou "{tag}"'))
 def implantou(tag):
     assert deploy.deploy(_ctx["system"], tag, actor=_ctx["owner"])["status"] == "succeeded"

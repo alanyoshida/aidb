@@ -45,3 +45,42 @@ def test_build_tasks_ignora_kind_desconhecido():
 
 def test_build_tasks_sem_conexoes_devolve_lista_vazia():
     assert sidecar.build_tasks("sys-1", []) == []
+
+
+# --- schema_admin só no listener do agente (change add-db-manager-role, task 6.1) ---
+
+def _contexts(monkeypatch, connections):
+    ctxs = []
+
+    async def fake_serve(host, port, cfg, gate_ctx, gate_mode="shadow"):
+        ctxs.append(gate_ctx)
+
+    monkeypatch.setitem(sidecar._SERVE, "postgres", fake_serve)
+    monkeypatch.setitem(sidecar._SERVE, "mysql", fake_serve)
+    tasks = sidecar.build_tasks("sys-1", connections, "enforce")
+
+    async def go():
+        await asyncio.gather(*tasks)
+
+    _run(go())
+    return {(c.connection_name, c.origin): c.allow_destructive for c in ctxs}
+
+
+def test_schema_admin_libera_so_o_listener_do_agente(monkeypatch):
+    allowed = _contexts(monkeypatch, [
+        {"name": "ddl", "kind": "postgres", "dsn": "postgresql://u:p@h:5432/d", "agent_port": 1, "app_port": 2,
+         "mode": "schema_admin"},
+        {"name": "rw", "kind": "mysql", "dsn": "mysql://u:p@h:3306/d", "agent_port": 3, "app_port": 4,
+         "mode": "read_write"},
+    ])
+    assert allowed == {
+        ("ddl", "agente"): True, ("ddl", "app"): False,
+        ("rw", "agente"): False, ("rw", "app"): False,
+    }
+
+
+def test_modo_ausente_equivale_a_read_write(monkeypatch):
+    allowed = _contexts(monkeypatch, [
+        {"name": "antigo", "kind": "postgres", "dsn": "postgresql://u:p@h:5432/d", "agent_port": 1, "app_port": 2},
+    ])
+    assert allowed == {("antigo", "agente"): False, ("antigo", "app"): False}

@@ -211,7 +211,7 @@ def test_teto_de_sistemas_e_respeitado(docker_env, clean_db, monkeypatch):
             remove_system_containers(s1.slug)  # s2 nunca chegou a subir container (CapacityReached antes)
 
 
-def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
+def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg, register_connection):
     """Task 5.4 (parte estrutural): conexões -> MCP server + DATABASE_URL no container.
     Task 5.2: o valor do env é o DSN de loopback do sidecar, sem credencial."""
     import json
@@ -222,7 +222,7 @@ def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
     from appaiforge.services import connections
 
     provision_system(system)
-    connections.register_connection(
+    register_connection(
         system, "principal", live_pg["host"], live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"]
     )
     # register dispara recriação em thread: aguarda o container voltar com a nova config
@@ -256,7 +256,7 @@ def test_conexoes_viram_mcp_e_env_no_container(system, docker_env, live_pg):
     raise AssertionError(f"container não refletiu as conexões em 60s: {last_error}")
 
 
-def test_sidecar_sobe_junto_do_sistema_e_guarda_a_credencial_real(system, docker_env, live_pg):
+def test_sidecar_sobe_junto_do_sistema_e_guarda_a_credencial_real(system, docker_env, live_pg, register_connection):
     """Task 5.1: sidecar sobe no mesmo netns do sistema (`network_mode:
     container:<id>`), um por sistema, com as credenciais reais só no seu
     próprio env — nunca no do sistema (verificado no teste acima)."""
@@ -275,7 +275,7 @@ def test_sidecar_sobe_junto_do_sistema_e_guarda_a_credencial_real(system, docker
     with pytest.raises(docker_sdk.errors.NotFound):
         _client().containers.get(sidecar_name)
 
-    connections.register_connection(
+    register_connection(
         system, "principal", live_pg["host"], live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"]
     )
 
@@ -300,7 +300,7 @@ def test_sidecar_sobe_junto_do_sistema_e_guarda_a_credencial_real(system, docker
     assert live_pg["password"] in sidecar_env, "a credencial real deveria estar SÓ no sidecar"
 
 
-def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg):
+def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg, register_connection):
     """Task 5.4: editar a senha da conexão recria sidecar + sistema de forma
     idempotente, e a credencial NOVA (não a antiga) chega ao sidecar."""
     import time
@@ -310,7 +310,7 @@ def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg):
     from appaiforge.provisioning import dbgate_sidecar_name
     from appaiforge.services import connections
 
-    conn = connections.register_connection(
+    conn = register_connection(
         system, "principal", live_pg["host"], live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"]
     )
     sidecar_name = dbgate_sidecar_name(system.slug)
@@ -345,7 +345,7 @@ def test_troca_de_credencial_propaga_ao_sidecar(system, docker_env, live_pg):
 
     try:
         connections.update_connection(
-            system, conn.id, "principal", live_pg["host"], live_pg["port"], live_pg["database"],
+            conn["id"], conn["name"], live_pg["host"], live_pg["port"], live_pg["database"],
             live_pg["username"], password=nova_senha,
         )
 

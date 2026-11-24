@@ -150,7 +150,8 @@ def _active_run_id(system_id: str, s) -> str | None:
 
 
 def record_shadow_decision(
-    system_id: str, sql: str, *, origin: str, connection_name: str = "", enforced: bool = False
+    system_id: str, sql: str, *, origin: str, connection_name: str = "", enforced: bool = False,
+    released: bool = False,
 ) -> GateClass:
     """Audita uma statement que o proxy classificou, sem pendência humana
     (task 6.1; `enforced` fecha uma lacuna achada no roteiro de teste
@@ -164,11 +165,14 @@ def record_shadow_decision(
     enforce — bloqueada OU confirmável, as duas são recusadas na hora, sem
     segurar a conexão) antes de chamar isto — decision vira "bloqueada".
     Sem isso, uma statement recusada em enforce não deixava rastro nenhum
-    em `GateDecision`."""
+    em `GateDecision`.
+    `released=True` (change add-db-manager-role, D8): em enforce, a statement destrutiva passou
+    porque a conexão está em `schema_admin` no listener do agente — decision vira "liberada",
+    para o histórico mostrar toda DDL executada."""
     gate_class, reason = classify_sql(sql)
     with session_scope() as s:
         run_id = _active_run_id(system_id, s) if origin == "agente" else None
-    decision = "bloqueada" if enforced else "sombra"
+    decision = "liberada" if released else ("bloqueada" if enforced else "sombra")
     record_decision(
         system_id, sql, origin=origin, connection_name=connection_name,
         classification=gate_class, decision=decision, run_id=run_id,

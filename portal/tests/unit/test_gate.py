@@ -232,3 +232,35 @@ def test_record_shadow_decision_emite_span_db_query_so_quando_ha_run_ativo(gate_
     assert len(spans) == 1  # a de origem "app" (sem run ativo) não gera span
     assert spans[0].context.trace_id == telemetry.run_trace_id(run_id)
     assert spans[0].parent.span_id == telemetry.run_root_span_id(run_id)
+
+
+# ---------- schema_admin: DDL liberada fica no histórico (change add-db-manager-role, 6.3) ----------
+
+def test_ddl_liberada_fica_no_historico(gate_system):
+    gate_class = gate.record_shadow_decision(
+        gate_system.id, "DROP TABLE clientes_antiga", origin="agente", connection_name="vendas", released=True,
+    )
+    assert gate_class is gate.GateClass.BLOCKED
+    [entry] = gate.list_decisions(gate_system.id)
+    assert entry["decision"] == "liberada"
+    assert entry["classification"] == "bloqueada"
+    assert entry["sql"] == "DROP TABLE clientes_antiga" and entry["connection_name"] == "vendas"
+
+
+def test_statement_liberada_nao_avisa_o_chat_como_recusa(gate_system):
+    from appaiforge.agent_queue import RunBuffer, get_queue
+
+    editor = auth.create_user("lib-run@t.local", "pw", UserType.editor.value)
+    with session_scope() as s:
+        run = AgentRun(system_id=gate_system.id, user_id=editor.id, user_email=editor.email,
+                       status=RunStatus.running, prompt="p")
+        s.add(run)
+        s.flush()
+        run_id = run.id
+    buffer = RunBuffer()
+    get_queue().buffers[run_id] = buffer
+    try:
+        gate.record_shadow_decision(gate_system.id, "DROP TABLE t", origin="agente", released=True)
+        assert [e.kind for e in buffer.snapshot()] == []  # liberada não é recusa
+    finally:
+        get_queue().buffers.pop(run_id, None)

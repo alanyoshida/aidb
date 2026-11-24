@@ -36,6 +36,7 @@ import uuid
 
 import httpx
 import pytest
+from catalog_flow import activate, create_catalog_connection, grant, open_system_connections, pick
 
 pytestmark = pytest.mark.e2e
 
@@ -135,18 +136,22 @@ def _create_system(page, suffix: str) -> str:
     raise AssertionError("provisionamento não concluiu")
 
 
-def _register_vendas_connection(page) -> None:
-    page.get_by_role("tab", name="Conexões").click()
-    page.get_by_role("button", name="Nova conexão").click()
-    page.locator('[data-testid=conn-name]').wait_for(state="visible", timeout=30_000)
-    page.locator('[data-testid=conn-name]').fill("vendas")
-    page.locator('[data-testid=conn-host]').fill("postgres")
-    page.locator('[data-testid=conn-port]').fill("5432")
-    page.locator('[data-testid=conn-database]').fill("appaiforge2")
-    page.locator('[data-testid=conn-user]').fill("appaiforge")
-    page.locator('[data-testid=conn-password]').fill("appaiforge")
-    page.locator('[data-testid=save-connection]').click()
-    page.get_by_text("conexão cadastrada").wait_for(timeout=20_000)
+def _register_vendas_connection(page, slug: str, suffix: str, ceiling: str | None = None,
+                                mode: str | None = None) -> str:
+    """Catálogo (change add-db-manager-role): o admin cadastra o banco `appaiforge2` do stack e
+    autoriza para o sistema; o dono ativa com o alias `vendas`. Volta logado como o dono, na
+    aba Conexões do sistema. Devolve o nome da conexão no catálogo."""
+    editor_email = f"dbgate-e2e-{suffix}@e2e.local"
+    conn_name = f"vendas-gate-{suffix}"
+    _logout(page)
+    _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    create_catalog_connection(page, conn_name, "appaiforge2")
+    grant(page, conn_name, slug, ceiling)
+    _logout(page)
+    _login(page, editor_email, "pw-dbgate")
+    open_system_connections(page, slug)
+    activate(page, conn_name, "vendas", mode)
+    return conn_name
 
 
 def _psql(sql: str) -> None:
@@ -174,6 +179,43 @@ def _wait_sidecar_running(slug: str) -> None:
     raise AssertionError(f"sidecar {name} não subiu em 60s")
 
 
+def _sidecar_id(slug: str) -> str | None:
+    import docker as docker_sdk
+
+    try:
+        return _docker().containers.get(f"appaiforge-sys-{slug}-dbgate").id
+    except docker_sdk.errors.NotFound:
+        return None
+
+
+def _wait_sidecar_replaced(slug: str, old_id: str | None) -> None:
+    """Mudar o modo recria o container do sistema e o sidecar (design D7)."""
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        current = _sidecar_id(slug)
+        if current and current != old_id:
+            _wait_sidecar_running(slug)
+            return
+        time.sleep(1)
+    raise AssertionError("o sidecar não foi recriado depois da mudança de modo")
+
+
+def _sql_via_proxy(slug: str, port: int, sql: str):
+    """Executa `sql` de dentro do container do sistema contra uma porta de loopback do sidecar:
+    15400 é o listener do agente e 15401 o da app, na primeira conexão do manifesto."""
+    container = _docker().containers.get(f"appaiforge-sys-{slug}")
+    script = (
+        "import asyncio, asyncpg\n"
+        "async def main():\n"
+        f"    conn = await asyncpg.connect(host='127.0.0.1', port={port}, user='x', password='x', "
+        "database='appaiforge2')\n"
+        f"    print(await conn.execute({sql!r}))\n"
+        "    await conn.close()\n"
+        "asyncio.run(main())\n"
+    )
+    return container.exec_run(["python3", "-c", script])
+
+
 def _delete_via_proxy(slug: str):
     """Executa `DELETE FROM clientes` de dentro do container do sistema via
     `asyncpg` contra a porta de loopback do sidecar (origem `agente`, task
@@ -195,7 +237,7 @@ def _delete_via_proxy(slug: str):
 
 def test_confirmavel_em_enforce_e_recusada_direto_e_avisa_no_chat(enforce_portal, page, suffix):
     slug = _create_system(page, suffix)
-    _register_vendas_connection(page)
+    _register_vendas_connection(page, slug, suffix)
     _wait_sidecar_running(slug)
 
     _psql("DROP TABLE IF EXISTS clientes")
@@ -231,3 +273,38 @@ def test_confirmavel_em_enforce_e_recusada_direto_e_avisa_no_chat(enforce_portal
     page.get_by_role("tab", name="Auditoria").click()
     page.get_by_text("Gate de destrutivas").wait_for(timeout=30_000)
     page.get_by_text("DELETE FROM clientes").first.wait_for(timeout=30_000)
+
+
+def test_schema_admin_libera_ddl_so_para_o_agente(enforce_portal, page, suffix):
+    """change add-db-manager-role, task 6.5: com a conexão em `schema_admin` o agente executa
+    DDL e a app tem a mesma statement recusada; rebaixado o modo, o agente volta a ser recusado."""
+    slug = _create_system(page, suffix)
+    _register_vendas_connection(page, slug, suffix, ceiling="Leitura, escrita e DDL",
+                                mode="Leitura, escrita e DDL")
+    _wait_sidecar_running(slug)
+    table = f"ddl_{suffix}"
+    _psql(f"DROP TABLE IF EXISTS {table}")
+    _psql(f"CREATE TABLE {table} (id int)")
+
+    app_try = _sql_via_proxy(slug, 15401, f"DROP TABLE {table}")
+    assert app_try.exit_code != 0, app_try.output.decode()  # listener da app: recusada
+
+    agent_try = _sql_via_proxy(slug, 15400, f"DROP TABLE {table}")
+    assert agent_try.exit_code == 0, agent_try.output.decode()  # listener do agente: liberada
+
+    # o selo de DDL liberada aparece para o dono, e a decisão fica no histórico do gate
+    card = page.locator('[data-testid="conn-card:vendas-gate-%s"]' % suffix)
+    card.locator('[data-testid=ddl-since]').wait_for(timeout=10_000)
+    page.get_by_role("tab", name="Auditoria").click()
+    page.locator('[data-testid="gate-decision:liberada"]').first.wait_for(timeout=30_000)
+
+    # o dono rebaixa para leitura e escrita: o sidecar é recriado e o agente volta a ser recusado
+    old_sidecar = _sidecar_id(slug)
+    page.get_by_role("tab", name="Conexões").click()
+    card.locator('[data-testid=conn-change-mode]').click()
+    pick(page, "change-mode", "Leitura e escrita")
+    page.locator('[data-testid=confirm-change-mode]').click()
+    _wait_sidecar_replaced(slug, old_sidecar)
+    _psql(f"CREATE TABLE IF NOT EXISTS {table} (id int)")
+    again = _sql_via_proxy(slug, 15400, f"DROP TABLE {table}")
+    assert again.exit_code != 0, again.output.decode()

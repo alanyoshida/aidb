@@ -99,6 +99,13 @@ Feature: Sistema só implantação
     When o editor implanta "v1.0.0"
     Then a implantação é recusada listando "vendas" como faltante
 
+  Scenario: Conexão autorizada mas não ativada
+    Given um sistema só implantação ativo ligado ao repositório
+    And a conexão "vendas" autorizada para o sistema e ainda não ativada
+    And a versão "v1.0.0" na branch de destino exigindo a conexão "vendas"
+    When o editor implanta "v1.0.0"
+    Then a implantação é recusada listando "vendas" como faltante
+
   Scenario: Versão sem manifesto
     Given um sistema só implantação ativo ligado ao repositório
     And a versão "v1.0.0" na branch de destino com a app "VERSAO-1"

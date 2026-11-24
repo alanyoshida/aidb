@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Gate sobre toda statement do wire protocol
-O proxy SHALL extrair e classificar cada statement que atravessa a conexão com o classificador canônico: `normal` SHALL ser repassada; `bloqueada` e `confirmável` SHALL ser recusadas na hora, com erro de protocolo ao cliente, sem tocar o banco e sem segurar a conexão para uma decisão humana — tratamento idêntico para as duas classes (ver ADR 0023). Quando a conexão está ativa em modo `schema_admin`, o listener de origem agente SHALL repassar também as statements `bloqueada` e `confirmável`; o listener de origem app SHALL recusá-las em qualquer modo.
+O proxy SHALL classificar cada statement que atravessa a conexão com o classificador canônico e repassar as `normal`. As `bloqueada` e `confirmável` SHALL ser recusadas na hora, com erro de protocolo ao cliente, sem tocar o banco e sem esperar decisão humana (ADR 0023), salvo quando chegam pelo listener de origem agente de uma conexão ativa em modo `schema_admin`, que SHALL repassá-las.
 
 #### Scenario: DELETE em massa via arquivo é recusado direto, sem pedir decisão
 - **WHEN** o agente grava um arquivo `.sql` contendo `DELETE FROM clientes` e executa `psql -f arquivo.sql` apontando para o DSN de loopback de uma conexão que não está em modo `schema_admin`

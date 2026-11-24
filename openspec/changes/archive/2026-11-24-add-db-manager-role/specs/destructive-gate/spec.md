@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Gate do agente sobre SQL destrutivo
-O portal SHALL interceptar toda conexão a um banco cadastrado no data plane (proxy de wire protocol no caminho da conexão), classificar cada statement com o classificador canônico e responder automaticamente: `bloqueada` e `confirmável` SHALL ser recusadas sem intervenção humana, na hora, sem segurar a conexão; `normal` SHALL ser liberada sem atrito — independente de como a SQL foi emitida e do protocolo de permissão do agente. A única exceção é a conexão ativa em modo `schema_admin` no sistema: nela, statements `bloqueada` e `confirmável` emitidas pelo agente SHALL ser executadas; as emitidas pela app gerada SHALL continuar recusadas.
+O portal SHALL interceptar no data plane toda conexão a um banco cadastrado e classificar cada statement com o classificador canônico, independente de como a SQL foi emitida. `normal` SHALL ser liberada; `bloqueada` e `confirmável` SHALL ser recusadas na hora, sem intervenção humana, exceto as emitidas pelo agente numa conexão ativa em modo `schema_admin`, que SHALL ser executadas.
 
 #### Scenario: Agente pede TRUNCATE e é recusado automaticamente
 - **WHEN** uma conexão do container do sistema, ativa em modo `read_only` ou `read_write`, emite `TRUNCATE TABLE clientes`, por qualquer cliente (bash, MCP, script ou app)

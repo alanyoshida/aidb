@@ -130,3 +130,27 @@ def test_read_write_insert_ainda_bloqueado():
     result = _run(mod.read_query("INSERT INTO t VALUES (1)"))
     data = json.loads(result)
     assert "error" in data
+
+
+# --- schema_admin (change add-db-manager-role, task 6.4): ferramentas continuam só de leitura ---
+
+def test_schema_admin_continua_recusando_escrita_via_mcp():
+    import json
+
+    mod = _build_module("schema_admin")
+    for sql in ("DROP TABLE t", "INSERT INTO t VALUES (1)", "ALTER TABLE t ADD COLUMN c int"):
+        data = json.loads(_run(mod.read_query(sql)))
+        assert "error" in data
+        assert "bash" in data["error"]  # aponta o caminho certo para a DDL liberada
+
+
+def test_schema_admin_select_passa():
+    import json
+
+    mod = _build_module("schema_admin")
+    fake_conn = MagicMock()
+    fake_conn.is_closed.return_value = False
+    fake_conn.fetch = AsyncMock(return_value=[{"id": 1}])
+    mod._conn = fake_conn
+    data = json.loads(_run(mod.read_query("SELECT * FROM t")))
+    assert "error" not in data or "gate" not in data.get("error", "")

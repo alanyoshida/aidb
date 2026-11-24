@@ -3,7 +3,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Registro de toda ação de escrita de gestão
-O portal SHALL registrar cada ação de escrita da gestão (criar, editar, desativar, vincular, desvincular, remover ou excluir recursos do portal — sistemas, conexões, usuários, grupos, checkpoints e chaves de LLM) com autor, ação, recurso, alvo, sistema relacionado quando houver, detalhes e data. Para conexões de banco, isso SHALL incluir cadastrar, editar e excluir no catálogo, autorizar e revogar para um sistema, alterar o teto, ativar, desativar e alterar o modo de acesso vigente, além de conceder ou retirar a capacidade de DB Manager de um usuário.
+O portal SHALL registrar cada ação de escrita da gestão (criar, editar, desativar, vincular, desvincular, remover ou excluir sistemas, conexões, usuários, grupos, checkpoints e chaves de LLM) com autor, ação, recurso, alvo, sistema relacionado quando houver, detalhes e data. Nas conexões de banco, isso SHALL cobrir o catálogo, as autorizações e seus tetos, a ativação e o modo vigente, e a capacidade de DB Manager.
 
 #### Scenario: Ação de gestão é registrada
 - **WHEN** um admin exclui um grupo

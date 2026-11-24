@@ -343,3 +343,38 @@ def test_auth_login_no_modo_local_volta_para_o_formulario(clean_db, monkeypatch)
 def test_end_session_url_sem_idp(idp):
     idp.down = True
     assert oidc.end_session_url(encrypt_secret("x")) is None
+
+
+# --- Capacidade de DB Manager vinda do token (change add-db-manager-role, task 2.3) ---
+
+def test_editor_e_db_manager_no_token(idp, client):
+    r = _login(client, idp, _profile(roles=["editor", "db_manager"]))
+    p = auth.resolve_principal(r.cookies.get(auth.COOKIE_NAME))
+    assert p.type == UserType.editor and p.is_db_manager
+    with session_scope() as s:
+        assert s.execute(select(User)).scalar_one().db_manager is True
+
+
+def test_token_sem_o_papel_db_manager(idp, client):
+    r = _login(client, idp, _profile(roles=["editor"]))
+    p = auth.resolve_principal(r.cookies.get(auth.COOKIE_NAME))
+    assert p.type == UserType.editor and not p.is_db_manager
+
+
+def test_somente_db_manager_nao_entra(idp, client):
+    r = _login(client, idp, _profile(roles=["db_manager"]))
+    assert r.headers["location"] == "/login?erro=acesso_negado"
+    with session_scope() as s:
+        assert s.execute(select(DbSession)).first() is None
+
+
+def test_papel_db_manager_removido_vale_na_revalidacao(idp, client):
+    profile = _profile(roles=["editor", "db_manager"])
+    token = _logged(client, idp, profile)
+    assert auth.resolve_principal(token).is_db_manager
+    profile["roles"] = ["editor"]
+    _expire_revalidation(token)
+    p = auth.resolve_principal(token)
+    assert p is not None and p.type == UserType.editor and not p.is_db_manager
+    with session_scope() as s:
+        assert s.execute(select(User)).scalar_one().db_manager is False

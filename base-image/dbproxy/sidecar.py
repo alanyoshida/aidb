@@ -11,7 +11,10 @@ D4, atribuição de origem por listener separado. BigQuery não entra aqui:
 Manifesto (`APPAIFORGE_DB_CONNECTIONS`, uma entrada por conexão, JSON):
     {"name": "...", "kind": "postgres"|"mysql",
      "dsn": "postgresql://user:pass@host:port/db",
-     "agent_port": 15400, "app_port": 15401}
+     "agent_port": 15400, "app_port": 15401, "mode": "read_write"}
+
+`mode` (change add-db-manager-role, D8) é o modo vigente da conexão no sistema; ausente vale
+`read_write`. Só `schema_admin` muda algo aqui: libera DDL e DML em massa no listener do agente.
 
 As credenciais reais só existem neste env — o container do sistema recebe
 só os DSNs de loopback sem usuário/senha (task 5.2).
@@ -48,8 +51,12 @@ def build_tasks(system_id: str, connections: list[dict], gate_mode: str = "shado
             continue
         cfg = _UPSTREAM_CONFIG[kind].from_dsn(conn["dsn"])
         serve = _SERVE[kind]
+        schema_admin = conn.get("mode", "read_write") == "schema_admin"
         for origin, port in (("agente", conn["agent_port"]), ("app", conn["app_port"])):
-            gate_ctx = portal_gate.GateContext(system_id=system_id, origin=origin, connection_name=conn["name"])
+            gate_ctx = portal_gate.GateContext(
+                system_id=system_id, origin=origin, connection_name=conn["name"],
+                allow_destructive=schema_admin and origin == "agente",
+            )
             tasks.append(serve("127.0.0.1", port, cfg, gate_ctx, gate_mode))
     return tasks
 

@@ -335,243 +335,186 @@ def _render_configuration(system, user, name_label, breadcrumb_label, provider_l
 
 
 def _render_connections(system, user) -> None:
-    """Conexões de banco: lista + criar/editar/remover (spec db-connections)."""
+    """Conexões autorizadas para o sistema, na visão do dono (change add-db-manager-role, D10).
+
+    Quem gere o catálogo autoriza; quem gerencia o sistema ativa, escolhendo alias e modo até o
+    teto. Host, porta, banco e usuário não aparecem aqui (spec "Dados da conexão restritos a
+    quem gere o catálogo")."""
+    from .databases import MODE_LABELS, ddl_badge, kind_label, status_badge
+
     manage = can_manage_system(user, system)
-    ui.label("Bancos de dados que o agente e a app podem acessar").classes("text-sm text-gray-500 mb-2")
+    ui.label(
+        "Bancos que um DB Manager autorizou para este sistema. Só as conexões ativas chegam ao "
+        "agente e à app."
+    ).classes("text-sm text-gray-600 mb-2 max-w-3xl")
 
-    _KIND_OPTIONS = {"PostgreSQL": "postgres", "MySQL": "mysql", "BigQuery": "bigquery"}
-    _KIND_DEFAULT_PORT = {"postgres": 5432, "mysql": 3306, "bigquery": 0}
+    target: dict = {"grant": None}
 
-    with ui.dialog() as conn_dialog, ui.card().classes("w-96"):
-        ui.label("Nova conexão").classes("font-semibold text-lg")
-        ckind = ui.select(list(_KIND_OPTIONS.keys()), value="PostgreSQL", label="Tipo").classes("w-full").props("data-testid=conn-kind")
-        cname = ui.input("Nome").classes("w-full").props("data-testid=conn-name")
-
-        with ui.column().classes("w-full") as c_sql_fields:
-            chost = ui.input("Host").classes("w-full").props("data-testid=conn-host")
-            cport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=conn-port")
-            cdb = ui.input("Banco").classes("w-full").props("data-testid=conn-database")
-            cuser = ui.input("Usuário").classes("w-full").props("data-testid=conn-user")
-            cpass = ui.input("Senha", password=True).classes("w-full").props("data-testid=conn-password")
-
-        with ui.column().classes("w-full") as c_bq_fields:
-            cbq_project = ui.input("Project ID").classes("w-full").props("data-testid=conn-bq-project")
-            cbq_dataset = ui.input("Dataset").classes("w-full").props("data-testid=conn-bq-dataset")
-            cbq_sa_json = ui.textarea("Service Account JSON").classes("w-full").props("data-testid=conn-bq-sa-json")
-
-        cdesc = ui.input("Descrição (opcional)").classes("w-full").props("data-testid=conn-description")
-        caccess_mode = ui.select(
-            {"read_write": "Leitura e escrita", "read_only": "Somente leitura"},
-            value="read_write", label="Modo de acesso",
-        ).classes("w-full").props("data-testid=conn-access-mode")
-
-        c_bq_fields.set_visibility(False)
-        feedback = ui.label("").classes("text-sm")
-
-        def _on_kind_change(e) -> None:
-            kind_key = _KIND_OPTIONS.get(e.value, "postgres")
-            is_bq = kind_key == "bigquery"
-            c_sql_fields.set_visibility(not is_bq)
-            c_bq_fields.set_visibility(is_bq)
-            if not is_bq:
-                cport.set_value(_KIND_DEFAULT_PORT[kind_key])
-
-        # on_value_change entrega ValueChangeEventArguments (.value); `.on("update:model-value")`
-        # entregava GenericEventArguments, sem .value, e os campos do BigQuery nunca apareciam.
-        ckind.on_value_change(_on_kind_change)
-
-        def add_conn() -> None:
-            kind_key = _KIND_OPTIONS.get(ckind.value, "postgres")
-            if kind_key == "bigquery":
-                host, port, database, username, password = (
-                    cbq_project.value, 0, cbq_dataset.value, "", cbq_sa_json.value
-                )
-            else:
-                host = chost.value
-                port = int(cport.value or _KIND_DEFAULT_PORT[kind_key])
-                database, username, password = cdb.value, cuser.value, cpass.value
-            try:
-                connections.register_connection(
-                    system, cname.value, host, port, database, username, password, kind=kind_key, actor=user,
-                    description=cdesc.value or None, access_mode=caccess_mode.value or "read_write",
-                )
-            except connections.ConnectionFailed as exc:
-                feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
-                return
-            except connections.NameTaken:
-                feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"conexão '{cname.value}' já existe")
-                return
-            feedback.classes(remove="text-red-600", add="text-green-600").set_text("conexão cadastrada")
-            refresh_conns()
-            conn_dialog.close()
-
-        with ui.row().classes("w-full justify-end gap-2"):
-            ui.button("Cancelar", on_click=conn_dialog.close).props("flat")
-            ui.button("Testar e salvar", icon="check_circle", on_click=add_conn).props("data-testid=save-connection")
-
-    def open_conn_dialog() -> None:
-        ckind.set_value("PostgreSQL")
-        for field in (cname, chost, cdb, cuser, cpass, cbq_project, cbq_dataset, cbq_sa_json):
-            field.set_value("")
-        cdesc.set_value("")
-        caccess_mode.set_value("read_write")
-        cport.set_value(5432)
-        c_sql_fields.set_visibility(True)
-        c_bq_fields.set_visibility(False)
-        feedback.set_text("")
-        conn_dialog.open()
-
-    _CONN_STATUS_COLOR = {"healthy": "positive", "degraded": "negative", "unknown": "neutral"}
-    _CONN_STATUS_LABEL = {"healthy": "saudável", "degraded": "degradada", "unknown": "desconhecido"}
-    _KIND_LABEL = {"postgres": "PostgreSQL", "mysql": "MySQL", "bigquery": "BigQuery"}
-    edit_target: dict = {"id": None}
-
-    with ui.dialog() as edit_dialog, ui.card().classes("w-96"):
-        ui.label("Editar conexão").classes("font-semibold text-lg")
-        ekind = ui.select(list(_KIND_OPTIONS.keys()), value="PostgreSQL", label="Tipo").classes("w-full").props("data-testid=edit-conn-kind")
-        ename = ui.input("Nome").classes("w-full").props("data-testid=edit-conn-name")
-
-        with ui.column().classes("w-full") as e_sql_fields:
-            ehost = ui.input("Host").classes("w-full").props("data-testid=edit-conn-host")
-            eport = ui.number("Porta", value=5432).classes("w-full").props("data-testid=edit-conn-port")
-            edb = ui.input("Banco").classes("w-full").props("data-testid=edit-conn-database")
-            euser = ui.input("Usuário").classes("w-full").props("data-testid=edit-conn-user")
-            epass = ui.input("Nova senha (opcional)", password=True).classes("w-full").props("data-testid=edit-conn-password")
-
-        with ui.column().classes("w-full") as e_bq_fields:
-            ebq_project = ui.input("Project ID").classes("w-full").props("data-testid=edit-conn-bq-project")
-            ebq_dataset = ui.input("Dataset").classes("w-full").props("data-testid=edit-conn-bq-dataset")
-            ebq_sa_json = ui.textarea("Novo Service Account JSON (opcional)").classes("w-full").props("data-testid=edit-conn-bq-sa-json")
-            ebq_email = ui.label("").classes("text-xs text-gray-500")
-
-        edesc = ui.input("Descrição (opcional)").classes("w-full").props("data-testid=edit-conn-description")
-        eaccess_mode = ui.select(
-            {"read_write": "Leitura e escrita", "read_only": "Somente leitura"},
-            value="read_write", label="Modo de acesso",
-        ).classes("w-full").props("data-testid=edit-conn-access-mode")
-
-        e_bq_fields.set_visibility(False)
-        edit_feedback = ui.label("").classes("text-sm")
-
-        def _on_ekind_change(e) -> None:
-            kind_key = _KIND_OPTIONS.get(e.value, "postgres")
-            is_bq = kind_key == "bigquery"
-            e_sql_fields.set_visibility(not is_bq)
-            e_bq_fields.set_visibility(is_bq)
-            if not is_bq:
-                eport.set_value(_KIND_DEFAULT_PORT[kind_key])
-
-        ekind.on_value_change(_on_ekind_change)
-
-        def save_edit() -> None:
-            kind_key = _KIND_OPTIONS.get(ekind.value, "postgres")
-            if kind_key == "bigquery":
-                host, port, database = ebq_project.value, 0, ebq_dataset.value
-                username, password = "", ebq_sa_json.value or None
-            else:
-                host = ehost.value
-                port = int(eport.value or _KIND_DEFAULT_PORT[kind_key])
-                database, username, password = edb.value, euser.value, epass.value or None
-            try:
-                connections.update_connection(
-                    system, edit_target["id"], ename.value, host, port,
-                    database, username, password=password, kind=kind_key, actor=user,
-                    description=edesc.value or None, access_mode=eaccess_mode.value or "read_write",
-                )
-            except connections.ConnectionFailed as exc:
-                edit_feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"teste de conexão falhou: {exc}")
-                return
-            except connections.NameTaken:
-                edit_feedback.classes(remove="text-green-600", add="text-red-600").set_text(f"conexão '{ename.value}' já existe")
-                return
-            edit_feedback.classes(remove="text-red-600", add="text-green-600").set_text("conexão atualizada")
-            refresh_conns()
-            edit_dialog.close()
-
-        with ui.row().classes("w-full justify-end gap-2"):
-            ui.button("Cancelar", on_click=edit_dialog.close).props("flat")
-            ui.button("Testar e salvar", icon="check_circle", on_click=save_edit).props("data-testid=save-connection-edit")
-
-    def open_edit_dialog(c: dict) -> None:
-        edit_target["id"] = c["id"]
-        kind = c.get("kind", "postgres")
-        ekind.set_value(_KIND_LABEL.get(kind, "PostgreSQL"))
-        ename.set_value(c["name"])
-        edesc.set_value(c.get("description") or "")
-        eaccess_mode.set_value(c.get("access_mode") or "read_write")
-        is_bq = kind == "bigquery"
-        e_sql_fields.set_visibility(not is_bq)
-        e_bq_fields.set_visibility(is_bq)
-        if is_bq:
-            ebq_project.set_value(c["host"])
-            ebq_dataset.set_value(c["database"])
-            ebq_sa_json.set_value("")
-            ebq_email.set_text(f"Service account: {c['username']}" if c.get("username") else "")
-        else:
-            ehost.set_value(c["host"])
-            eport.set_value(c["port"])
-            edb.set_value(c["database"])
-            euser.set_value(c["username"])
-            epass.set_value("")
-        edit_feedback.set_text("")
-        edit_dialog.open()
-
-    remove_target: dict = {"id": None}
-
-    with ui.dialog() as remove_dialog, ui.card().classes("w-96"):
-        ui.label("Remover conexão").classes("font-semibold text-lg")
-        remove_message = ui.label("").classes("text-sm text-gray-600")
-
-        def confirm_remove() -> None:
-            connections.remove_connection(system, remove_target["id"], actor=user)
-            remove_dialog.close()
-            refresh_conns()
-
-        with ui.row().classes("w-full justify-end gap-2"):
-            ui.button("Cancelar", on_click=remove_dialog.close).props("flat")
-            ui.button("Remover", icon="delete", on_click=confirm_remove).props("color=negative data-testid=confirm-remove-connection")
-
-    def ask_remove(c: dict) -> None:
-        remove_target["id"] = c["id"]
-        remove_message.set_text(
-            f"Remover a conexão '{c['name']}'? O agente e a app deixarão de acessar este banco."
+    with ui.dialog() as activate_dialog, ui.card().classes("w-[28rem]"):
+        activate_title = ui.label("").classes("font-semibold text-lg")
+        alias = ui.input("Alias", on_change=lambda e: _preview()).classes("w-full").props(
+            "data-testid=activate-alias"
         )
-        remove_dialog.open()
+        env_preview = ui.label("").classes("text-xs text-gray-600 font-mono")
+        ui.label(
+            "O alias é o nome que o código e o agente usam. Não muda enquanto a conexão estiver ativa."
+        ).classes("text-xs text-gray-600")
+        activate_mode = ui.select({}, label="Modo de acesso").classes("w-full").props("data-testid=activate-mode")
+        activate_feedback = ui.label("").classes("text-sm text-red-600")
 
-    ui.button("Nova conexão", icon="add", on_click=open_conn_dialog).classes("mb-3")
+        def _preview() -> None:
+            key = connections.env_key(alias.value or "")
+            env_preview.set_text(f"DATABASE_URL_{key}" if alias.value else "")
 
-    conns_box = ui.column().classes("w-full max-w-3xl")
+        def do_activate() -> None:
+            try:
+                connections.activate(system, target["grant"]["grant_id"], alias.value or "",
+                                     activate_mode.value, actor=user)
+            except (connections.InvalidAlias, connections.AliasTaken, connections.InvalidMode) as exc:
+                activate_feedback.set_text(str(exc))
+                return
+            activate_dialog.close()
+            notify("Conexão ativada. O agente e a app são reiniciados com o novo banco.", "positive")
+            refresh_conns()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=activate_dialog.close).props("flat")
+            ui.button("Ativar", icon="power", on_click=do_activate).props("data-testid=confirm-activate")
+
+    def open_activate(c: dict) -> None:
+        target["grant"] = c
+        activate_title.set_text(f"Ativar {c['name']}")
+        alias.set_value(c["suggested_alias"])
+        _preview()
+        options = {m: MODE_LABELS[m] for m in c["modes"]}
+        default = c["mode"] if c["mode"] in options else c["modes"][-1]
+        activate_mode.set_options(options, value=default)
+        activate_feedback.set_text("")
+        activate_dialog.open()
+
+    with ui.dialog() as mode_dialog, ui.card().classes("w-96"):
+        mode_title = ui.label("").classes("font-semibold text-lg")
+        mode_select = ui.select({}, label="Modo de acesso").classes("w-full").props("data-testid=change-mode")
+        ui.label("Mudar o modo reinicia o agente e a app do sistema.").classes("text-xs text-gray-600")
+
+        def do_mode() -> None:
+            try:
+                connections.set_mode(system, target["grant"]["grant_id"], mode_select.value, actor=user)
+            except connections.InvalidMode as exc:
+                notify(str(exc), "negative")
+                return
+            mode_dialog.close()
+            refresh_conns()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=mode_dialog.close).props("flat")
+            ui.button("Salvar", icon="save", on_click=do_mode).props("data-testid=confirm-change-mode")
+
+    def open_mode(c: dict) -> None:
+        target["grant"] = c
+        mode_title.set_text(f"Modo de {c['alias']}")
+        mode_select.set_options({m: MODE_LABELS[m] for m in c["modes"]}, value=c["mode"])
+        mode_dialog.open()
+
+    with ui.dialog() as off_dialog, ui.card().classes("w-96"):
+        off_message = ui.label("").classes("text-sm")
+
+        def do_deactivate() -> None:
+            connections.deactivate(system, target["grant"]["grant_id"], actor=user)
+            off_dialog.close()
+            refresh_conns()
+
+        with ui.row().classes("w-full justify-end gap-2"):
+            ui.button("Cancelar", on_click=off_dialog.close).props("flat")
+            ui.button("Desativar", icon="power_off", on_click=do_deactivate).props(
+                "color=warning data-testid=confirm-deactivate"
+            )
+
+    def ask_deactivate(c: dict) -> None:
+        target["grant"] = c
+        off_message.set_text(
+            f"Desativar {c['alias']}? O agente e a app deixam de acessar este banco; "
+            f"DATABASE_URL_{connections.env_key(c['alias'])} some do ambiente da app."
+        )
+        off_dialog.open()
+
+    notices_box = ui.column().classes("w-full max-w-3xl gap-2")
+    conns_box = ui.column().classes("w-full max-w-3xl gap-3")
+
+    _NOTICE_TEXT = {
+        "revoked": "foi revogada por um DB Manager",
+        "ceiling_lowered": "teve o modo de acesso reduzido por um DB Manager",
+        "connection_deleted": "foi excluída do catálogo",
+        "migration_conflict": "ficou inativa na migração para o catálogo",
+    }
+
+    def dismiss(notice_id: str) -> None:
+        connections.dismiss_notice(system, notice_id, actor=user)
+        refresh_conns()
 
     def refresh_conns() -> None:
+        notices_box.clear()
+        with notices_box:
+            for n in connections.list_notices(system.id):
+                with ui.card().classes("w-full").props(f"data-testid=conn-notice:{n['kind']}"):
+                    with ui.row().classes("w-full items-start gap-2 no-wrap"):
+                        ui.icon("warning").classes("text-amber-700 mt-1")
+                        with ui.column().classes("gap-0 grow"):
+                            label = n["alias"] or n["connection_name"]
+                            ui.label(f"A conexão {label} {_NOTICE_TEXT.get(n['kind'], 'mudou')}").classes(
+                                "text-sm font-medium"
+                            )
+                            who = n["actor_email"] or "o portal"
+                            ui.label(f"{n['detail']} · {who} · {_stamp(n['created_at'])}").classes(
+                                "text-xs text-gray-600"
+                            )
+                        if manage:
+                            ui.button("Dispensar", on_click=lambda n=n: dismiss(n["id"])).props(
+                                "dense flat data-testid=conn-notice-dismiss"
+                            )
         conns_box.clear()
-        conns = connections.list_connections(system.id)
+        conns = connections.list_system_connections(system.id)
         with conns_box:
             if not conns:
-                ui.label("Nenhuma conexão cadastrada ainda.").classes("text-gray-500 text-sm")
+                ui.label(
+                    "Nenhum banco autorizado para este sistema. Peça a um DB Manager que autorize o "
+                    "banco de que você precisa."
+                ).classes("text-gray-500 text-sm").props("data-testid=conn-empty")
             for c in conns:
                 with ui.card().classes("w-full").props(f"data-testid=conn-card:{c['name']}"):
-                    with ui.row().classes("items-center gap-2"):
-                        ui.label(f"{c['name']}").classes("font-semibold")
-                        status = c.get("status", "unknown")
-                        cor = _CONN_STATUS_COLOR.get(status, "neutral")
-                        # só o neutro precisa de texto próprio; os coloridos já
-                        # vêm com o par "on-" certo pelo CSS do tema
-                        texto_badge = " text-color=neutraltext" if cor == "neutral" else ""
-                        ui.badge(
-                            _CONN_STATUS_LABEL.get(status, status)
-                        ).props(f"color={cor}{texto_badge} data-testid=conn-status-badge")
-                        if c.get("access_mode") == "read_only":
-                            ui.badge("somente-leitura").props("color=info data-testid=conn-access-mode-badge")
-                    if c.get("description"):
-                        ui.label(c["description"]).classes("text-sm text-gray-500 italic")
-                    if c.get("kind") == "bigquery":
-                        ui.label(f"bigquery · {c['host']}/{c['database']} ({c['username']})").classes("text-sm text-gray-600")
-                    else:
-                        ui.label(f"{c['kind']} · {c['username']}@{c['host']}:{c['port']}/{c['database']}").classes("text-sm text-gray-600")
-                    if manage:
-                        with ui.row().classes("gap-2"):
-                            ui.button("Editar", icon="edit", on_click=lambda c=c: open_edit_dialog(c)).props("dense outline data-testid=conn-edit")
-                            ui.button("Remover", icon="delete", on_click=lambda c=c: ask_remove(c)).props("dense outline color=negative data-testid=conn-remove")
+                    with ui.row().classes("w-full items-center gap-2"):
+                        ui.label(c["alias"] if c["active"] else c["name"]).classes("font-semibold")
+                        kind_label(c["kind"])
+                        status_badge(c["status"])
+                        if c["active"]:
+                            ui.badge(MODE_LABELS[c["mode"]]).props("color=primary data-testid=conn-mode-badge")
+                        else:
+                            ui.badge("inativa").props(
+                                "color=neutral text-color=neutraltext data-testid=conn-inactive-badge"
+                            )
+                        ddl_badge(c["schema_admin_since"])
+                    if c["active"]:
+                        ui.label(f"{c['name']} · DATABASE_URL_{connections.env_key(c['alias'])}").classes(
+                            "text-xs text-gray-600 font-mono"
+                        )
+                    if c["description"]:
+                        ui.label(c["description"]).classes("text-sm text-gray-600")
+                    ui.label(f"Teto autorizado: {MODE_LABELS[c['max_mode']]}").classes("text-xs text-gray-600")
+                    if not manage:
+                        continue
+                    with ui.row().classes("gap-2"):
+                        if c["active"]:
+                            if len(c["modes"]) > 1:
+                                ui.button("Mudar modo", icon="tune", on_click=lambda c=c: open_mode(c)).props(
+                                    "dense outline data-testid=conn-change-mode"
+                                )
+                            ui.button("Desativar", icon="power_off", on_click=lambda c=c: ask_deactivate(c)).props(
+                                "dense outline color=warning data-testid=conn-deactivate"
+                            )
+                        else:
+                            ui.button("Ativar", icon="power", on_click=lambda c=c: open_activate(c)).props(
+                                "dense data-testid=conn-activate"
+                            )
 
     refresh_conns()
 
@@ -1288,10 +1231,12 @@ def _render_gate_history(system) -> None:
             if not decisions:
                 ui.label("Nenhuma decisão do gate ainda.").classes("text-gray-500 text-sm")
             for d in decisions:
-                color = {"bloqueada": "text-red-600", "recusada": "text-orange-600", "aprovada": "text-green-700"}.get(d["decision"], "")
+                color = {"bloqueada": "text-red-600", "recusada": "text-orange-600", "aprovada": "text-green-700",
+                         "liberada": "text-amber-700"}.get(d["decision"], "")
                 autor = d["author_email"] or "sistema"
-                with ui.row().classes("w-full items-center"):
-                    ui.label(f"[{d['decision']}] {d['sql'][:70]}").classes(f"text-sm {color}")
+                tag = "liberada (schema_admin)" if d["decision"] == "liberada" else d["decision"]
+                with ui.row().classes("w-full items-center").props(f"data-testid=gate-decision:{d['decision']}"):
+                    ui.label(f"[{tag}] {d['sql'][:70]}").classes(f"text-sm {color}")
                     ui.label(f"({d['origin']} · autor: {autor} · {_stamp(d['created_at'])})").classes("text-xs text-gray-500")
 
     refresh_gate()

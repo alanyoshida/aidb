@@ -97,3 +97,44 @@ def test_versao_com_requirements_sem_uv_lock_e_recusada_antes_da_troca(system, m
     view = deploy._deploy_locked(system, "v1.0.6", "manual", None)
     assert view["status"] == "failed"
     assert "requirements.txt" in view["detail"] and "uv.lock" in view["detail"]
+
+
+# --- Conexões exigidas pela versão, pelo alias das conexões ativas (change add-db-manager-role, 5.2) ---
+
+def _manifest(monkeypatch, *names):
+    import json
+
+    raw = json.dumps({"version": 1, "connections": [{"name": n, "kind": "postgres"} for n in names]})
+    monkeypatch.setattr(deploy, "_git_file", lambda system, sha, path: raw)
+
+
+def test_conexao_ativa_com_o_mesmo_alias_satisfaz(system, monkeypatch, active_connection):
+    active_connection(system, "vendas", name="Vendas prod")
+    _manifest(monkeypatch, "vendas")
+    assert deploy.check_manifest(system, "abc") == ""
+
+
+def test_conexao_faltando(system, monkeypatch):
+    _manifest(monkeypatch, "vendas")
+    with pytest.raises(deploy.MissingConnections) as exc:
+        deploy.check_manifest(system, "abc")
+    assert exc.value.names == ["vendas"]
+
+
+def test_conexao_autorizada_mas_nao_ativada_falta(system, monkeypatch, active_connection):
+    from appaiforge.db import session_scope
+    from appaiforge.models import DbConnectionGrant
+
+    conn_id = active_connection(system, "vendas")
+    with session_scope() as s:
+        s.query(DbConnectionGrant).filter_by(connection_id=conn_id).update({"active": False})
+    _manifest(monkeypatch, "vendas")
+    with pytest.raises(deploy.MissingConnections):
+        deploy.check_manifest(system, "abc")
+
+
+def test_nome_do_catalogo_nao_conta_so_o_alias(system, monkeypatch, active_connection):
+    active_connection(system, "erp", name="vendas")
+    _manifest(monkeypatch, "vendas")
+    with pytest.raises(deploy.MissingConnections):
+        deploy.check_manifest(system, "abc")

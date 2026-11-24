@@ -106,14 +106,20 @@ def _require_admin(actor: User | None) -> None:
         raise PermissionError("operação restrita a administradores")
 
 
-def create_user_as_admin(email: str, password: str, user_type: str, actor: User | None = None) -> User:
+def create_user_as_admin(
+    email: str, password: str, user_type: str, actor: User | None = None, db_manager: bool = False,
+) -> User:
     _require_admin(actor)
     _require_local_mode()
     user = _create_user(email, password, user_type)
+    if db_manager:
+        with session_scope() as s:
+            s.get(User, user.id).db_manager = True
+        user.db_manager = True
     audit.record(
         actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
         action="user.create", resource_type="user", resource_id=user.id,
-        details={"email": user.email, "type": user.type.value},
+        details={"email": user.email, "type": user.type.value, "db_manager": db_manager},
     )
     return user
 
@@ -129,6 +135,28 @@ def set_user_active(email: str, active: bool, actor: User | None = None) -> None
     audit.record(
         actor_id=actor.id if actor else None, actor_email=actor.email if actor else None,
         action="user.active", resource_type="user", resource_id=target, details={"active": active},
+    )
+
+
+def set_db_manager(email: str, value: bool, actor: User) -> None:
+    """Concede ou retira a capacidade de DB Manager (change add-db-manager-role, D1).
+
+    Só admin, só no modo local — no oidc a capacidade vem do papel `db_manager` do token.
+    O break-glass é admin e já gere o catálogo, então não é alterável aqui. Retirar a
+    capacidade não mexe nas conexões nem nas autorizações que a pessoa criou."""
+    _require_admin(actor)
+    _require_local_mode()
+    target = email.strip().lower()
+    with session_scope() as s:
+        user = s.execute(select(User).where(User.email == target)).scalar_one()
+        _reject_breakglass(user)
+        if bool(user.db_manager) == value:
+            return
+        user.db_manager = value
+    audit.record(
+        actor_id=actor.id, actor_email=actor.email,
+        action="user.db_manager.grant" if value else "user.db_manager.revoke",
+        resource_type="user", resource_id=target, details={"db_manager": value},
     )
 
 
@@ -372,6 +400,7 @@ def list_users_overview() -> list[dict]:
             {
                 "email": u.email, "type": u.type.value, "active": u.active,
                 "last_login_at": u.last_login_at, "break_glass": u.break_glass,
+                "db_manager": bool(u.db_manager),
             }
             for u in users
         ]

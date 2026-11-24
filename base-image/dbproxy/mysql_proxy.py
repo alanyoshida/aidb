@@ -312,7 +312,9 @@ async def _pump_client_to_upstream(client_reader: asyncio.StreamReader, client_w
     repassar. `gate_mode="enforce"`: `bloqueada` e `confirmável` nunca
     chegam ao upstream — as duas são recusadas na hora, sem segurar a
     conexão nem pedir aprovação (decisão do operador: uma `DELETE`/`UPDATE`
-    sem WHERE restritivo é tratada como destrutiva igual a um DDL).
+    sem WHERE restritivo é tratada como destrutiva igual a um DDL). Exceção
+    (change add-db-manager-role, D8): com `gate_ctx.allow_destructive` — só no listener do
+    agente de uma conexão em `schema_admin` —, as duas passam e ficam auditadas como liberadas.
     `gate_mode="shadow"` (default, task 6.1): classifica e audita sem
     segurar nada — os globs de `permission.bash` continuam sendo o gate de
     verdade enquanto o spike S5 compara os dois."""
@@ -332,6 +334,9 @@ async def _pump_client_to_upstream(client_reader: asyncio.StreamReader, client_w
                     if gate_mode != "enforce":
                         log(f"SOMBRA (seria {label.lower()}):", sql, "-", result.reason)
                         await portal_gate.audit_shadow(gate_ctx, sql, log=log)
+                    elif gate_ctx.allow_destructive:
+                        log(f"LIBERADA ({label.lower()}, schema_admin):", sql)
+                        await portal_gate.audit_shadow(gate_ctx, sql, log=log, released=True)
                     else:
                         log(f"{label}:", sql, "-", result.reason)
                         await _refuse(client_writer, seq, result.reason)

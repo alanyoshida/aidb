@@ -9,6 +9,7 @@ import time
 import uuid
 
 import pytest
+from catalog_flow import activate, create_catalog_connection, grant, open_system_connections
 
 pytestmark = pytest.mark.e2e
 
@@ -111,27 +112,21 @@ def test_jornada_completa(page, suffix):
     page.locator('[data-testid=add-member]').click()
     _logout(page)
 
-    # 2. editor cria sistema e conecta o Postgres de teste do stack
+    # 2. editor cria sistema
     _login(page, editor_email, "pw-jornada")
     page.get_by_role("button", name="Novo sistema").click()
     page.locator('[data-testid=system-name]').fill("Sistema Jornada")
     page.locator('[data-testid=system-slug]').fill(slug)
     page.locator('[data-testid=create-system]').click()
     _wait_system_active(page)
-
-    page.get_by_role("tab", name="Conexões").click()
-    page.get_by_role("button", name="Nova conexão").click()
-    page.locator('[data-testid=conn-name]').fill("vendas")
-    page.locator('[data-testid=conn-host]').fill("postgres")
-    page.locator('[data-testid=conn-database]').fill("appaiforge")
-    page.locator('[data-testid=conn-user]').fill("appaiforge")
-    page.locator('[data-testid=conn-password]').fill("appaiforge")
-    page.locator('[data-testid=save-connection]').click()
-    page.get_by_text("conexão cadastrada").wait_for(timeout=30_000)
     _logout(page)
 
-    # 2b. admin vincula o grupo ao sistema recém-criado
+    # 2b. admin cadastra o Postgres do stack no catálogo, autoriza para o sistema
+    # (change add-db-manager-role) e vincula o grupo ao sistema recém-criado
+    conn_name = f"vendas-jornada-{suffix}"
     _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    create_catalog_connection(page, conn_name)
+    grant(page, conn_name, slug)
     page.get_by_role("button", name="Administração").click()
     page.get_by_role("tab", name="Grupos").click()
     page.get_by_role("button", name="Vincular a sistema").click()
@@ -141,8 +136,11 @@ def test_jornada_completa(page, suffix):
     page.get_by_text(f"sistemas: {slug}").wait_for(timeout=30_000)
     _logout(page)
 
-    # 3. chat gera a app (harness fake) — editor volta ao sistema
+    # 3. editor ativa a conexão autorizada e o chat gera a app (harness fake)
     _login(page, editor_email, "pw-jornada")
+    open_system_connections(page, slug)
+    activate(page, conn_name, "vendas")
+    _wait_system_active(page)
     page.goto("/")
     page.get_by_text("Sistema Jornada").first.click()
     page.locator('[data-testid=chat-input]').wait_for(timeout=30_000)
