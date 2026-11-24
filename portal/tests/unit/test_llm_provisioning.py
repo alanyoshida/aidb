@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+
 from appaiforge import auth
 from appaiforge.models import ProviderKey, UserType
 from appaiforge import inference_token
@@ -76,14 +77,12 @@ def target(live_pg):
     return live_pg
 
 
-def test_nome_tool_com_descricao_e_read_only(editor, tmp_path, target):
+def test_nome_tool_com_descricao_e_read_only(editor, tmp_path, target, active_connection):
     system = create_system(editor, "T", "prov-tool-ro")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "analytics", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-            description="Dados analíticos", access_mode="read_only",
-        )
+    active_connection(
+        system, "analytics", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"], description="Dados analíticos", mode="read_only",
+    )
     config = _config(tmp_path, system)
     mcp_keys = list(config["mcp"].keys())
     assert mcp_keys == ["analytics [Dados analíticos] (somente-leitura)"]
@@ -91,14 +90,12 @@ def test_nome_tool_com_descricao_e_read_only(editor, tmp_path, target):
     assert cmd[-1] == "read_only"
 
 
-def test_nome_tool_com_descricao_sem_read_only(editor, tmp_path, target):
+def test_nome_tool_com_descricao_sem_read_only(editor, tmp_path, target, active_connection):
     system = create_system(editor, "T2", "prov-tool-rw")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "operacional", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-            description="Banco principal", access_mode="read_write",
-        )
+    active_connection(
+        system, "operacional", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"], description="Banco principal", mode="read_write",
+    )
     config = _config(tmp_path, system)
     mcp_keys = list(config["mcp"].keys())
     assert mcp_keys == ["operacional [Banco principal]"]
@@ -106,13 +103,12 @@ def test_nome_tool_com_descricao_sem_read_only(editor, tmp_path, target):
     assert cmd[-1] == "read_write"
 
 
-def test_nome_tool_sem_descricao_sem_read_only(editor, tmp_path, target):
+def test_nome_tool_sem_descricao_sem_read_only(editor, tmp_path, target, active_connection):
     system = create_system(editor, "T3", "prov-tool-plain")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "simples", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-        )
+    active_connection(
+        system, "simples", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"],
+    )
     config = _config(tmp_path, system)
     mcp_keys = list(config["mcp"].keys())
     assert mcp_keys == ["simples"]
@@ -120,18 +116,17 @@ def test_nome_tool_sem_descricao_sem_read_only(editor, tmp_path, target):
     assert cmd[-1] == "read_write"
 
 
-def test_mcp_usa_dsn_de_loopback_sem_credencial_quando_ha_manifesto(editor, tmp_path, target):
+def test_mcp_usa_dsn_de_loopback_sem_credencial_quando_ha_manifesto(editor, tmp_path, target, active_connection):
     """Task 5.2: com o manifesto do sidecar, o comando do MCP aponta pro
     loopback (porta `agent_port`) sem usuário nem senha — a credencial real
     só existe no env do sidecar, nunca aqui."""
     from appaiforge.provisioning import db_connections_manifest
 
     system = create_system(editor, "LOOP", "prov-loopback")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "vendas", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-        )
+    active_connection(
+        system, "vendas", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"],
+    )
     manifest = db_connections_manifest(system.id)
     write_opencode_config(system, str(tmp_path), manifest)
     with open(tmp_path / "opencode.json") as f:
@@ -523,42 +518,38 @@ def test_broker_credential_env_injeta_token_e_nao_chave(editor, monkeypatch):
 
 # ---------- manifesto do sidecar de gate de banco (task 5.1/5.2) ----------
 
-def test_db_connections_manifest_so_pega_postgres_e_mysql(editor, target):
+def test_db_connections_manifest_so_pega_postgres_e_mysql(editor, target, active_connection):
     from appaiforge.db import session_scope
     from appaiforge.models import DbConnection
     from appaiforge.provisioning import db_connections_manifest
     from appaiforge.security import encrypt_secret
 
     system = create_system(editor, "MAN", "prov-manifest")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "pg1", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-        )
-    with session_scope() as s:
-        s.add(DbConnection(
-            system_id=system.id, name="bq1", kind="bigquery", host="meuproj", port=0,
-            database="meudataset", username="sa@meuproj.iam.gserviceaccount.com",
-            password_encrypted=encrypt_secret("{}"),
-        ))
+    active_connection(
+        system, "pg1", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"],
+    )
+    active_connection(
+        system, "bq1", kind="bigquery", host="meuproj", port=0, database="meudataset",
+        username="sa@meuproj.iam.gserviceaccount.com", password="{}",
+    )
 
     manifest = db_connections_manifest(system.id)
     assert [m["name"] for m in manifest] == ["pg1"]  # bigquery fica de fora
 
 
-def test_db_connections_manifest_portas_distintas_e_pares_agente_app(editor, target):
+def test_db_connections_manifest_portas_distintas_e_pares_agente_app(editor, target, active_connection):
     from appaiforge.provisioning import DB_GATE_PORT_BASE, db_connections_manifest
 
     system = create_system(editor, "MAN2", "prov-manifest-portas")
-    with patch("appaiforge.services.connections._refresh_provisioning"):
-        connections.register_connection(
-            system, "c1", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-        )
-        connections.register_connection(
-            system, "c2", target["host"], target["port"], target["database"],
-            target["username"], target["password"],
-        )
+    active_connection(
+        system, "c1", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"],
+    )
+    active_connection(
+        system, "c2", host=target["host"], port=target["port"], database=target["database"],
+        username=target["username"], password=target["password"],
+    )
 
     manifest = db_connections_manifest(system.id)
     assert len(manifest) == 2

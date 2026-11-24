@@ -41,8 +41,27 @@ def test_audit_shadow_manda_o_payload_certo(monkeypatch):
     assert seen["token"] == "segredo"
     assert seen["body"] == {
         "system_id": "sys-1", "sql": "DELETE FROM t", "origin": "agente",
-        "connection_name": "vendas", "enforced": False,
+        "connection_name": "vendas", "enforced": False, "released": False,
     }
+
+
+def test_audit_shadow_marca_statement_liberada_por_schema_admin(monkeypatch):
+    """change add-db-manager-role, D8: DDL que passou no listener do agente em schema_admin."""
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"classification": "bloqueada"})
+
+    async def go():
+        ctx = portal_gate.GateContext(system_id="sys-1", origin="agente", connection_name="vendas",
+                                      allow_destructive=True)
+        await audit_shadow(ctx, "DROP TABLE t", log=lambda *a: None, released=True)
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: real_async_client(transport=httpx.MockTransport(handler)))
+    _run(go())
+    assert seen["body"]["released"] is True and seen["body"]["enforced"] is False
 
 
 def test_audit_shadow_nunca_levanta_mesmo_com_portal_fora_do_ar(monkeypatch):

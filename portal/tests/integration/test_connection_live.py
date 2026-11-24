@@ -36,7 +36,7 @@ def test_host_inacessivel_e_recusado(target_pg):
         connections.test_connection(kind="postgres", **{**target_pg, "port": 1})
 
 
-def test_cadastro_exige_conexao_valida(clean_db, target_pg):
+def test_cadastro_exige_conexao_valida(clean_db, target_pg, register_connection):
     from appaiforge import auth
     from appaiforge.models import UserType
     from appaiforge.services.systems import create_system
@@ -45,7 +45,7 @@ def test_cadastro_exige_conexao_valida(clean_db, target_pg):
     system = create_system(editor, "Live", "live-conn")
 
     with pytest.raises(connections.ConnectionFailed):
-        connections.register_connection(system, "ruim", target_pg["host"], target_pg["port"], target_pg["database"], target_pg["username"], "errada")
+        register_connection(system, "ruim", target_pg["host"], target_pg["port"], target_pg["database"], target_pg["username"], "errada")
 
-    conn = connections.register_connection(system, "boa", target_pg["host"], target_pg["port"], target_pg["database"], target_pg["username"], target_pg["password"])
-    assert conn.name == "boa"
+    conn = register_connection(system, "boa", target_pg["host"], target_pg["port"], target_pg["database"], target_pg["username"], target_pg["password"])
+    assert conn["name"] == "boa (live-conn)"

@@ -8,6 +8,7 @@ serve, então a rota /apps/<slug> responde ao fim do chat.
 import uuid
 
 import pytest
+from catalog_flow import activate, create_catalog_connection, grant, open_system_connections
 
 pytestmark = pytest.mark.e2e
 
@@ -228,19 +229,18 @@ def test_sessao_com_contexto_reiniciado_fica_bloqueada(page, suffix):
     page.locator('[data-testid=chat-send]').click()
     page.get_by_text("agente livre").wait_for(timeout=30_000)
 
-    # cadastrar uma conexão recria o container do sistema por baixo, o que
-    # invalida (context_reset) todas as sessões abertas dele
-    page.get_by_role("tab", name="Conexões").click()
-    page.get_by_role("button", name="Nova conexão").click()
-    page.locator('[data-testid=conn-name]').wait_for(state="visible", timeout=30_000)
-    page.locator('[data-testid=conn-name]').fill("vendas")
-    page.locator('[data-testid=conn-host]').fill("postgres")
-    page.locator('[data-testid=conn-port]').fill("5432")
-    page.locator('[data-testid=conn-database]').fill("appaiforge2")
-    page.locator('[data-testid=conn-user]').fill("appaiforge")
-    page.locator('[data-testid=conn-password]').fill("appaiforge")
-    page.locator('[data-testid=save-connection]').click()
-    page.get_by_text("conexão cadastrada").wait_for(timeout=20_000)
+    # ativar uma conexão recria o container do sistema por baixo, o que invalida
+    # (context_reset) todas as sessões abertas dele. A conexão vem do catálogo: o admin
+    # cadastra e autoriza, o dono ativa (change add-db-manager-role).
+    conn_name = f"vendas-ctx-{suffix}"
+    _logout(page)
+    _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    create_catalog_connection(page, conn_name, database="appaiforge2")
+    grant(page, conn_name, slug)
+    _logout(page)
+    _login(page, editor_email, "pw-editor")
+    open_system_connections(page, slug)
+    activate(page, conn_name, "vendas")
 
     # recarrega a página e reabre a sessão: a recriação do container roda
     # numa thread em segundo plano (recria o container principal e os dois

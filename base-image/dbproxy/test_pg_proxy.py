@@ -522,3 +522,47 @@ def test_sombra_normal_nao_chama_auditoria(monkeypatch):
 
     _run(go())
     assert called == []
+
+
+# ---------- schema_admin: DDL e DML em massa liberados só no listener do agente (add-db-manager-role) ----------
+
+_AGENT_SCHEMA_ADMIN = GateContext(system_id="sys-test", origin="agente", allow_destructive=True)
+_APP_SCHEMA_ADMIN = GateContext(system_id="sys-test", origin="app", allow_destructive=False)
+
+
+def _pump_sqls(ctx, *sqls, monkeypatch=None, audited=None):
+    if monkeypatch is not None:
+        async def fake_audit_shadow(c, sql, **kwargs):
+            audited.append((sql, kwargs))
+
+        monkeypatch.setattr(pg_proxy.portal_gate, "audit_shadow", fake_audit_shadow)
+    data = b"".join(_q(s) for s in sqls) + _simple_msg(b"X")
+    client_writer, up_writer = _MemoryWriter(), _MemoryWriter()
+
+    async def go():
+        await _pump_client_to_upstream(_reader_with(data), client_writer, up_writer, ctx, "enforce")
+
+    _run(go())
+    return bytes(up_writer.buf), bytes(client_writer.buf)
+
+
+def test_schema_admin_agente_repassa_drop_e_delete_em_massa(monkeypatch):
+    audited: list = []
+    up, client = _pump_sqls(_AGENT_SCHEMA_ADMIN, "DROP TABLE t", "DELETE FROM t",
+                            monkeypatch=monkeypatch, audited=audited)
+    assert up == _q("DROP TABLE t") + _q("DELETE FROM t") + _simple_msg(b"X")
+    assert client == b""  # nada recusado ao cliente
+    assert [(sql, kw.get("released")) for sql, kw in audited] == [("DROP TABLE t", True), ("DELETE FROM t", True)]
+
+
+def test_schema_admin_app_continua_recusando(monkeypatch):
+    audited: list = []
+    up, _client = _pump_sqls(_APP_SCHEMA_ADMIN, "DROP TABLE t", monkeypatch=monkeypatch, audited=audited)
+    assert up == _simple_msg(b"X")
+    assert [kw.get("enforced") for _sql, kw in audited] == [True]
+
+
+def test_read_write_recusa_nas_duas_origens(monkeypatch):
+    for ctx in (GateContext(system_id="s", origin="agente"), GateContext(system_id="s", origin="app")):
+        up, _client = _pump_sqls(ctx, "DROP TABLE t", "DELETE FROM t", monkeypatch=monkeypatch, audited=[])
+        assert up == _simple_msg(b"X")

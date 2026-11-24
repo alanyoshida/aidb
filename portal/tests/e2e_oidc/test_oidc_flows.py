@@ -188,3 +188,17 @@ def test_break_glass_entra_e_usuario_comum_nao(page):
     page.locator("[data-testid=login-error]").get_by_text("inválidos").wait_for(timeout=30_000)
     _breakglass_login(page)
     page.locator("[data-testid=user-menu]").wait_for(timeout=30_000)
+
+
+def test_db_manager_do_idp_abre_o_catalogo(page):
+    """change add-db-manager-role, task 2.5: `e2e-dba` tem `editor` e `db_manager` no token."""
+    _sso_login(page, "e2e-dba")
+    page.locator("[data-testid=nav-databases]").click()
+    page.locator("[data-testid=new-catalog-connection]").wait_for(timeout=30_000)
+    _logout(page)
+
+    # quem só tem `editor` não vê o catálogo
+    _sso_login(page, "e2e-editor")
+    assert page.locator("[data-testid=nav-databases]").count() == 0
+    page.goto("/databases")
+    page.locator("[data-testid=databases-forbidden]").wait_for(timeout=30_000)

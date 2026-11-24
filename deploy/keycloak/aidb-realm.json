@@ -13,7 +13,8 @@
     "realm": [
       {"name": "admin", "description": "Tipo global admin no portal AIDB"},
       {"name": "editor", "description": "Tipo global editor no portal AIDB"},
-      {"name": "app_user", "description": "Tipo global app_user no portal AIDB"}
+      {"name": "app_user", "description": "Tipo global app_user no portal AIDB"},
+      {"name": "db_manager", "description": "Capacidade de DB Manager no portal AIDB (soma-se ao tipo)"}
     ]
   },
   "groups": [
@@ -69,6 +70,12 @@
       "firstName": "Editor", "lastName": "E2E", "enabled": true,
       "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}],
       "realmRoles": ["editor"]
+    },
+    {
+      "username": "e2e-dba", "email": "e2e-dba@e2e-oidc.local", "emailVerified": true,
+      "firstName": "DBA", "lastName": "E2E", "enabled": true,
+      "credentials": [{"type": "password", "value": "e2e-senha", "temporary": false}],
+      "realmRoles": ["editor", "db_manager"]
     },
     {
       "username": "e2e-financeiro", "email": "e2e-financeiro@e2e-oidc.local", "emailVerified": true,

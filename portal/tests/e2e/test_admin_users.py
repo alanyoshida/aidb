@@ -194,3 +194,29 @@ def test_admin_gerencia_acoes_de_grupo(page, suffix):
     page.get_by_role("tab", name="Auditoria de gestão").click()
     page.get_by_text("group.delete").first.wait_for(timeout=30_000)
     _logout(page)
+
+
+def test_admin_concede_e_retira_db_manager(page, suffix):
+    """change add-db-manager-role, task 2.4: opção DB Manager no cadastro e no cartão do usuário."""
+    dba_email = f"dba-{suffix}@e2e.local"
+    _login(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    page.get_by_role("button", name="Administração").click()
+    page.get_by_role("tab", name="Usuários").click()
+
+    # cria já como DB Manager
+    page.get_by_role("button", name="Novo usuário").click()
+    page.locator('[data-testid=new-user-email]').fill(dba_email)
+    page.locator('[data-testid=new-user-password]').fill("pw-dba")
+    page.locator('[data-testid=new-user-type]').click()
+    page.locator('.q-menu:visible').get_by_text("editor", exact=True).click()
+    page.locator('[data-testid=new-user-db-manager]').click()
+    page.locator('[data-testid=create-user]').click()
+
+    card = page.locator(f'[data-testid="user-card:{dba_email}"]')
+    card.wait_for(timeout=30_000)
+    card.locator('[data-testid=user-db-manager]').wait_for(timeout=10_000)
+
+    # retira e o selo some; o tipo continua editor
+    card.locator('[data-testid=user-toggle-db-manager]').click()
+    card.locator('[data-testid=user-db-manager]').wait_for(state="detached", timeout=10_000)
+    assert card.get_by_text("editor", exact=True).count() == 1

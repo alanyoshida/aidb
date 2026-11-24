@@ -98,6 +98,13 @@ Com o modo automático e webhook, cadastre no projeto do GitLab o endereço e o 
    ```
    No Kubernetes, publique as duas no registro do cluster (ou carregue-as no kind) antes do `helm upgrade`.
    - **Docker:** os containers que já existem continuam na imagem anterior até serem recriados. Um container recriado ou um sistema novo pede a imagem nova. Se ela faltar, o sistema fica em erro com o motivo, e volta quando a imagem existir.
+4. **Catálogo de conexões** (a partir da versão com o [ADR 0036](adr/0036-catalogo-de-conexoes-autorizacao-e-ativacao.md)).
+   A migração converte cada conexão existente em item do catálogo, já autorizado e ativo no sistema
+   de origem com o mesmo nome como alias: nenhuma app perde acesso. Os donos deixam de cadastrar
+   bancos; depois do upgrade, conceda a capacidade de DB Manager a quem vai gerir o catálogo
+   (*Administração* → *Usuários* no modo local, papel `db_manager` no IdP no modo SSO). Até lá, só o
+   admin cadastra e autoriza conexões. Voltar à versão anterior só é possível enquanto nenhuma
+   conexão tiver sido autorizada para mais de um sistema; depois disso, restaure o backup do banco.
    - **Kubernetes:** a reconciliação recria os Pods de sistema que ainda usam a imagem anterior.
    - **Imagens fixadas:** quem as fixa por configuração (`APPAIFORGE_BASE_IMAGE`, `APPAIFORGE_CLAUDE_CODE_IMAGE`, ou `portal.baseImage` e `portal.claudeCodeImage` no chart) não é afetado.
 4. **Helm, vindo de uma versão sem o Traefik no chart** (antes da change `gateway-api-traefik-subchart`): o `helm upgrade` não instala os CRDs de `crds/` (só o `helm install` faz isso), e sem eles o upgrade falha em `no matches for kind "GatewayClass"`. Aplique antes os da Gateway API (`kubectl apply --server-side -f deploy/helm/appaiforge-portal/crds/`) e, se o cluster ainda não tiver os do Traefik, os do chart dele (ver "CRDs ao atualizar o Traefik" na seção 7). Se o Traefik do cluster era um release à parte, os dois disputariam as mesmas portas. Escolha um caminho antes do `helm upgrade`:

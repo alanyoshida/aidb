@@ -88,3 +88,48 @@ Feature: Autenticação local no portal
   Scenario: Sem aviso ao renomear no modo local
     Given um usuário do tipo "admin" autenticado
     Then renomear grupo não mostra aviso
+
+  # --- Capacidade de DB Manager (change add-db-manager-role) ---
+
+  Scenario: Editor que também é DB Manager
+    Given um usuário do tipo "editor" que é DB Manager
+    When ele cria um sistema com nome "Loja" e slug "loja"
+    Then o sistema é criado no estado "provisioning" com ele como dono
+    And ele pode gerir o catálogo de conexões
+
+  Scenario: DB Manager que não é editor
+    Given um usuário do tipo "app_user" que é DB Manager
+    When ele cria um sistema com nome "Meu" e slug "meu"
+    Then a criação é recusada por permissão insuficiente
+    And ele pode gerir o catálogo de conexões
+    And ele não pode usar o chat de geração
+
+  Scenario: Admin gere o catálogo sem a capacidade
+    Given um usuário do tipo "admin" autenticado
+    Then ele pode gerir o catálogo de conexões
+
+  Scenario: Usuário sem a capacidade
+    Given um usuário do tipo "editor" autenticado
+    Then ele não pode gerir o catálogo de conexões
+
+  Scenario: Admin concede a capacidade
+    Given um admin no modo local e um usuário "dba@t.local" do tipo "editor"
+    When o admin marca "dba@t.local" como DB Manager
+    Then "dba@t.local" pode gerir o catálogo e continua do tipo "editor"
+
+  Scenario: Admin retira a capacidade
+    Given um admin no modo local e um usuário "dba@t.local" do tipo "editor"
+    When o admin marca "dba@t.local" como DB Manager
+    And o admin retira de "dba@t.local" a capacidade de DB Manager
+    Then "dba@t.local" não pode gerir o catálogo
+
+  Scenario: Não-admin não concede
+    Given um admin no modo local e um usuário "dba@t.local" do tipo "editor"
+    When o admin marca "dba@t.local" como DB Manager
+    Then "dba@t.local" não consegue conceder a capacidade a outro usuário
+
+  Scenario: Somente leitura no modo OIDC
+    Given o portal no modo "oidc" com um admin break-glass
+    And um usuário que entrou pelo IdP com o papel de DB Manager
+    Then a lista de usuários mostra que ele é DB Manager
+    And o admin não consegue conceder nem retirar a capacidade

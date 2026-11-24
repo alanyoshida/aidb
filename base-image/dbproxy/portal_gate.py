@@ -35,23 +35,31 @@ class GateContext:
     system_id: str
     origin: str = "agente"
     connection_name: str = ""
+    # Liberação de DDL e DML em massa (change add-db-manager-role, D8): só o listener de origem
+    # `agente` de uma conexão ativa em `schema_admin` a recebe; o da `app`, nunca.
+    allow_destructive: bool = False
 
 
 def _headers() -> dict[str, str]:
     return {"x-aidb-dbgate-token": SERVICE_TOKEN}
 
 
-async def audit_shadow(ctx: GateContext, sql: str, *, log: Callable[..., None] = print, enforced: bool = False) -> None:
+async def audit_shadow(
+    ctx: GateContext, sql: str, *, log: Callable[..., None] = print, enforced: bool = False,
+    released: bool = False,
+) -> None:
     """Audita uma statement classificada sem pendência humana (task 6.1).
 
     `enforced=False` (modo sombra, default): a statement só foi observada,
     nada foi aplicado. `enforced=True`: chamar DEPOIS que o proxy já
     recusou de verdade em modo enforce (classificação bloqueada ou
     confirmável) — fecha a lacuna achada no roteiro de teste manual, onde
-    um `DROP TABLE` recusado não deixava nenhum rastro em `GateDecision`."""
+    um `DROP TABLE` recusado não deixava nenhum rastro em `GateDecision`.
+    `released=True`: em modo enforce, a statement destrutiva PASSOU porque a conexão está em
+    `schema_admin` no listener do agente — fica no histórico como liberada."""
     payload = {
         "system_id": ctx.system_id, "sql": sql, "origin": ctx.origin, "connection_name": ctx.connection_name,
-        "enforced": enforced,
+        "enforced": enforced, "released": released,
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0)) as client:

@@ -6,13 +6,43 @@
 
 1. Login como **editor** → "Novo sistema" → nome + slug.
 2. Aguarde o badge **ativo** (container provisionado, app em `/apps/<slug>` mostrando "ainda não gerada").
-3. Na página do sistema: **Conexões** → escolha o tipo e cadastre o banco, testado antes de salvar (vira MCP somente leitura do agente + `DATABASE_URL_<NOME>` da app):
-   - **PostgreSQL / MySQL**: host, porta, banco, usuário e senha.
-   - **BigQuery**: projeto, dataset e JSON de Service Account (guardado cifrado).
-   - Cada conexão tem um estado de saúde monitorado (ver [Operação](operacao.md)).
+3. Na página do sistema: **Conexões** → ative um dos bancos que um DB Manager autorizou para o sistema (ver [Bancos de dados](#bancos-de-dados-db-manager)). Ao ativar, escolha o **alias** (vira `DATABASE_URL_<ALIAS>` da app e o nome da ferramenta MCP somente leitura do agente) e o **modo de acesso**, até o teto autorizado. Sem nenhum banco autorizado, peça ao DB Manager.
 4. **Chat de geração**: peça em PT-BR ("crie um CRUD da tabela clientes com busca e formulário"). Acompanhe o streaming, interrompa se preciso (detalhes em *Chat* abaixo).
 5. Ao concluir: checkpoint criado, app reiniciada e servida em `/apps/<slug>`; "Abrir app" entra com sua identidade (SSO por token HMAC).
 6. **Checkpoints** → "Restaurar" para voltar o código a qualquer ponto (a app reinicia no estado restaurado).
+
+## Bancos de dados (DB Manager)
+
+As conexões de banco ficam num **catálogo único**, gerido por quem tem a capacidade de **DB Manager**
+(ou por um admin). A capacidade se soma ao tipo do usuário: um editor pode ser também DB Manager.
+No modo local o admin a concede em *Administração* → *Usuários*; no modo SSO ela vem do papel
+`db_manager` do IdP (ver [Autenticação](autenticacao.md)). Quem a tem vê o item **Bancos de dados**
+no topo da página.
+
+- **Catálogo**: *Nova conexão* → tipo, nome, endereço e credencial, testados antes de salvar.
+  - **PostgreSQL / MySQL**: host, porta, banco, usuário e senha.
+  - **BigQuery**: projeto, dataset e JSON de Service Account (guardado cifrado).
+  - Editar endereço ou credencial vale na hora para todo sistema em que a conexão está ativa (eles
+    são reiniciados). O tipo não muda depois do cadastro. Renomear no catálogo não afeta ninguém.
+  - Excluir uma conexão em uso pede confirmação, lista os sistemas afetados e revoga todos na hora.
+- **Autorizações**: em cada conexão, *Autorizar para o sistema* escolhe o sistema (nome, slug e dono)
+  e o **teto** do modo de acesso. Autorizar não entrega nada ao sistema: o dono ainda precisa ativar.
+- **Modos de acesso**, em ordem: *Somente leitura*, *Leitura e escrita* e *Leitura, escrita e DDL*
+  (`schema_admin`). O último libera `CREATE`/`ALTER`/`DROP` e DML em massa **só para o agente**,
+  para criar e reestruturar tabelas; a app gerada nunca executa DDL. Enquanto estiver ligado, o
+  sistema e o catálogo mostram "DDL liberada desde <data>"; o rebaixamento é manual. Conceder esse
+  teto numa conexão usada por outros sistemas pede confirmação, porque uma DDL pode afetá-los.
+  BigQuery não tem esse modo. Detalhes e limites em [Segurança](seguranca.md#modos-de-acesso-por-sistema-e-schema_admin).
+- **Revogar** ou **rebaixar o teto** vale na hora: o sistema é reiniciado sem a conexão (ou no modo
+  menor) e o dono vê um aviso na aba Conexões, com data e autor, até dispensar. Para BigQuery, a
+  chave já entregue à app só deixa de valer quando for rotacionada no GCP.
+- **Conexões degradadas**: aba da mesma página com as conexões que falharam na checagem periódica e
+  os sistemas que as usam.
+
+Na aba **Conexões** do sistema, o dono vê de cada banco autorizado só o nome, a descrição, o tipo, a
+saúde, o teto e, se ativo, o alias e o modo — nunca host, porta, banco ou usuário. Ali ele ativa
+(alias e modo), muda o modo, desativa e dispensa avisos. O alias não muda enquanto a conexão estiver
+ativa; para trocá-lo, desative e ative de novo.
 
 ## Chat
 

@@ -111,7 +111,7 @@ PROFILES: dict[str, dict] = {
         "image_setting": "claude_code_image",
         # Diretório montado só-leitura, fora do workspace (spec agent-runtime,
         # "Perfil entregue ao container sem segredo") — guarda settings.json
-        # (D3) e, quando o sistema tem alguma DbConnection, mcp-servers.json
+        # (D3) e, quando o sistema tem alguma conexão ativa, mcp-servers.json
         # (D6). "config_path" aponta pro primeiro; o shim resolve o segundo
         # pela mesma convenção de diretório (claude_code_shim.MCP_CONFIG_PATH).
         "config_mount_path": "/claude-code-config",

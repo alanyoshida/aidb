@@ -128,6 +128,7 @@ def create_app() -> FastAPI:
         gate_class = gate.record_shadow_decision(
             system_id, sql, origin=origin, connection_name=payload.get("connection_name", ""),
             enforced=bool(payload.get("enforced", False)),
+            released=bool(payload.get("released", False)) and origin == "agente",
         )
         return JSONResponse({"classification": gate_class.value})
 

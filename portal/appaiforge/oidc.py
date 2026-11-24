@@ -45,6 +45,9 @@ _log = telemetry.get_logger()
 ATTEMPT_COOKIE = "aidb_oidc_attempt"
 ATTEMPT_TTL_SECONDS = 600
 _ROLE_RANK = {"app_user": 1, "editor": 2, "admin": 3}
+# Papel que concede a capacidade de DB Manager (change add-db-manager-role, D2): lido no mesmo
+# claim de papéis, fora da ordem de tipos — sozinho não define tipo nem permite entrar.
+DB_MANAGER_ROLE = "db_manager"
 _HTTP_TIMEOUT = 5.0
 
 
@@ -190,6 +193,14 @@ def map_user_type(claims: dict) -> UserType:
     return UserType(max(known, key=_ROLE_RANK.__getitem__))
 
 
+def map_db_manager(claims: dict) -> bool:
+    """True quando o claim de papéis traz `db_manager`."""
+    roles = _claim_path(claims, get_settings().oidc_roles_claim) or []
+    if isinstance(roles, str):
+        roles = [roles]
+    return DB_MANAGER_ROLE in roles
+
+
 def map_groups(*claim_sets: dict) -> list[str]:
     """Nomes de grupo do primeiro conjunto de claims que os trouxer, sem duplicatas."""
     path = get_settings().oidc_groups_claim
@@ -213,7 +224,9 @@ def _record_observed(s, groups: list[str]) -> None:
             row.last_seen_at = now
 
 
-def upsert_shadow_user(sub: str, email: str, user_type: UserType, groups: list[str]) -> str:
+def upsert_shadow_user(
+    sub: str, email: str, user_type: UserType, groups: list[str], db_manager: bool = False,
+) -> str:
     """Usuário-sombra pelo `sub`: cria no primeiro login, atualiza e-mail e tipo depois.
 
     E-mail já usado por outro usuário (outro `sub` ou o break-glass) -> OidcError: não há
@@ -229,11 +242,12 @@ def upsert_shadow_user(sub: str, email: str, user_type: UserType, groups: list[s
         if clash is not None:
             raise OidcError(f"e-mail {email} já pertence a outro usuário")
         if user is None:
-            user = User(idp_subject=sub, email=email, type=user_type, password_hash=None)
+            user = User(idp_subject=sub, email=email, type=user_type, password_hash=None, db_manager=db_manager)
             s.add(user)
         else:
             user.email = email
             user.type = user_type
+            user.db_manager = db_manager
         _record_observed(s, groups)
         s.flush()
         if not user.active:
@@ -341,8 +355,10 @@ def oidc_callback(request: Request) -> RedirectResponse:
         access_claims = validate_access_token(tokens.get("access_token", ""))
         user_type = map_user_type(access_claims)
         groups = map_groups(access_claims, id_claims)
+        db_manager = map_db_manager(access_claims)
         user_id = upsert_shadow_user(
-            id_claims["sub"], id_claims.get("email") or access_claims.get("email", ""), user_type, groups
+            id_claims["sub"], id_claims.get("email") or access_claims.get("email", ""), user_type, groups,
+            db_manager=db_manager,
         )
     except AccessNotGranted as exc:
         return _fail(str(exc), "acesso_negado")
@@ -355,6 +371,7 @@ def oidc_callback(request: Request) -> RedirectResponse:
         auth_method="oidc",
         user_type=user_type.value,
         groups=groups,
+        db_manager=db_manager,
         refresh_token_enc=encrypt_secret(tokens["refresh_token"]) if tokens.get("refresh_token") else None,
         id_token_enc=encrypt_secret(tokens["id_token"]),
         revalidate_at=utcnow() + timedelta(seconds=settings.oidc_revalidate_seconds),
@@ -408,8 +425,10 @@ def revalidate_session(session_id: str) -> bool:
             s.delete(sess)
             return False
         groups = map_groups(access_claims)
+        db_manager = map_db_manager(access_claims)
         sess.user_type = user_type.value
         sess.groups = groups
+        sess.db_manager = db_manager
         if tokens.get("refresh_token"):
             sess.refresh_token_enc = encrypt_secret(tokens["refresh_token"])
         if tokens.get("id_token"):
@@ -418,6 +437,7 @@ def revalidate_session(session_id: str) -> bool:
         user = s.get(User, sess.user_id)
         if user is not None:
             user.type = user_type
+            user.db_manager = db_manager
         _record_observed(s, groups)
         return True
 

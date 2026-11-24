@@ -152,6 +152,12 @@ def render_header(user: User) -> None:
     with ui.header().classes("items-center justify-between"):
         ui.label("AIDB").classes("text-xl font-bold cursor-pointer ap-brand").on("click", lambda: ui.navigate.to("/"))
         with ui.row().classes("items-center gap-2"):
+            from ..rbac import can_manage_catalog
+
+            if can_manage_catalog(user):
+                ui.button("Bancos de dados", on_click=lambda: ui.navigate.to("/databases")).props(
+                    "flat dense data-testid=nav-databases"
+                )
             if user.is_admin:
                 ui.button("Administração", on_click=lambda: ui.navigate.to("/admin")).props("flat dense")
             render_theme_menu(user)

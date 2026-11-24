@@ -844,19 +844,15 @@ MANIFEST_FILE = ".aidb/manifest.json"
 
 
 def connections_manifest(system_id: str) -> str:
-    """Conteúdo do manifesto: só nome e tipo de cada conexão do sistema, nenhuma credencial."""
+    """Conteúdo do manifesto: alias e tipo de cada conexão ativa no sistema, nenhuma credencial.
+
+    O alias ocupa o campo `name` (change add-db-manager-role): é o nome que o código usa
+    (`DATABASE_URL_<ALIAS>`); conexões autorizadas e não ativadas ficam de fora."""
     import json
 
-    from sqlalchemy import select
+    from .services.connections import active_connections
 
-    from .db import session_scope
-    from .models import DbConnection
-
-    with session_scope() as s:
-        rows = s.execute(
-            select(DbConnection.name, DbConnection.kind).where(DbConnection.system_id == system_id)
-            .order_by(DbConnection.name)
-        ).all()
+    rows = sorted((c.alias, c.kind) for c in active_connections(system_id))
     data = {"version": 1, "connections": [{"name": name, "kind": kind} for name, kind in rows]}
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 

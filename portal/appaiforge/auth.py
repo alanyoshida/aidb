@@ -54,10 +54,17 @@ class Principal:
     break_glass: bool
     group_names: tuple[str, ...] | None
     session_id: str | None = None
+    # Capacidade de DB Manager (change add-db-manager-role, D1): do banco no modo local, do
+    # snapshot do token no modo oidc.
+    db_manager: bool = False
 
     @property
     def is_admin(self) -> bool:
         return self.type == UserType.admin
+
+    @property
+    def is_db_manager(self) -> bool:
+        return self.db_manager
 
     @property
     def is_editor(self) -> bool:
@@ -75,6 +82,7 @@ def create_session(
     ttl: timedelta | None = None,
     user_type: str | None = None,
     groups: list[str] | None = None,
+    db_manager: bool | None = None,
     refresh_token_enc: str | None = None,
     id_token_enc: str | None = None,
     revalidate_at: datetime | None = None,
@@ -89,6 +97,7 @@ def create_session(
             auth_method=auth_method,
             user_type=user_type,
             groups=groups,
+            db_manager=db_manager,
             refresh_token_enc=refresh_token_enc,
             id_token_enc=id_token_enc,
             revalidate_at=revalidate_at,
@@ -167,9 +176,11 @@ def resolve_principal(token: str | None) -> Principal | None:
         if sess.auth_method == "oidc":
             user_type = UserType(sess.user_type)
             group_names: tuple[str, ...] | None = tuple(sess.groups or ())
+            db_manager = bool(sess.db_manager)
         else:
             user_type = user.type
             group_names = None
+            db_manager = bool(user.db_manager)
         return Principal(
             id=user.id,
             email=user.email,
@@ -180,6 +191,7 @@ def resolve_principal(token: str | None) -> Principal | None:
             break_glass=user.break_glass,
             group_names=group_names,
             session_id=sid,
+            db_manager=db_manager,
         )
 
 

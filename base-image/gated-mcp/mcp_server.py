@@ -7,7 +7,10 @@ escritas do agente passam pelo bash com permissionamento do opencode.
 
 Uso: python mcp_server.py "$DATABASE_URL" [kind] [access_mode]  (transport stdio)
 kind: "postgres" (padrão), "mysql" ou "bigquery"
-access_mode: "read_write" (padrão) ou "read_only"
+access_mode: "read_write" (padrão), "read_only" ou "schema_admin"
+
+As ferramentas são de leitura em qualquer modo. `schema_admin` (change add-db-manager-role) só
+muda a mensagem de recusa: a DDL liberada passa pelo proxy de banco no bash do agente, não aqui.
 """
 
 import asyncio
@@ -179,7 +182,13 @@ async def read_query(sql: str) -> str:
     """Executa uma consulta de LEITURA (SELECT/EXPLAIN). Escritas são sempre recusadas."""
     ok, reason = is_read_only(sql)
     if not ok:
-        msg = "conexão em modo somente-leitura" if ACCESS_MODE == "read_only" else "apenas leitura é permitida via MCP"
+        if ACCESS_MODE == "read_only":
+            msg = "conexão em modo somente-leitura"
+        elif ACCESS_MODE == "schema_admin":
+            msg = ("apenas leitura é permitida via MCP; a DDL está liberada nesta conexão, "
+                   "então altere o schema pelo bash (psql ou mysql)")
+        else:
+            msg = "apenas leitura é permitida via MCP"
         return json.dumps({"error": f"gate: {msg} — {reason}"})
     if DB_KIND == "bigquery":
         rows = await _bq_fetch(sql)

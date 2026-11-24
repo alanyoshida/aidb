@@ -116,6 +116,11 @@ Cada sistema roda isolado, com várias camadas independentes — uma falha numa 
 - **Segredos cifrados em repouso**: chaves de provedor de LLM e credenciais de conexão de banco
   ficam cifradas no Postgres do portal, nunca em texto puro
   ([ADR 0007](docs/adr/0007-metadados-em-postgres-e-credenciais-cifradas.md)).
+- **Catálogo de bancos com DB Manager**: as credenciais de banco ficam com quem tem a capacidade
+  de DB Manager, que autoriza cada conexão por sistema com um teto de modo de acesso; o dono do
+  sistema só ativa o que foi autorizado, com alias próprio, sem ver host nem usuário. A liberação
+  de DDL (`schema_admin`) vale só para o agente
+  ([ADR 0036](docs/adr/0036-catalogo-de-conexoes-autorizacao-e-ativacao.md)).
 - **Autenticação local ou SSO (OIDC)**, escolhida por ENV e travada na instalação, com admin
   break-glass; o acesso a cada app é verificado pelo portal a cada requisição e a app recebe a
   identidade num JWT restrito a ela ([ADR 0027](docs/adr/0027-sso-oidc-e-identidade-das-apps-por-forwardauth.md),

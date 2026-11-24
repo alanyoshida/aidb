@@ -44,7 +44,8 @@ def driver(monkeypatch):
     fake = _Driver()
     monkeypatch.setattr("appaiforge.drivers.get_driver", lambda: fake)
     monkeypatch.setattr(provisioning, "publish_app_by_slug", lambda slug: fake.calls.append(("publish", slug)))
-    monkeypatch.setattr(provisioning, "_check_connections_health", lambda sid: fake.calls.append(("health", sid)))
+    # saúde das conexões: uma checagem do catálogo por passada (change add-db-manager-role, D11)
+    monkeypatch.setattr(provisioning, "_check_connections_health", lambda: fake.calls.append(("health",)))
     return fake
 
 
@@ -167,7 +168,7 @@ def test_sistema_ocupado_e_pulado_e_reconciliado_na_passada_seguinte(editor, dri
         t.join(5)
     assert ("reconcile_one", free.slug) in driver.calls
     assert ("reconcile_one", busy.slug) not in driver.calls
-    assert ("health", busy.id) not in driver.calls
+    assert driver.calls.count(("health",)) == 1  # a saúde é do catálogo, checada uma vez na passada
 
     provisioning.reconcile()
     assert ("reconcile_one", busy.slug) in driver.calls
@@ -203,7 +204,7 @@ def test_sistemas_arquivados_e_em_provisionamento_sao_pulados(editor, driver):
     set_status(archived.id, SystemStatus.archived, "")
     provisioning_ = create_system(editor, "rl-provisionando", "rl-provisionando")  # nasce provisioning
     provisioning.reconcile()
-    assert driver.calls == []
+    assert driver.calls == [("health",)]  # só a checagem do catálogo, nenhum sistema tocado
     assert get_system(provisioning_.id).status == SystemStatus.provisioning
 
 
@@ -216,7 +217,7 @@ def test_passada_publica_a_rota_de_sistemas_ativos_e_em_erro(editor, driver):
 
     provisioning.reconcile()
 
-    published = {slug for call, slug in driver.calls if call == "publish"}
+    published = {call[1] for call in driver.calls if call[0] == "publish"}
     assert published == {active.slug, failed.slug}
 
 
@@ -231,7 +232,7 @@ def test_erro_inesperado_num_sistema_nao_interrompe_a_passada_nem_muda_o_estado(
     assert ("publish", ok.slug) in driver.calls
     after = get_system(broken.id)
     assert after.status == SystemStatus.active and after.status_message == "mensagem anterior"
-    assert ("health", broken.id) in driver.calls  # saúde das conexões checada mesmo assim
+    assert driver.calls[-1] == ("health",)  # saúde das conexões checada ao fim da passada mesmo assim
     assert ("publish", broken.slug) not in driver.calls
 
 
@@ -266,7 +267,7 @@ def test_portal_de_producao_remove_sistema_com_agente(editor, driver, monkeypatc
     system = _active(editor, "rl-agente-prod")
     monkeypatch.setattr("appaiforge.services.systems.is_production", lambda: True)
     provisioning.reconcile()
-    assert driver.calls == [("remove", system.slug)]
+    assert driver.calls == [("remove", system.slug), ("health",)]
     after = get_system(system.id)
     assert after.status == SystemStatus.error and "produção" in after.status_message
 

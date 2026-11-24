@@ -10,15 +10,48 @@ Toda SQL que toca os bancos das conexões passa pelo **gate** (classificador can
 |---|---|---|
 | **normal** | `DELETE FROM clientes WHERE id = $1` (escopo por chave) | executa sem atrito |
 | **confirmável** | `DELETE FROM clientes` ou `WHERE cidade = 'X'` | **sempre recusada** em `enforce` ([ADR 0023](adr/0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md)) |
-| **bloqueada** | DDL (`DROP`/`TRUNCATE`/`ALTER`/...) | **sempre recusada** |
+| **bloqueada** | DDL (`DROP`/`TRUNCATE`/`ALTER`/...) | **sempre recusada** (exceto pelo agente em `schema_admin`, abaixo) |
 
-Desde a etapa 4 do confinamento ([ADR 0021](adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)), o gate roda no **data plane**: cada sistema com conexão Postgres/MySQL ganha um **sidecar** (`<slug>-dbgate`, mesmo network namespace do container do sistema) que fala o protocolo de fio do banco e classifica cada statement antes de repassá-la — não depende de reconhecer SQL dentro de texto de bash, e cobre tanto o agente quanto a app gerada. O container do sistema nunca vê a credencial real: `DATABASE_URL_<NOME>` e o comando do MCP recebem um DSN de loopback sem usuário/senha; só o sidecar guarda o segredo e abre a conexão de verdade.
+Desde a etapa 4 do confinamento ([ADR 0021](adr/0021-gate-de-sql-no-data-plane-via-sidecar-proxy.md)), o gate roda no **data plane**: cada sistema com conexão Postgres/MySQL ganha um **sidecar** (`<slug>-dbgate`, mesmo network namespace do container do sistema) que fala o protocolo de fio do banco e classifica cada statement antes de repassá-la — não depende de reconhecer SQL dentro de texto de bash, e cobre tanto o agente quanto a app gerada. O container do sistema nunca vê a credencial real: `DATABASE_URL_<ALIAS>` e o comando do MCP recebem um DSN de loopback sem usuário/senha; só o sidecar guarda o segredo e abre a conexão de verdade.
 
-- **Pelo agente/app**: dois listeners por conexão (um para o agente/MCP, outro para a app gerada via `DATABASE_URL_<NOME>`) atribuem a origem sem ambiguidade. Em `enforce`, `bloqueada` e `confirmável` têm o **mesmo tratamento**: nenhuma das duas chega ao banco, nenhuma pede decisão de ninguém — o proxy recusa na hora (erro de protocolo ao cliente). Achado ao vivo que motivou isso ([ADR 0023](adr/0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md)): segurar `confirmável` e pedir aprovação por um card genérico deixava passar um `DELETE` sem `WHERE` disfarçado, se alguém aprovasse por hábito. Quando há uma run ativa do agente, a recusa aparece no chat com a statement e o motivo.
+- **Pelo agente/app**: dois listeners por conexão (um para o agente/MCP, outro para a app gerada via `DATABASE_URL_<ALIAS>`) atribuem a origem sem ambiguidade. Em `enforce`, `bloqueada` e `confirmável` têm o **mesmo tratamento**: nenhuma das duas chega ao banco, nenhuma pede decisão de ninguém — o proxy recusa na hora (erro de protocolo ao cliente). Achado ao vivo que motivou isso ([ADR 0023](adr/0023-confirmavel-recusado-direto-sem-pedir-aprovacao.md)): segurar `confirmável` e pedir aprovação por um card genérico deixava passar um `DELETE` sem `WHERE` disfarçado, se alguém aprovasse por hábito. Quando há uma run ativa do agente, a recusa aparece no chat com a statement e o motivo.
 - **Dois modos, por flag** (`DB_GATE_MODE`): `enforce` (default) torna o proxy o gate de verdade — `bloqueada`/`confirmável` são recusadas na hora e os globs de SQL somem do `permission.bash` do agente (ficam só os não-SQL); `shadow` classifica e **audita sem bloquear nada**, útil pra observar um sistema específico antes de confiar nele (`appaiforge compare-gate-decisions`, ver [roadmap](roadmap-confinamento-do-agente.md)). Trocar entre os dois é mudança de configuração, não de código.
 - **Na app gerada**: a camada `dbgate.py` (obrigatória nas guidelines) dispara um diálogo com a contagem estimada de linhas antes de executar operações confirmáveis; DDL é recusada — cinto-e-suspensório com o proxy, que já classifica a mesma statement antes dela chegar ao banco. Essa confirmação é da interface da app pros usuários dela, sem relação com o chat agente↔editor acima.
-- **Auditoria**: toda decisão (aprovada/recusada/bloqueada/sombra) fica na seção "Gate de destrutivas" da página do sistema, com autor, SQL, origem e data.
+- **Auditoria**: toda decisão (aprovada/recusada/bloqueada/sombra/liberada) fica na seção "Gate de destrutivas" da página do sistema, com autor, SQL, origem e data.
 - Apps geradas **antes** desta mudança migram para a camada na próxima edição pelo agente.
+
+### Modos de acesso por sistema e `schema_admin`
+
+As conexões ficam num catálogo gerido pelo DB Manager, que autoriza cada uma para um sistema
+com um **teto** de modo de acesso; o dono do sistema ativa a conexão num modo igual ou abaixo
+do teto ([ADR 0036](adr/0036-catalogo-de-conexoes-autorizacao-e-ativacao.md)). Os modos, em
+ordem:
+
+| Modo | MCP do agente | bash do agente (pelo proxy) | app gerada (pelo proxy) |
+|---|---|---|---|
+| `read_only` | só leitura | gate normal | gate normal |
+| `read_write` | só leitura | gate normal | gate normal |
+| `schema_admin` | só leitura | **DDL e DML em massa liberados** | gate normal (DDL recusada) |
+
+- **`schema_admin` vale só para o agente.** O sidecar libera `bloqueada` e `confirmável` apenas
+  no listener de origem `agente` de uma conexão nesse modo; o listener da app nunca recebe a
+  liberação, e a camada `dbgate.py` da app continua recusando DDL. Serve para o agente criar e
+  reestruturar tabelas no começo de um sistema.
+- **Toda statement liberada é auditada** como decisão `liberada` no histórico do gate, com a
+  classificação original (`bloqueada` ou `confirmável`). Não há aviso no chat: não é uma recusa.
+- **O rebaixamento é manual.** Enquanto a conexão estiver em `schema_admin`, a página do sistema e
+  a lista de autorizações do DB Manager mostram "DDL liberada desde <data>". O DB Manager pode
+  rebaixar o teto a qualquer momento; o modo vigente cai junto e o sistema é reprovisionado.
+- **Banco compartilhado.** Uma DDL feita por um sistema pode quebrar outro que usa o mesmo banco.
+  Ao conceder `schema_admin` numa conexão autorizada para outros sistemas, o portal lista esses
+  sistemas e pede confirmação.
+- **Em modo `shadow` o `schema_admin` não muda nada**, porque em sombra nada é recusado.
+- **BigQuery não tem `schema_admin`**: o MCP dele é só leitura e ele não passa pelo proxy.
+
+**Limitação conhecida: `read_only` só vale no MCP.** O proxy não distingue `read_only` de
+`read_write`: o bash do agente e a app gerada ainda conseguem escrever (DML escopado) numa
+conexão ativa em `read_only`. Para isolamento real de leitura, cadastre no catálogo uma conexão
+com um usuário de banco que só tenha permissão de leitura.
 
 ## Confinamento do agente
 

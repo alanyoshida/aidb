@@ -235,7 +235,7 @@ def _wait_decision(system_id: str, sql: str, deadline_s: float = 5) -> dict:
     raise AssertionError(f"nenhuma decisão para {sql!r} em {deadline_s}s: {last}")
 
 
-def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_portal, live_pg, monkeypatch):
+def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_portal, live_pg, monkeypatch, register_connection):
     """Task 8.1 (revista): `DELETE FROM clientes` (sem WHERE, confirmável)
     em modo enforce é recusada pelo proxy na hora, sem segurar a conexão
     nem pedir decisão a um humano — mesmo tratamento de uma DDL. Os dados
@@ -250,7 +250,7 @@ def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_p
 
     _setup_clientes_table(live_pg)
     provision_system(system)
-    connections.register_connection(
+    register_connection(
         system, "vendas", dbgate_portal, live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"],
     )
     _wait_sidecar_running(system.slug)
@@ -269,7 +269,7 @@ def test_confirmavel_em_enforce_e_recusada_direto_sem_aprovacao(system, dbgate_p
     assert decision["classification"] == "confirmavel"
 
 
-def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, monkeypatch):
+def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, monkeypatch, register_connection):
     """Task 8.2: modo sombra não segura nem bloqueia nada — só audita o que
     teria acontecido em cada classificação. Shadow não é mais o default da
     plataforma (task 7.3) — monkeypatch explícito aqui."""
@@ -283,7 +283,7 @@ def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, mo
 
     _setup_clientes_table(live_pg)
     provision_system(system)
-    connections.register_connection(
+    register_connection(
         system, "vendas", dbgate_portal, live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"],
     )
     _wait_sidecar_running(system.slug)
@@ -301,7 +301,7 @@ def test_modo_sombra_executa_tudo_e_so_audita(system, dbgate_portal, live_pg, mo
     assert any(d["sql"] == "DELETE FROM clientes" and d["decision"] == "sombra" for d in decisions)
 
 
-def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_portal, live_pg, monkeypatch):
+def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_portal, live_pg, monkeypatch, register_connection):
     """Task 8.3 (revista): a mesma statement confirmável, vinda do listener
     da app (porta "app" do manifesto), é recusada igual à do agente e
     audita com `origin="app"` — distinto do que viria do listener do
@@ -317,7 +317,7 @@ def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_po
 
     _setup_clientes_table(live_pg)
     provision_system(system)
-    connections.register_connection(
+    register_connection(
         system, "vendas", dbgate_portal, live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"],
     )
     _wait_sidecar_running(system.slug)
@@ -334,7 +334,7 @@ def test_confirmavel_da_app_registra_origin_distinta_do_agente(system, dbgate_po
     assert app_decision["decision"] == "bloqueada"
 
 
-def test_app_gerada_funciona_pelo_proxy_sem_credencial_no_env(system, dbgate_portal, live_pg):
+def test_app_gerada_funciona_pelo_proxy_sem_credencial_no_env(system, dbgate_portal, live_pg, register_connection):
     """Task 8.4: `DATABASE_URL_<NOME>` do container não carrega credencial
     (loopback puro) e, ainda assim, uma consulta real através dele funciona
     de ponta a ponta — o proxy injeta a credencial de verdade no upstream."""
@@ -343,7 +343,7 @@ def test_app_gerada_funciona_pelo_proxy_sem_credencial_no_env(system, dbgate_por
     from appaiforge.services import connections
 
     provision_system(system)
-    connections.register_connection(
+    register_connection(
         system, "vendas", dbgate_portal, live_pg["port"], live_pg["database"], live_pg["username"], live_pg["password"],
     )
     _wait_sidecar_running(system.slug)

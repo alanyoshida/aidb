@@ -24,7 +24,7 @@ from . import telemetry
 from .config import get_settings
 from .db import session_scope
 from .edge import publish_app, system_container_name, unpublish_app
-from .models import ChatSession, DbConnection, ExecutionMode, ProviderKey, System, SystemStatus
+from .models import ChatSession, ExecutionMode, ProviderKey, System, SystemStatus
 from .security import decrypt_secret
 from .services.connections import connection_string, get_connection_secret
 
@@ -221,56 +221,79 @@ def _loopback_dsn(kind: str, port: int, database: str) -> str:
 
 
 def db_connections_manifest(system_id: str) -> list[dict]:
-    """Conexões Postgres/MySQL do sistema com a credencial real e as duas
+    """Conexões Postgres/MySQL ativas no sistema com a credencial real e as duas
     portas de loopback (agente/app, D4) — vai só no env do sidecar (task
     5.1/5.2), nunca no do sistema. BigQuery fica fora: é HTTPS, não passa
-    pelo proxy de wire protocol (Non-Goals do design)."""
-    with session_scope() as s:
-        conns = s.execute(
-            select(DbConnection)
-            .where(DbConnection.system_id == system_id, DbConnection.kind.in_(["postgres", "mysql"]))
-            .order_by(DbConnection.created_at)
-        ).scalars().all()
-        conn_ids = [c.id for c in conns]
+    pelo proxy de wire protocol (Non-Goals do design).
+
+    Desde a change add-db-manager-role (D6, D8) a entrada é identificada pelo alias da
+    ativação, e leva o modo vigente: o sidecar libera DDL no listener do agente só em
+    `schema_admin`."""
+    from .services.connections import active_connections
+
     manifest = []
-    for i, conn_id in enumerate(conn_ids):
-        conn, secret = get_connection_secret(conn_id)
+    proxied = [c for c in active_connections(system_id) if c.kind in ("postgres", "mysql")]
+    for i, active in enumerate(proxied):
+        conn, secret = get_connection_secret(active.connection_id)
         agent_port = DB_GATE_PORT_BASE + i * 2
         manifest.append({
-            "name": conn.name,
-            "kind": conn.kind,
+            "name": active.alias,
+            "kind": active.kind,
             "dsn": connection_string(conn, secret),
-            "database": conn.database,
+            "database": active.database,
             "agent_port": agent_port,
             "app_port": agent_port + 1,
+            "mode": active.mode,
         })
     return manifest
 
 
 def _connection_env(system_id: str, manifest: list[dict]) -> dict[str, str]:
-    """`DATABASE_URL_<NOME>` do container do sistema — loopback (porta
+    """`DATABASE_URL_<ALIAS>` do container do sistema — loopback (porta
     `app`) sem credencial para Postgres/MySQL; BigQuery segue com a
-    credencial real (não tem sidecar, é HTTPS)."""
-    from .services.connections import get_connection_secret
+    credencial real (não tem sidecar, é HTTPS). Só conexões ativas."""
+    from .services.connections import active_connections, get_connection_secret
 
     manifest_by_name = {m["name"]: m for m in manifest}
     env: dict[str, str] = {}
-    with session_scope() as s:
-        conns = s.execute(select(DbConnection).where(DbConnection.system_id == system_id)).scalars().all()
-        rows = [(c.id, c.name, c.kind, c.database) for c in conns]
-    for conn_id, name, kind, database in rows:
-        key = _env_name(name)
-        entry = manifest_by_name.get(name)
+    for active in active_connections(system_id):
+        entry = manifest_by_name.get(active.alias)
         if entry is not None:
-            env[f"DATABASE_URL_{key}"] = _loopback_dsn(kind, entry["app_port"], database)
+            env[f"DATABASE_URL_{active.env_name}"] = _loopback_dsn(active.kind, entry["app_port"], active.database)
         else:  # bigquery (ou kind fora do proxy): sem sidecar, credencial real como antes
-            conn, secret = get_connection_secret(conn_id)
-            env[f"DATABASE_URL_{key}"] = connection_string(conn, secret)
+            conn, secret = get_connection_secret(active.connection_id)
+            env[f"DATABASE_URL_{active.env_name}"] = connection_string(conn, secret)
     return env
 
 
 def _env_name(name: str) -> str:
     return re.sub(r"[^A-Z0-9]", "_", name.upper())
+
+
+_MODE_TOOL_SUFFIX = {"read_only": " (somente-leitura)", "schema_admin": " (DDL liberada)"}
+
+
+def _agent_db_tools(system_id: str, manifest: list[dict]) -> list[tuple[str, str, list[str]]]:
+    """(alias, rótulo, argumentos do gated-mcp) de cada conexão ativa — o mesmo para os dois
+    perfis de agente. O rótulo leva a descrição do catálogo e o modo vigente (spec "Contexto
+    da conexão exposto ao agente"); a chave estável é o alias."""
+    from .services.connections import active_connections
+
+    manifest_by_name = {m["name"]: m for m in manifest}
+    tools = []
+    for active in active_connections(system_id):
+        entry = manifest_by_name.get(active.alias)
+        if entry is not None:
+            url = _loopback_dsn(active.kind, entry["agent_port"], active.database)
+        else:
+            conn, secret = get_connection_secret(active.connection_id)
+            url = connection_string(conn, secret)
+        label = active.alias
+        if active.description:
+            label = f"{label} [{active.description}]"
+        label += _MODE_TOOL_SUFFIX.get(active.mode, "")
+        tools.append((active.alias, label, ["/opt/gated-mcp/mcp_server.py", url, active.kind, active.mode]))
+    return tools
 
 
 def _bash_permission_globs() -> dict[str, str]:
@@ -309,27 +332,11 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
 
     provider = catalog.get_provider(system.provider)
     provider_id = provider["provider_id"] if provider else system.provider
-    manifest_by_name = {m["name"]: m for m in manifest}
     mcp: dict = {}
-    with session_scope() as s:
-        conns = s.execute(select(DbConnection).where(DbConnection.system_id == system.id)).scalars().all()
-        conn_data = [(c.id, c.name) for c in conns]
-    for conn_id, conn_name in conn_data:
-        conn, secret = get_connection_secret(conn_id)
-        entry = manifest_by_name.get(conn_name)
-        url = _loopback_dsn(conn.kind, entry["agent_port"], conn.database) if entry is not None else connection_string(conn, secret)
-        tool_name = conn_name
-        if conn.description:
-            tool_name = f"{tool_name} [{conn.description}]"
-        if conn.access_mode == "read_only":
-            tool_name = f"{tool_name} (somente-leitura)"
-        # MCP de LEITURA própria (D2 refinado): escritas do agente passam pelo bash,
-        # que é permissionado (spike 2.1 — permissões do opencode não cobrem ferramentas MCP)
-        mcp[tool_name] = {
-            "type": "local",
-            "command": ["python", "/opt/gated-mcp/mcp_server.py", url, conn.kind, conn.access_mode],
-            "enabled": True,
-        }
+    # MCP de LEITURA própria (D2 refinado): escritas do agente passam pelo bash,
+    # que é permissionado (spike 2.1 — permissões do opencode não cobrem ferramentas MCP)
+    for _alias, label, args in _agent_db_tools(system.id, manifest):
+        mcp[label] = {"type": "local", "command": ["python", *args], "enabled": True}
     config = {
         "$schema": "https://opencode.ai/config.json",
         "model": f"{provider_id}/{system.model}",
@@ -375,7 +382,7 @@ def write_opencode_config(system: System, config_dir: str, manifest: list[dict])
 
 
 def write_claude_code_config(system: System, config_dir: str, manifest: list[dict]) -> None:
-    """Gera settings.json (D3) e, quando o sistema tem alguma DbConnection,
+    """Gera settings.json (D3) e, quando o sistema tem alguma conexão ativa,
     mcp-servers.json (D6) do sistema claude-code.
 
     settings.json: só `{"env": {"ANTHROPIC_BASE_URL": ...}}` — a credencial
@@ -401,22 +408,11 @@ def write_claude_code_config(system: System, config_dir: str, manifest: list[dic
     with open(os.path.join(config_dir, "settings.json"), "w") as f:
         json.dump(settings_payload, f, indent=2)
 
-    manifest_by_name = {m["name"]: m for m in manifest}
-    with session_scope() as s:
-        conns = s.execute(select(DbConnection).where(DbConnection.system_id == system.id)).scalars().all()
-        conn_data = [(c.id, c.name) for c in conns]
-    if not conn_data:
+    tools = _agent_db_tools(system.id, manifest)
+    if not tools:
         return
 
-    mcp_servers: dict = {}
-    for conn_id, conn_name in conn_data:
-        conn, secret = get_connection_secret(conn_id)
-        entry = manifest_by_name.get(conn_name)
-        url = _loopback_dsn(conn.kind, entry["agent_port"], conn.database) if entry is not None else connection_string(conn, secret)
-        mcp_servers[conn_name] = {
-            "command": "python",
-            "args": ["/opt/gated-mcp/mcp_server.py", url, conn.kind, conn.access_mode],
-        }
+    mcp_servers = {alias: {"command": "python", "args": args} for alias, _label, args in tools}
     with open(os.path.join(config_dir, "mcp-servers.json"), "w") as f:
         json.dump({"mcpServers": mcp_servers}, f, indent=2)
 
@@ -678,7 +674,7 @@ def reconcile() -> None:
     - unidade presente: sidecars ausentes são recriados (driver Docker) e a rota é republicada;
     - num portal de produção, sistema com agente tem a unidade removida e fica em erro;
     - unidade com o nome tomado por outra instalação: o sistema fica em erro e nada é tocado;
-    - a saúde das conexões de banco do sistema é checada.
+    - ao fim da passada, a saúde das conexões do catálogo é checada, uma vez por conexão.
 
     A reconciliação não disputa as operações do próprio portal: tenta a trava do sistema
     (`system_operation_lock`) sem esperar e pula o sistema ocupado nesta passada; com a trava,
@@ -701,6 +697,7 @@ def reconcile() -> None:
             log.exception("reconciliação do sistema %s falhou", system_id)
         finally:
             lock.release()
+    _check_connections_health()
 
 
 def _reconcile_system(driver, system_id: str) -> None:
@@ -719,24 +716,21 @@ def _reconcile_system(driver, system_id: str) -> None:
                    "este portal é de produção: sistemas com agente não são provisionados")
         return
     try:
+        driver.reconcile_one(system_id, slug)
+        publish_app_by_slug(slug)
+    except ComputeUnitOwnedElsewhere as exc:
+        # o nome está com outro dono (add-production-portal-install, D2): não toca nele
+        log.warning("reconciliação de %s: %s", slug, exc)
+        set_status(system_id, SystemStatus.error, str(exc))
+    except ComputeUnitNotFound:
+        log.warning("reconciliação: unidade de execução ausente para %s; recriando", slug)
         try:
-            driver.reconcile_one(system_id, slug)
+            provision_system(system)  # recria sistema + sidecar juntos (task 5.4)
             publish_app_by_slug(slug)
-        except ComputeUnitOwnedElsewhere as exc:
-            # o nome está com outro dono (add-production-portal-install, D2): não toca nele
-            log.warning("reconciliação de %s: %s", slug, exc)
-            set_status(system_id, SystemStatus.error, str(exc))
-        except ComputeUnitNotFound:
-            log.warning("reconciliação: unidade de execução ausente para %s; recriando", slug)
-            try:
-                provision_system(system)  # recria sistema + sidecar juntos (task 5.4)
-                publish_app_by_slug(slug)
-            except Exception as exc:  # falha visível no estado do sistema
-                set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
-            else:
-                set_status(system_id, SystemStatus.active, "")  # design D5
-    finally:
-        _check_connections_health(system_id)
+        except Exception as exc:  # falha visível no estado do sistema
+            set_status(system_id, SystemStatus.error, f"reconciliação falhou: {exc}")
+        else:
+            set_status(system_id, SystemStatus.active, "")  # design D5
 
 
 def start_reconcile_loop(interval: float | None = None, stop: threading.Event | None = None) -> threading.Thread:
@@ -769,19 +763,16 @@ def start_reconcile_loop(interval: float | None = None, stop: threading.Event | 
     return thread
 
 
-def _check_connections_health(system_id: str) -> None:
-    """Verifica saúde de cada conexão do sistema; erros por conexão são silenciados."""
-    from .services.connections import check_connection_health
+def _check_connections_health() -> None:
+    """Saúde das conexões do catálogo, uma vez por conexão e por passada (change
+    add-db-manager-role, D11): uma conexão usada por vários sistemas é checada uma vez só, e uma
+    ainda não autorizada também é checada, para quem gere o catálogo ver o estado antes."""
+    from .services.connections import check_all_connections_health
 
-    with session_scope() as s:
-        conn_ids = [
-            c.id for c in s.execute(select(DbConnection).where(DbConnection.system_id == system_id)).scalars()
-        ]
-    for conn_id in conn_ids:
-        try:
-            check_connection_health(conn_id)
-        except Exception:
-            log.exception("health check falhou para conexão %s", conn_id)
+    try:
+        check_all_connections_health()
+    except Exception:  # noqa: BLE001 - a saúde não derruba a passada
+        log.exception("checagem de saúde das conexões falhou")
 
 
 def publish_app_by_slug(slug: str) -> None:

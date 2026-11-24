@@ -110,3 +110,60 @@ def test_no_modo_oidc_membros_do_banco_nao_contam(users):
     # a mesma pessoa, entrando pelo IdP sem o grupo no token, não acessa
     assert not can_access_system(_oidc_principal(users["app_user"], ()), sys_id)
     assert can_access_system(users["app_user"], sys_id)
+
+
+# --- Capacidade de DB Manager (change add-db-manager-role, D1) ---
+
+def _set_db_manager(user: User, value: bool = True) -> User:
+    from appaiforge.db import session_scope
+
+    with session_scope() as s:
+        s.get(User, user.id).db_manager = value
+    user.db_manager = value
+    return user
+
+
+def test_catalogo_admin_sem_a_capacidade(users):
+    from appaiforge.rbac import can_manage_catalog
+
+    assert can_manage_catalog(users["admin"])
+
+
+def test_catalogo_editor_com_a_capacidade(users):
+    from appaiforge.rbac import can_manage_catalog
+
+    assert can_manage_catalog(_set_db_manager(users["editor"]))
+
+
+def test_catalogo_app_user_com_a_capacidade(users):
+    from appaiforge.rbac import can_manage_catalog
+
+    assert can_manage_catalog(_set_db_manager(users["app_user"]))
+
+
+def test_catalogo_recusado_sem_a_capacidade(users):
+    from appaiforge.rbac import can_manage_catalog
+
+    assert not can_manage_catalog(users["editor"])
+    assert not can_manage_catalog(users["app_user"])
+
+
+def test_principal_local_le_a_capacidade_do_banco(users):
+    _set_db_manager(users["editor"])
+    token = auth.create_session(users["editor"].id)
+    principal = auth.resolve_principal(token)
+    assert principal.is_db_manager
+    assert principal.type == UserType.editor
+    assert not auth.resolve_principal(auth.create_session(users["editor2"].id)).is_db_manager
+
+
+def test_principal_oidc_le_a_capacidade_do_snapshot(users):
+    # no modo oidc vale o snapshot da sessão, não o indicador do usuário
+    token = auth.create_session(
+        users["app_user"].id, auth_method="oidc", user_type="editor", groups=[], db_manager=True,
+    )
+    principal = auth.resolve_principal(token)
+    assert principal.is_db_manager and principal.type == UserType.editor
+    _set_db_manager(users["editor2"])
+    token2 = auth.create_session(users["editor2"].id, auth_method="oidc", user_type="editor", groups=[])
+    assert not auth.resolve_principal(token2).is_db_manager

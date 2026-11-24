@@ -316,3 +316,53 @@ def desativa():
 @then("nada novo chega ao remoto")
 def nada_novo():
     assert _server().git("rev-parse", "homolog") == _ctx["remote_before"]
+
+
+# --- Manifesto de conexões pelo alias (change add-db-manager-role) ---
+
+def _grant(alias: str, kind: str, active: bool) -> None:
+    from appaiforge.db import session_scope
+    from appaiforge.models import DbConnection, DbConnectionGrant
+
+    with session_scope() as s:
+        conn = DbConnection(name=f"Catálogo {alias}", kind=kind, host="db.interno", port=5432,
+                            database="base_secreta", username="usuario_secreto", password_encrypted="cifrado")
+        s.add(conn)
+        s.flush()
+        s.add(DbConnectionGrant(connection_id=conn.id, system_id=_ctx["system"].id, max_mode="read_write",
+                                mode="read_write", active=active, alias=alias if active else None,
+                                alias_key=alias.upper() if active else None))
+
+
+@given(parsers.parse('as conexões ativas "{a}" ({kind_a}) e "{b}" ({kind_b}) no sistema'))
+def conexoes_ativas(a, kind_a, b, kind_b):
+    _grant(a, kind_a, True)
+    _grant(b, kind_b, True)
+
+
+@given(parsers.parse('a conexão "{alias}" autorizada e não ativada no sistema'))
+def conexao_nao_ativada(alias):
+    _grant(alias, "postgres", False)
+
+
+@when("um checkpoint é criado com o manifesto de conexões")
+def checkpoint_com_manifesto():
+    novo_checkpoint()
+
+
+def _remote_manifest() -> str:
+    return _server().git("show", "homolog:.aidb/manifest.json")
+
+
+@then(parsers.parse('o manifesto no remoto lista "{a}" ({kind_a}) e "{b}" ({kind_b})'))
+def manifesto_lista(a, kind_a, b, kind_b):
+    assert json.loads(_remote_manifest())["connections"] == [
+        {"name": a, "kind": kind_a}, {"name": b, "kind": kind_b},
+    ]
+
+
+@then("o manifesto no remoto não tem endereço, usuário nem nome do catálogo")
+def manifesto_sem_segredo():
+    raw = _remote_manifest()
+    for secret in ("db.interno", "5432", "base_secreta", "usuario_secreto", "cifrado", "Catálogo"):
+        assert secret not in raw

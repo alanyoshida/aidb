@@ -10,11 +10,13 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     JSON,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -89,6 +91,10 @@ class User(Base):
     idp_subject: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     # Admin de emergência definido por ENV; não é gerenciável pela UI.
     break_glass: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Capacidade de DB Manager (change add-db-manager-role, D1): soma-se ao tipo global e
+    # permite gerir o catálogo de conexões e as autorizações por sistema. No modo oidc é
+    # atualizada a cada login a partir do papel `db_manager` do token.
+    db_manager: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     @property
@@ -98,6 +104,10 @@ class User(Base):
     @property
     def is_editor(self) -> bool:
         return self.type == UserType.editor
+
+    @property
+    def is_db_manager(self) -> bool:
+        return bool(self.db_manager)
 
 
 class Session(Base):
@@ -112,6 +122,8 @@ class Session(Base):
     # Snapshot da identidade vinda do token (modo oidc): tipo global e nomes de grupos.
     user_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     groups: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Snapshot da capacidade de DB Manager vinda do token (modo oidc; nulo no modo local).
+    db_manager: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # Tokens do IdP cifrados (Fernet): refresh para revalidar, id_token para o logout.
     refresh_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     id_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -203,13 +215,18 @@ class SystemGroup(Base):
     group_id: Mapped[str] = mapped_column(ForeignKey("groups.id"), primary_key=True)
 
 
+# Modos de acesso de uma conexão num sistema, em ordem crescente (change add-db-manager-role, D5).
+ACCESS_MODES = ("read_only", "read_write", "schema_admin")
+
+
 class DbConnection(Base):
+    """Conexão do catálogo de bancos (change add-db-manager-role, D3): não pertence a nenhum
+    sistema; chega a um sistema por uma `DbConnectionGrant` ativa."""
+
     __tablename__ = "db_connections"
-    __table_args__ = (UniqueConstraint("system_id", "name", name="uq_connection_per_system"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
-    name: Mapped[str] = mapped_column(String(120))
+    name: Mapped[str] = mapped_column(String(120), unique=True)
     kind: Mapped[str] = mapped_column(String(20), default="postgres")
     host: Mapped[str] = mapped_column(String(255))
     port: Mapped[int] = mapped_column(Integer, default=5432)
@@ -217,10 +234,56 @@ class DbConnection(Base):
     username: Mapped[str] = mapped_column(String(255))
     password_encrypted: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    access_mode: Mapped[str] = mapped_column(String(20), default="read_write")
     status: Mapped[str] = mapped_column(String(20), default="unknown")
     status_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DbConnectionGrant(Base):
+    """Autorização de uma conexão do catálogo para um sistema (D3).
+
+    `max_mode` é o teto definido por quem gere o catálogo; `active`, `alias` e `mode` são do
+    dono do sistema. O alias vira `DATABASE_URL_<ALIAS>` e o nome da ferramenta do agente;
+    `alias_key` é o alias normalizado para a variável de ambiente, único entre as ativas."""
+
+    __tablename__ = "db_connection_grants"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "system_id", name="uq_grant_connection_system"),
+        Index(
+            "uq_grant_active_alias", "system_id", "alias_key", unique=True,
+            postgresql_where=text("active"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("db_connections.id"), index=True)
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
+    max_mode: Mapped[str] = mapped_column(String(20), default="read_write")
+    active: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    alias: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    alias_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    mode: Mapped[str] = mapped_column(String(20), default="read_write")
+    schema_admin_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    granted_by_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class SystemConnectionNotice(Base):
+    """Aviso ao dono do sistema sobre uma ação de quem gere o catálogo que mudou o que o
+    sistema recebe (D9). Guarda nome e alias como texto: a autorização e a conexão podem
+    não existir mais."""
+
+    __tablename__ = "system_connection_notices"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    system_id: Mapped[str] = mapped_column(ForeignKey("systems.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    connection_name: Mapped[str] = mapped_column(String(120))
+    alias: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AllowedDomain(Base):
@@ -413,7 +476,7 @@ class GateDecision(Base):
     sql: Mapped[str] = mapped_column(Text)
     connection_name: Mapped[str] = mapped_column(String(120), default="")
     classification: Mapped[str] = mapped_column(String(12))  # normal | confirmavel | bloqueada
-    decision: Mapped[str] = mapped_column(String(10))  # aprovada | recusada | bloqueada
+    decision: Mapped[str] = mapped_column(String(10))  # aprovada | recusada | bloqueada | sombra | liberada
     author_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     author_email: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

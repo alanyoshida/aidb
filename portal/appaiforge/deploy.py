@@ -23,7 +23,7 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import session_scope
 from .git_backend import GitError, get_backend
-from .models import DbConnection, Deployment, DeploySettings, System, SystemStatus, User
+from .models import Deployment, DeploySettings, System, SystemStatus, User
 from .security import decrypt_secret, encrypt_secret
 
 log = logging.getLogger(__name__)
@@ -217,11 +217,10 @@ def check_manifest(system: System, sha: str) -> str:
         required = [str(c["name"]) for c in json.loads(raw).get("connections", [])]
     except (ValueError, TypeError, KeyError, AttributeError):
         return "o manifesto de conexões da versão é inválido; as conexões não foram conferidas"
-    with session_scope() as s:
-        existing = {
-            _env_name(name)
-            for name in s.execute(select(DbConnection.name).where(DbConnection.system_id == system.id)).scalars()
-        }
+    from .services.connections import active_connections
+
+    # só conexões ativas, pelo alias (change add-db-manager-role): é o que vira variável de ambiente
+    existing = {c.env_name for c in active_connections(system.id)}
     missing = [name for name in required if _env_name(name) not in existing]
     if missing:
         raise MissingConnections(missing)
