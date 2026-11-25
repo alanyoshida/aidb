@@ -672,6 +672,11 @@ def reconcile() -> None:
       divergentes da configuração — é recriada (`provision_system`) e a rota republicada; um
       sistema recriado com sucesso volta a ativo sem mensagem; falha ao recriar deixa em erro;
     - unidade presente: sidecars ausentes são recriados (driver Docker) e a rota é republicada;
+    - unidade presente mas parada (driver Docker; `docker stop` ou morta pelo daemon — com
+      `unless-stopped` o Docker não a religa): o mesmo container é religado, sem recriar nem trocar
+      a imagem, e os sidecars presentes são reiniciados depois dele, porque usam a rede dele; com o
+      container rodando, só o sidecar parado é religado. A reconciliação não muda o estado do
+      sistema ao religar: o monitor de saúde o devolve a ativo quando a app responde;
     - num portal de produção, sistema com agente tem a unidade removida e fica em erro;
     - unidade com o nome tomado por outra instalação: o sistema fica em erro e nada é tocado;
     - ao fim da passada, a saúde das conexões do catálogo é checada, uma vez por conexão.

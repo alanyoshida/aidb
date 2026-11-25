@@ -153,8 +153,15 @@ class DockerProvisioningDriver:
         owner = owner_description(system_container.labels, system_id, installation_id())
         if owner is not None:
             raise ComputeUnitOwnedElsewhere(name, owner)
-        self._reconcile_dbgate_sidecar(system_id, slug, system_container.id)
-        self._reconcile_httpsproxy_sidecar(system_id, slug, system_container.id)
+        # presente mas parado (`docker stop`, morto pelo daemon): com `unless-stopped` o Docker
+        # não religa sozinho — religa o mesmo container, sem recriar (change
+        # reconcile-restart-stopped-container, D1). O estado do sistema fica com o monitor de saúde.
+        system_restarted = system_container.status in _STOPPED_STATES
+        if system_restarted:
+            log.warning("reconciliação: container de %s parado (%s); religando", slug, system_container.status)
+            system_container.start()
+        self._reconcile_dbgate_sidecar(system_id, slug, system_container.id, system_restarted)
+        self._reconcile_httpsproxy_sidecar(system_id, slug, system_container.id, system_restarted)
 
     def refresh_https_allowlist(self, system: System) -> None:
         self._provision_httpsproxy_sidecar(system, system.container_id)
@@ -285,9 +292,13 @@ class DockerProvisioningDriver:
             restart_policy={"Name": "unless-stopped"},
         )
 
-    def _reconcile_dbgate_sidecar(self, system_id: str, slug: str, system_container_id: str) -> None:
+    def _reconcile_dbgate_sidecar(
+        self, system_id: str, slug: str, system_container_id: str, system_restarted: bool = False
+    ) -> None:
         """Sistema presente, mas o sidecar sumiu sozinho (removido manualmente, OOM-killed sem
-        restart etc.) — recria só ele, sem derrubar sessões do agente nem o container do sistema."""
+        restart etc.) — recria só ele, sem derrubar sessões do agente nem o container do sistema.
+        Sidecar presente: religado se parado, ou reiniciado se o sistema acabou de ser religado
+        (`_revive_sidecar`)."""
         from .. import provisioning as _p
 
         manifest = _p.db_connections_manifest(system_id)
@@ -295,10 +306,12 @@ class DockerProvisioningDriver:
             return
         client = _docker()
         try:
-            client.containers.get(_p.dbgate_sidecar_name(slug))
-            return
+            sidecar = client.containers.get(_p.dbgate_sidecar_name(slug))
         except docker.errors.NotFound:
             pass
+        else:
+            _revive_sidecar(sidecar, system_id, slug, system_restarted)
+            return
         log.warning("reconciliação: sidecar de gate de banco ausente para %s; recriando", slug)
         from ..services.systems import get_system
 
@@ -306,23 +319,48 @@ class DockerProvisioningDriver:
         if system is not None:
             self._provision_dbgate_sidecar(system, system_container_id, manifest)
 
-    def _reconcile_httpsproxy_sidecar(self, system_id: str, slug: str, system_container_id: str) -> None:
+    def _reconcile_httpsproxy_sidecar(
+        self, system_id: str, slug: str, system_container_id: str, system_restarted: bool = False
+    ) -> None:
         """Mesmo racional do `_reconcile_dbgate_sidecar`, pro proxy HTTP(S) de saída — esse sobe
         sempre (nunca condicional a manifesto)."""
         from .. import provisioning as _p
 
         client = _docker()
         try:
-            client.containers.get(_p.httpsproxy_sidecar_name(slug))
-            return
+            sidecar = client.containers.get(_p.httpsproxy_sidecar_name(slug))
         except docker.errors.NotFound:
             pass
+        else:
+            _revive_sidecar(sidecar, system_id, slug, system_restarted)
+            return
         log.warning("reconciliação: sidecar do proxy HTTP(S) ausente para %s; recriando", slug)
         from ..services.systems import get_system
 
         system = get_system(system_id)
         if system is not None:
             self._provision_httpsproxy_sidecar(system, system_container_id)
+
+
+# Estados em que o container existe mas não está rodando e aceita `start` (D1). `restarting`
+# e `paused` ficam como estão; `dead` não aceita `start` e o erro sobe como falha do sistema.
+_STOPPED_STATES = ("created", "exited")
+
+
+def _revive_sidecar(sidecar, system_id: str, slug: str, system_restarted: bool) -> None:
+    """Sidecar presente (D2 de reconcile-restart-stopped-container). Ele usa a rede do container
+    do sistema (`network_mode: container:<id>`): se o sistema acabou de ser religado, o sidecar
+    que ficou rodando está preso à rede antiga, então é reiniciado (`restart` também liga um
+    parado); com o sistema rodando, só o sidecar parado é religado. Sidecar de outro dono
+    não é tocado."""
+    if owner_description(sidecar.labels, system_id, installation_id()) is not None:
+        return
+    if system_restarted:
+        log.warning("reconciliação: reiniciando %s depois de religar o sistema %s", sidecar.name, slug)
+        sidecar.restart()
+    elif sidecar.status in _STOPPED_STATES:
+        log.warning("reconciliação: sidecar %s parado (%s); religando", sidecar.name, sidecar.status)
+        sidecar.start()
 
 
 def _own_container(client: docker.DockerClient, name: str, system_id: str):
