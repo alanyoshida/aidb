@@ -9,8 +9,8 @@
 | `PROVISIONING_DRIVER` | `docker` | `kubernetes` materializa cada sistema como Pod — ver [driver Kubernetes](driver-kubernetes.md) |
 | `HARNESS_MODE` | `opencode` (no compose: `fake`) | `fake` = agente determinístico sem LLM (dev/E2E) |
 | `FAKE_DELAY` | `0.15` | ritmo do harness fake em segundos |
-| `BASE_IMAGE` | `appaiforge/base:1.13.0` | imagem dos containers de sistema e dos sidecars (no chart, `portal.baseImage`) |
-| `CLAUDE_CODE_IMAGE` | `appaiforge/claude-code:1.13.0` | imagem dos sistemas com o perfil de agente `claude-code` (no chart, `portal.claudeCodeImage`) |
+| `BASE_IMAGE` | `appaiforge/base:1.13.1` | imagem dos containers de sistema e dos sidecars (no chart, `portal.baseImage`) |
+| `CLAUDE_CODE_IMAGE` | `appaiforge/claude-code:1.13.1` | imagem dos sistemas com o perfil de agente `claude-code` (no chart, `portal.claudeCodeImage`) |
 | `K8S_IMAGE_PULL_SECRETS` | — | driver Kubernetes: Secrets de pull dos Pods de sistema, separados por vírgula (no chart, `portal.systemImagePullSecrets`). Trocar este valor, `BASE_IMAGE` ou `CLAUDE_CODE_IMAGE` faz a reconciliação recriar os Pods que ainda usam o valor anterior, o que interrompe uma execução do agente em andamento |
 | `CONTAINER_CPUS` / `CONTAINER_MEM_MB` / `CONTAINER_DISK_GB` | 2 / 2048 / 10 | limites por sistema (ADR 0013) |
 | `CONTAINER_PIDS_LIMIT` | 512 | teto de processos por container (ADR 0018) |
