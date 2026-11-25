@@ -108,6 +108,19 @@ O portal SHALL manter os containers de sistemas sempre ativos com política de r
 - **WHEN** a reconciliação recria com sucesso o container de um sistema que estava em erro
 - **THEN** o sistema fica ativo e sem mensagem de erro
 
+#### Scenario: Container parado é religado
+- **WHEN** o container de um sistema existe mas está parado, por exemplo depois de um `docker stop` ou de ser morto pelo daemon
+- **THEN** a reconciliação religa o mesmo container, sem recriá-lo nem trocar a imagem dele
+- **AND** os sidecars do sistema são reiniciados depois do container do sistema, de modo que voltem a usar a rede dele
+
+#### Scenario: Sistema com container religado volta a ativo
+- **WHEN** a reconciliação religa o container de um sistema que estava em erro por app fora do ar
+- **THEN** o sistema volta a ativo, sem mensagem de erro, assim que a app responder à checagem de saúde
+
+#### Scenario: Sidecar parado é religado
+- **WHEN** o container de um sistema está rodando e um sidecar dele existe mas está parado
+- **THEN** a reconciliação religa o sidecar, sem recriá-lo e sem mexer no container do sistema
+
 ### Requirement: Arquivamento e exclusão de sistema
 O portal SHALL permitir que o dono arquive seu sistema — desativando acessos e o container, preservando o workspace — e que somente administradores executem a exclusão definitiva, removendo container, workspace e a config do sistema gerada pelo portal.
 

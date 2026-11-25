@@ -130,6 +130,75 @@ def test_laco_de_reconciliacao_recria_container_removido_por_fora(system):
     assert fresh.status == SystemStatus.active and fresh.status_message == ""
 
 
+def _netns(container) -> str:
+    """Namespace de rede do container — o processo do `exec` entra nos namespaces dele."""
+    result = container.exec_run(["readlink", "/proc/self/ns/net"])
+    assert result.exit_code == 0, result.output
+    return result.output.decode().strip()
+
+
+def test_reconciliacao_religa_container_parado_e_sidecar_volta_a_rede_dele(system, monkeypatch):
+    """Change reconcile-restart-stopped-container: container do sistema parado por fora
+    (`docker stop`; com `unless-stopped` o Docker não religa) volta a rodar na próxima passada —
+    o mesmo container, sem recriar — e o sidecar, que ficou rodando preso à rede antiga, é
+    reiniciado na rede nova. O sistema em erro por app fora do ar volta a ativo pelo monitor de
+    saúde quando a app responde (a sonda real só resolve de dentro da rede Docker)."""
+    from appaiforge import health_monitor
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import SystemStatus
+    from appaiforge.provisioning import httpsproxy_sidecar_name, provision_system, reconcile
+    from appaiforge.services.systems import get_system, set_status
+
+    provision_system(system)
+    set_status(system.id, SystemStatus.error, "app fora do ar (3 checagens)")
+    client = _client()
+    main = client.containers.get(system_container_name(system.slug))
+    proxy = client.containers.get(httpsproxy_sidecar_name(system.slug))
+    main_id, proxy_id = main.id, proxy.id
+    main.stop(timeout=1)
+
+    reconcile()
+
+    main = client.containers.get(system_container_name(system.slug))
+    proxy = client.containers.get(httpsproxy_sidecar_name(system.slug))
+    assert (main.id, proxy.id) == (main_id, proxy_id)  # religado, não recriado
+    assert main.status == "running" and proxy.status == "running"
+    assert _netns(proxy) == _netns(main)
+
+    class _Healthy:
+        def is_healthy(self, slug: str) -> bool:
+            return True
+
+    monkeypatch.setattr("appaiforge.drivers.get_driver", lambda: _Healthy())
+    health_monitor.check_once()
+    fresh = get_system(system.id)
+    assert fresh.status == SystemStatus.active and fresh.status_message == ""
+
+
+def test_reconciliacao_religa_sidecar_parado_sem_mexer_no_sistema(system):
+    from appaiforge.edge import system_container_name
+    from appaiforge.models import SystemStatus
+    from appaiforge.provisioning import httpsproxy_sidecar_name, provision_system, reconcile
+    from appaiforge.services.systems import set_status
+
+    provision_system(system)
+    set_status(system.id, SystemStatus.active, "")  # visível para reconcile()
+    client = _client()
+    main = client.containers.get(system_container_name(system.slug))
+    started_at = main.attrs["State"]["StartedAt"]
+    proxy = client.containers.get(httpsproxy_sidecar_name(system.slug))
+    proxy_id = proxy.id
+    proxy.stop(timeout=1)
+
+    reconcile()
+
+    proxy = client.containers.get(httpsproxy_sidecar_name(system.slug))
+    main = client.containers.get(system_container_name(system.slug))
+    assert proxy.id == proxy_id and proxy.status == "running"
+    assert main.attrs["State"]["StartedAt"] == started_at  # sistema não foi reiniciado
+    assert _netns(proxy) == _netns(main)
+
+
 def test_arquivamento_para_container_e_preserva_workspace(system, docker_env):
     from appaiforge.config import get_settings
     from appaiforge.edge import system_container_name
