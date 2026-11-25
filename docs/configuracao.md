@@ -32,7 +32,7 @@
 | `LITELLM_API_KEY` / `INFERENCE_BROKER_SERVICE_TOKEN` | — | master key do LiteLLM e segredo portal↔broker (obrigatórias com o broker ligado) |
 | `DB_GATE_MODE` | `enforce` | `enforce` o sidecar recusa bloqueada/confirmável na hora, sem aprovação (ADR 0021/0023); `shadow` audita sem bloquear — ver [Segurança](seguranca.md) |
 | `DB_GATE_PROXY_SERVICE_TOKEN` | — | segredo compartilhado entre o sidecar e o portal (mesmo padrão do broker) |
-| `SEED_DEMO_ADMIN` | — | `1` semeia o admin de dev quando não há usuários (nunca em produção) |
+| `SEED_DEMO_ADMIN` | — | `1` semeia o admin de dev quando não há usuários além do break-glass (nunca em produção) |
 | `AUTH_MODE` | `local` | `local` (e-mail/senha) ou `oidc` (SSO); gravado no primeiro boot, não muda depois — ver [Autenticação](autenticacao.md) |
 | `PUBLIC_BASE_URL` | — | URL pública do portal (obrigatória no modo `oidc`; base do `redirect_uri`) |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | IdP e client confidencial (obrigatórios no modo `oidc`) |

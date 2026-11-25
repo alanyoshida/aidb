@@ -1,32 +1,16 @@
 """Aplicação FastAPI + NiceGUI do portal."""
 
 import hmac
-import os
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from nicegui import ui
 
-from . import __version__, auth, security
+from . import __version__
 from .db import get_engine
 from .edge import write_portal_router
-from .models import Base, User, UserType
+from .models import Base
 from .ui import register_pages
-
-
-def _seed_demo_admin() -> None:
-    """Bootstrap de desenvolvimento: cria admin padrão se APPAIFORGE_SEED_DEMO_ADMIN=1
-    e não há nenhum usuário. Em produção, use `appaiforge create-admin`."""
-    if os.environ.get("APPAIFORGE_SEED_DEMO_ADMIN") != "1":
-        return
-    from sqlalchemy import func, select
-
-    from . import auth
-    from .db import session_scope
-
-    with session_scope() as s:
-        if s.execute(select(func.count(User.id))).scalar_one() == 0:
-            s.add(User(email="admin@appaiforge.local", password_hash=security.hash_password("admin123"), type=UserType.admin))
 
 
 def create_app() -> FastAPI:
@@ -56,10 +40,10 @@ def create_app() -> FastAPI:
     from .installation import check_docker_host
 
     check_docker_host()  # produção só em host Docker próprio (add-production-portal-install, D3)
-    from .services.directory import sync_breakglass
+    from .services.directory import seed_demo_admin, sync_breakglass
 
     sync_breakglass()
-    _seed_demo_admin()
+    seed_demo_admin()
 
     from .services.catalog import ensure_presets
 
