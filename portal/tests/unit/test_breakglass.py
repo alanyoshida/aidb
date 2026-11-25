@@ -14,7 +14,7 @@ from appaiforge.db import session_scope
 from appaiforge.models import ManagementAudit, Session as DbSession, User, UserType, utcnow
 from appaiforge.security import hash_password
 from appaiforge.services import directory
-from appaiforge.services.directory import ProtectedUser, sync_breakglass
+from appaiforge.services.directory import ProtectedUser, seed_demo_admin, sync_breakglass
 
 BG = "bg@emergencia.local"
 
@@ -113,3 +113,37 @@ def test_sessao_de_emergencia_expira_em_8h(breakglass):
         assert sess.expires_at - utcnow() <= timedelta(hours=8)
         sess.expires_at = utcnow() - timedelta(seconds=1)
     assert auth.resolve_principal(token) is None
+
+
+# --- seed do admin de demonstração com break-glass configurado --------------
+# O boot roda sync_breakglass() antes de seed_demo_admin(). Num banco novo, o break-glass já
+# existia na hora do seed e o admin de demonstração nunca era criado.
+
+DEMO = "admin@appaiforge.local"
+
+
+def _emails() -> set[str]:
+    with session_scope() as s:
+        return set(s.execute(select(User.email)).scalars())
+
+
+def test_seed_cria_admin_de_demonstracao_mesmo_com_break_glass(breakglass, monkeypatch):
+    monkeypatch.setenv("APPAIFORGE_SEED_DEMO_ADMIN", "1")
+    seed_demo_admin()
+    with session_scope() as s:
+        demo = s.execute(select(User).where(User.email == DEMO)).scalar_one()
+        assert demo.type == UserType.admin and not demo.break_glass
+    assert _emails() == {BG, DEMO}
+
+
+def test_seed_nao_cria_nada_quando_ja_ha_usuario_real(breakglass, monkeypatch):
+    auth.create_user("pessoa@empresa.local", "pw", "editor")
+    monkeypatch.setenv("APPAIFORGE_SEED_DEMO_ADMIN", "1")
+    seed_demo_admin()
+    assert _emails() == {BG, "pessoa@empresa.local"}
+
+
+def test_seed_desligado_nao_cria_admin(breakglass, monkeypatch):
+    monkeypatch.delenv("APPAIFORGE_SEED_DEMO_ADMIN", raising=False)
+    seed_demo_admin()
+    assert _emails() == {BG}

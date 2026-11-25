@@ -93,6 +93,29 @@ def sync_breakglass() -> None:
             s.execute(delete(SessionModel).where(SessionModel.user_id == old.id))
 
 
+DEMO_ADMIN_EMAIL = "admin@appaiforge.local"
+
+
+def seed_demo_admin() -> None:
+    """Bootstrap de desenvolvimento: cria o admin padrão com APPAIFORGE_SEED_DEMO_ADMIN=1 quando
+    ainda não há usuário de verdade. Em produção, use `appaiforge create-admin`.
+
+    O break-glass não conta: o boot o cria antes deste seed, e contá-lo impedia o admin de
+    demonstração num banco novo."""
+    import os
+
+    from sqlalchemy import func
+
+    from ..security import hash_password
+
+    if os.environ.get("APPAIFORGE_SEED_DEMO_ADMIN") != "1":
+        return
+    with session_scope() as s:
+        real_users = s.execute(select(func.count(User.id)).where(User.break_glass.is_(False))).scalar_one()
+        if real_users == 0:
+            s.add(User(email=DEMO_ADMIN_EMAIL, password_hash=hash_password("admin123"), type=UserType.admin))
+
+
 def is_breakglass_email(email: str) -> bool:
     """True se o e-mail é o do admin break-glass configurado por ENV."""
     from ..config import get_settings
