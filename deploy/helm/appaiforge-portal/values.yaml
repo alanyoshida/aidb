@@ -11,7 +11,7 @@ fullnameOverride: "appaiforge-portal"
 
 image:
   repository: appaiforge/portal
-  tag: "1.12.0"
+  tag: "1.13.0"
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -115,12 +115,12 @@ portal:
   # (vazio = auth.publicBaseUrl).
   webhookBaseUrl: ""
 
-  # Imagem dos Pods de sistema (vazio = padrão do portal, appaiforge/base:1.12.0). Num cluster
+  # Imagem dos Pods de sistema (vazio = padrão do portal, appaiforge/base:1.13.0). Num cluster
   # real, a do seu registro, ex.: registro.exemplo.com/appaiforge/base:1.4.2. Com registro
   # privado, liste o Secret de pull em systemImagePullSecrets.
   baseImage: ""
 
-  # Imagem dos sistemas com o perfil de agente claude-code (vazio = appaiforge/claude-code:1.12.0).
+  # Imagem dos sistemas com o perfil de agente claude-code (vazio = appaiforge/claude-code:1.13.0).
   claudeCodeImage: ""
 
   # Secrets de pull dos Pods de sistema (registro privado). Precisam existir no namespace dos

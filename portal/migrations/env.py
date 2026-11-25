@@ -9,7 +9,9 @@ from appaiforge.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Sem desligar os loggers que já existem: rodando no mesmo processo (testes de migração), o
+    # padrão calava o `appaiforge.telemetry` dali em diante.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 target_metadata = Base.metadata
