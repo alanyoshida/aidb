@@ -343,7 +343,8 @@ class DockerProvisioningDriver:
 
 
 # Estados em que o container existe mas não está rodando e aceita `start` (D1). `restarting`
-# e `paused` ficam como estão; `dead` não aceita `start` e o erro sobe como falha do sistema.
+# e `paused` ficam como estão; `dead` não aceita `start` e também fica como está: o monitor de
+# saúde segue mostrando a app fora do ar.
 _STOPPED_STATES = ("created", "exited")
 
 
