@@ -1,6 +1,6 @@
 [project]
 name = "appaiforge-portal"
-version = "1.13.0"
+version = "1.13.1"
 description = "AIDB — portal que gera sistemas de gestão com IA sobre bancos de dados"
 requires-python = ">=3.12"
 license = "MIT"

@@ -238,7 +238,7 @@ wheels = [
 
 [[package]]
 name = "appaiforge-portal"
-version = "1.13.0"
+version = "1.13.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
