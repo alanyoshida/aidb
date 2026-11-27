@@ -1,0 +1,10 @@
+dist/
+.astro/
+node_modules/
+# Gerado por scripts/sync-docs.mjs a partir de docs/ e do README
+src/content/docs/referencia/
+src/content/docs/decisoes/
+src/content/docs/identidade/
+src/content/docs/operacao-e-observabilidade/
+src/content/docs/comecar/arquitetura.md
+src/generated/

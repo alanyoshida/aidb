@@ -41,6 +41,8 @@ Dois mecanismos juntos, nenhum sozinho é o argumento completo: (1) confinamento
 
 Nome do produto: **AIDB**. Sem outras marcas, logos ou ativos visuais confirmados até agora.
 
+Site de apresentação (`site/`): o usuário escolheu o padrão da categoria, executado com rigor, com Tailscale e Teleport como régua de acabamento (2026-11-27).
+
 ## Evidence on Hand
 
 Nenhum dado real de cliente, case study, depoimento ou imprensa — produto interno/em desenvolvimento ativo, sem evidência de uso em produção fora deste repositório. Trabalho futuro não deve inventar testemunhos, benchmarks ou clientes.

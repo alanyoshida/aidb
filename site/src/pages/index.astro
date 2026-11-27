@@ -1,0 +1,527 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Image } from 'astro:assets';
+import { Code } from '@astrojs/starlight/components';
+import GateDemo from '../components/GateDemo.astro';
+import { version } from '../generated/version.json';
+
+import appPainel from '../assets/screens/app-painel.png';
+import appPedidos from '../assets/screens/app-pedidos.png';
+import catalogo from '../assets/screens/catalogo.png';
+import conexoes from '../assets/screens/conexoes.png';
+import editor from '../assets/screens/editor.png';
+import checkpoints from '../assets/screens/checkpoints.png';
+import auditoria from '../assets/screens/auditoria.png';
+import temaEscuro from '../assets/screens/tema-escuro.png';
+import temaPastel from '../assets/screens/tema-pastel.png';
+
+const base = import.meta.env.BASE_URL;
+
+const layers = [
+	{
+		name: 'Kernel',
+		what: 'seccomp e Landlock aplicados pelo supervisor antes de o agente começar. Ele só lê e escreve no próprio workspace e só abre conexões nas portas liberadas para o sistema.',
+		href: 'seguranca/#confinamento-do-agente',
+	},
+	{
+		name: 'Gate de SQL',
+		what: 'Um sidecar no caminho dos dados classifica cada comando do agente e da app. DROP, TRUNCATE e DELETE ou UPDATE sem escopo por chave são recusados na hora.',
+		href: 'seguranca/#gate-de-sql',
+	},
+	{
+		name: 'Segredos',
+		what: 'A senha do banco fica só no sidecar; o container recebe um endereço local sem credencial. Com o broker, nem a chave do LLM chega ao container.',
+		href: 'seguranca/#segredos',
+	},
+	{
+		name: 'Rede de saída',
+		what: 'Toda saída HTTP(S) do agente passa por um proxy com allow-list por sistema: o provedor de LLM e os registros de pacote, e nada mais.',
+		href: 'seguranca/#rede-de-saída',
+	},
+	{
+		name: 'Identidade',
+		what: 'Login local ou SSO por OIDC. O portal verifica cada acesso às apps, e a app recebe a identidade num token assinado só para ela.',
+		href: 'identidade/login-e-sso/',
+	},
+];
+
+const gallery = [
+	{ id: 'editor', label: 'Editor', img: editor, alt: 'Aba Editor: árvore de arquivos da app gerada e o código do arquivo selecionado, somente leitura.', text: 'O código que o agente escreveu, ao lado do chat, sem sair do portal.' },
+	{ id: 'checkpoints', label: 'Checkpoints', img: checkpoints, alt: 'Aba Checkpoints: lista de pontos de restauração da app, com data e autor.', text: 'Cada execução vira um ponto de restauração. Voltar a app é um clique.' },
+	{ id: 'auditoria', label: 'Auditoria', img: auditoria, alt: 'Aba Auditoria: decisões do gate de SQL com origem, comando, classificação e data.', text: 'Toda decisão do gate e toda ação de gestão ficam registradas, sem segredos.' },
+	{ id: 'tema', label: 'Tema escuro', img: temaEscuro, alt: 'O portal no tema escuro, com a cor de destaque teal, na aba Editor.', text: 'Claro, escuro ou pastel, com quatro cores de destaque, todas com contraste AA. Cada usuário escolhe o seu.' },
+	{ id: 'pastel', label: 'Tema pastel', img: temaPastel, alt: 'O portal no tema pastel, com a cor de destaque violeta, na aba Editor.', text: 'O modo pastel, aqui com o destaque violeta.' },
+];
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'Apps de gestão com IA sobre o seu banco',
+		description:
+			'Apps administrativas geradas por um agente de IA sobre o seu banco de dados, com o agente confinado pelo kernel e cada SQL classificada antes de chegar ao banco.',
+		template: 'splash',
+		hero: { title: 'AIDB' },
+		editUrl: false,
+	}}
+>
+	<div class="landing not-content">
+		<section class="flow" aria-labelledby="flow-title">
+			<div class="intro">
+				<h2 id="flow-title">Do pedido à app no ar, sem abrir um projeto de frontend</h2>
+				<p>
+					Um DB Manager autoriza o banco, o editor ativa a conexão e descreve o que precisa. O agente
+					consulta o schema real, escreve a app em Python e ela fica disponível em
+					<code>/apps/&lt;slug&gt;</code>, para quem tem acesso ao sistema.
+				</p>
+			</div>
+			<div class="pair">
+				<figure class="shot wide">
+					<Image src={appPainel} alt="App gerada pelo agente: painel da loja com vendas do mês, pedidos por status e os clientes que mais compraram." widths={[800, 1200, 1600]} sizes="(min-width: 72rem) 52rem, 100vw" />
+				</figure>
+				<div class="note">
+					<h3>A app é o entregável</h3>
+					<p>
+						O pedido foi um parágrafo: painel de vendas, clientes e pedidos. O resultado é uma app
+						NiceGUI completa sobre as tabelas da loja, servida pelo portal com o login de quem abre.
+					</p>
+					<figure class="shot small">
+						<Image src={appPedidos} alt="Tela de pedidos da app gerada, com filtro por status e os itens de cada pedido." widths={[600, 900]} sizes="22rem" />
+					</figure>
+				</div>
+			</div>
+		</section>
+
+		<section class="gate-section" aria-labelledby="gate-title">
+			<div class="intro">
+				<h2 id="gate-title">Um <code>DROP</code> nunca chega ao banco</h2>
+				<p>
+					O gate entende o protocolo do PostgreSQL e do MySQL e classifica cada comando antes de
+					repassá-lo. Não há pedido de aprovação para alguém clicar por hábito: o comando destrutivo é
+					recusado na hora e fica na auditoria.
+				</p>
+				<p class="caveat">
+					O gate julga um comando por vez. Apagar linha a linha, cada uma pela chave, passa por ele; para
+					dados que não podem sumir, use um usuário de banco sem permissão de escrita.
+				</p>
+				<a class="more" href={`${base}seguranca/#limites-conhecidos`}>O que o gate não cobre</a>
+			</div>
+			<GateDemo />
+		</section>
+
+		<section class="layers" aria-labelledby="layers-title">
+			<div class="intro">
+				<h2 id="layers-title">Camadas que não dependem do agente se comportar</h2>
+				<p>
+					Cada barreira é aplicada fora do agente: pelo kernel, por um processo no caminho dos dados
+					ou pelo portal. Uma falha numa não abre as outras.
+				</p>
+			</div>
+			<ol class="stack">
+				{
+					layers.map((l) => (
+						<li>
+							<a href={`${base}${l.href}`}>
+								<span class="name">{l.name}</span>
+								<span class="what">{l.what}</span>
+							</a>
+						</li>
+					))
+				}
+			</ol>
+		</section>
+
+		<section class="roles" aria-labelledby="roles-title">
+			<div class="intro">
+				<h2 id="roles-title">Quem gere a credencial não precisa ser quem cria o sistema</h2>
+				<p>
+					O DB Manager cadastra cada banco uma vez e decide para quais sistemas ele vale, com um teto de
+					modo de acesso. O dono do sistema ativa o que foi autorizado, com um alias próprio, sem ver
+					host, usuário nem senha.
+				</p>
+			</div>
+			<div class="duo">
+				<figure class="shot">
+					<Image src={catalogo} alt="Página Bancos de dados: a conexão Loja (vendas) no catálogo, autorizada para o sistema Loja Exemplo com teto Leitura e escrita." widths={[700, 1100]} sizes="(min-width: 72rem) 36rem, 100vw" />
+					<figcaption>Catálogo de bancos, visto pelo DB Manager</figcaption>
+				</figure>
+				<figure class="shot">
+					<Image src={conexoes} alt="Aba Conexões do sistema: a conexão loja ativa em Leitura e escrita, com o alias DATABASE_URL_LOJA." widths={[700, 1100]} sizes="(min-width: 72rem) 36rem, 100vw" />
+					<figcaption>Conexões do sistema, vistas pelo dono</figcaption>
+				</figure>
+			</div>
+		</section>
+
+		<section class="gallery" aria-labelledby="gallery-title">
+			<div class="intro">
+				<h2 id="gallery-title">O portal por dentro</h2>
+			</div>
+			<div class="tabs" data-tabs>
+				<div class="tablist" role="tablist" aria-label="Telas do portal">
+					{
+						gallery.map((g, i) => (
+							<button role="tab" id={`tab-${g.id}`} aria-controls={`panel-${g.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1}>
+								{g.label}
+							</button>
+						))
+					}
+				</div>
+				{
+					gallery.map((g, i) => (
+						<div class="panel" role="tabpanel" id={`panel-${g.id}`} aria-labelledby={`tab-${g.id}`} hidden={i !== 0}>
+							<p>{g.text}</p>
+							<figure class="shot">
+								<Image src={g.img} alt={g.alt} widths={[900, 1400, 1800]} sizes="(min-width: 72rem) 72rem, 100vw" />
+							</figure>
+						</div>
+					))
+				}
+			</div>
+		</section>
+
+		<section class="install" aria-labelledby="install-title">
+			<div class="intro">
+				<h2 id="install-title">Suba o portal no seu servidor</h2>
+				<p>
+					Docker Compose para começar; Helm para rodar num cluster Kubernetes. Versão atual:{' '}
+					<strong>{version}</strong>. Estes comandos sobem o portal em modo de demonstração, com o
+					admin de teste e o agente em modo fake.
+				</p>
+				<ul class="links">
+					<li><a href={`${base}comecar/instalacao/`}>Guia de instalação</a></li>
+					<li><a href={`${base}referencia/variaveis-de-ambiente/`}>Variáveis de ambiente</a></li>
+					<li><a href={`${base}referencia/chart-helm/`}>Chart Helm</a></li>
+					<li><a href={`${base}identidade/login-e-sso/`}>SSO por OIDC</a></li>
+				</ul>
+			</div>
+			<div class="code">
+				<Code
+					lang="bash"
+					frame="none"
+					code={`git clone https://github.com/alanyoshida/aidb.git
+cd aidb/deploy
+docker compose up -d --build
+docker build -t appaiforge/base:${version} -f ../base-image/Dockerfile ../base-image
+# abra http://localhost`}
+				/>
+			</div>
+		</section>
+
+		<section class="close" aria-labelledby="close-title">
+			<h2 id="close-title">Leia como funciona antes de instalar</h2>
+			<p>A documentação cobre arquitetura, segurança, SSO, configuração e cada decisão de projeto.</p>
+			<div class="actions">
+				<a class="btn primary" href={`${base}comecar/visao-geral/`}>Começar pela visão geral</a>
+				<a class="btn ghost" href="https://github.com/alanyoshida/aidb">Código no GitHub</a>
+			</div>
+		</section>
+
+		<footer class="foot">
+			<span class="brand">AIDB {version}</span>
+			<nav aria-label="Rodapé">
+				<a href={`${base}comecar/visao-geral/`}>Documentação</a>
+				<a href={`${base}seguranca/`}>Segurança</a>
+				<a href={`${base}decisoes/`}>Decisões</a>
+				<a href="https://github.com/alanyoshida/aidb">GitHub</a>
+				<a href="https://github.com/alanyoshida/aidb/blob/main/LICENSE">Licença MIT</a>
+			</nav>
+		</footer>
+	</div>
+</StarlightPage>
+
+<script>
+	// Abas da galeria: setas trocam de aba, como o padrão WAI-ARIA.
+	for (const root of document.querySelectorAll<HTMLElement>('[data-tabs]')) {
+		const tabs = [...root.querySelectorAll<HTMLButtonElement>('[role=tab]')];
+		const select = (t: HTMLButtonElement) => {
+			for (const o of tabs) {
+				const on = o === t;
+				o.setAttribute('aria-selected', String(on));
+				o.tabIndex = on ? 0 : -1;
+				root.querySelector<HTMLElement>(`#${o.getAttribute('aria-controls')}`)!.hidden = !on;
+			}
+		};
+		tabs.forEach((t, i) => {
+			t.addEventListener('click', () => select(t));
+			t.addEventListener('keydown', (e) => {
+				const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+				if (!d) return;
+				const n = tabs[(i + d + tabs.length) % tabs.length];
+				select(n);
+				n.focus();
+			});
+		});
+	}
+</script>
+
+<style>
+	:global(:root[data-has-hero]) {
+		--sl-content-width: 76rem;
+	}
+	.landing {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: clamp(4.5rem, 9vw, 8rem);
+		padding-block: clamp(3rem, 7vw, 6rem) 2rem;
+	}
+	section {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 2.25rem;
+	}
+	.intro {
+		max-width: 44rem;
+	}
+	h2 {
+		margin: 0;
+		font-size: clamp(1.75rem, 1.1rem + 1.8vw, 2.5rem);
+		line-height: 1.1;
+		letter-spacing: -0.025em;
+		font-weight: 660;
+		color: var(--sl-color-white);
+		text-wrap: balance;
+	}
+	h2 code {
+		font-family: var(--__sl-font-mono);
+		font-size: 0.86em;
+		font-weight: 600;
+		background: none;
+		padding: 0;
+		color: var(--aidb-no);
+	}
+	h3 {
+		margin: 0;
+		font-size: var(--sl-text-xl);
+		font-weight: 620;
+		letter-spacing: -0.015em;
+		color: var(--sl-color-white);
+	}
+	p {
+		margin: 1rem 0 0;
+		color: var(--sl-color-gray-2);
+		font-size: var(--sl-text-lg);
+		line-height: 1.6;
+	}
+	p code {
+		font-family: var(--__sl-font-mono);
+		font-size: 0.88em;
+	}
+	.caveat {
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+		padding-left: 0.85rem;
+		border-left: 1px solid var(--sl-color-gray-5);
+	}
+	.more {
+		display: inline-block;
+		margin-top: 1rem;
+		font-weight: 560;
+		color: var(--sl-color-text-accent);
+		text-underline-offset: 0.25em;
+	}
+	.shot {
+		margin: 0;
+	}
+	.shot :global(img) {
+		display: block;
+		width: 100%;
+		height: auto;
+		border-radius: 10px;
+		box-shadow: var(--aidb-shadow);
+	}
+	figcaption {
+		margin-top: 0.75rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+
+	/* Fluxo: screenshot largo e uma nota com a segunda tela. */
+	.pair {
+		display: grid;
+		grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+		gap: clamp(1.5rem, 3vw, 3rem);
+		align-items: start;
+	}
+	.note p {
+		font-size: var(--sl-text-base);
+	}
+	.note .small {
+		margin-top: 1.5rem;
+	}
+
+	/* Gate: texto e demonstração lado a lado. */
+	.gate-section {
+		grid-template-columns: minmax(0, 4fr) minmax(0, 7fr);
+		align-items: center;
+		gap: clamp(2rem, 4vw, 4rem);
+	}
+
+	/* Camadas: uma pilha, da mais baixa (kernel) à mais alta (identidade). */
+	.stack {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		border-top: 1px solid var(--aidb-line);
+	}
+	.stack a {
+		display: grid;
+		grid-template-columns: minmax(9rem, 2fr) minmax(0, 7fr);
+		gap: 1.5rem;
+		padding: 1.35rem 0.25rem;
+		border-bottom: 1px solid var(--aidb-line);
+		text-decoration: none;
+		transition: background-color 200ms cubic-bezier(0.16, 1, 0.3, 1), padding 200ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.stack a:hover {
+		background: color-mix(in srgb, var(--sl-color-accent) 7%, transparent);
+		padding-inline: 1rem;
+	}
+	.name {
+		font-weight: 620;
+		font-size: var(--sl-text-lg);
+		color: var(--sl-color-white);
+	}
+	.what {
+		color: var(--sl-color-gray-2);
+		line-height: 1.6;
+	}
+
+	/* Papéis: duas telas lado a lado. */
+	.duo {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: clamp(1.25rem, 3vw, 2.5rem);
+		align-items: start;
+	}
+
+	/* Galeria em abas. */
+	.tablist {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.25rem;
+		border-bottom: 1px solid var(--aidb-line);
+	}
+	[role='tab'] {
+		appearance: none;
+		background: none;
+		border: 0;
+		border-bottom: 2px solid transparent;
+		margin-bottom: -1px;
+		padding: 0.7rem 1rem;
+		font: inherit;
+		font-weight: 560;
+		color: var(--sl-color-gray-3);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	[role='tab']:hover {
+		color: var(--sl-color-white);
+	}
+	[role='tab'][aria-selected='true'] {
+		color: var(--sl-color-white);
+		border-bottom-color: var(--sl-color-accent);
+	}
+	.panel p {
+		margin: 1.25rem 0 1.5rem;
+		font-size: var(--sl-text-base);
+	}
+
+	/* Instalação. */
+	.install {
+		grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
+		align-items: center;
+		gap: clamp(2rem, 4vw, 4rem);
+	}
+	.links {
+		list-style: none;
+		margin: 1.5rem 0 0;
+		padding: 0;
+		display: grid;
+		gap: 0.5rem;
+	}
+	.links a {
+		color: var(--sl-color-text-accent);
+		font-weight: 540;
+		text-underline-offset: 0.25em;
+	}
+
+	/* Fechamento. */
+	.close {
+		justify-items: center;
+		text-align: center;
+		gap: 0;
+		padding-block: 3rem 1rem;
+		border-top: 1px solid var(--aidb-line);
+	}
+	.close p {
+		max-width: 36rem;
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.75rem;
+		margin-top: 2rem;
+	}
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.75rem;
+		padding: 0 1.15rem;
+		border-radius: 8px;
+		font-weight: 560;
+		text-decoration: none;
+	}
+	.primary {
+		background: var(--sl-color-accent);
+		color: #fff;
+	}
+	:global([data-theme='dark']) .primary {
+		color: #0c1017;
+	}
+	.ghost {
+		border: 1px solid var(--sl-color-gray-5);
+		color: var(--sl-color-white);
+	}
+
+	.foot {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: 1rem 2rem;
+		padding-top: 1.5rem;
+		border-top: 1px solid var(--aidb-line);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.foot nav {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 1.5rem;
+	}
+	.foot a {
+		color: var(--sl-color-gray-2);
+		text-decoration: none;
+	}
+	.foot a:hover {
+		color: var(--sl-color-white);
+		text-decoration: underline;
+		text-underline-offset: 0.25em;
+	}
+	.brand {
+		font-weight: 600;
+		color: var(--sl-color-white);
+	}
+
+	@media (max-width: 60rem) {
+		.pair,
+		.gate-section,
+		.install,
+		.duo {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.stack a {
+			grid-template-columns: 1fr;
+			gap: 0.4rem;
+		}
+	}
+</style>

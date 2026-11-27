@@ -1,0 +1,232 @@
+---
+// Exemplos de como o gate de SQL classifica cada comando antes de repassá-lo ao banco.
+// As classificações seguem as regras do gate (docs/seguranca.md); os comandos são ilustrativos.
+const rows = [
+	{ sql: "SELECT nome, cidade FROM clientes WHERE cidade = 'Recife'", cls: 'normal', ok: true, why: 'leitura' },
+	{ sql: "UPDATE pedidos SET status = 'enviado' WHERE id = 1042", cls: 'normal', ok: true, why: 'escopo por chave' },
+	{ sql: "DELETE FROM pedidos WHERE status = 'cancelado'", cls: 'confirmável', ok: false, why: 'apaga em massa' },
+	{ sql: 'DELETE FROM clientes', cls: 'confirmável', ok: false, why: 'sem WHERE' },
+	{ sql: 'DROP TABLE itens_pedido', cls: 'bloqueada', ok: false, why: 'DDL' },
+];
+---
+
+<div class="gate not-content" data-gate-demo>
+	<div class="legend" aria-hidden="true">
+		<span>comando do agente ou da app</span>
+		<span>gate</span>
+		<span>banco</span>
+	</div>
+	<ol>
+		{
+			rows.map((r) => (
+				<li class:list={['row', r.ok ? 'ok' : 'no']}>
+					<code>{r.sql}</code>
+					<span class="track" aria-hidden="true">
+						<span class="in" />
+						<span class="bar" />
+						<span class="out" />
+					</span>
+					<span class="verdict">
+						{r.ok ? (
+							<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>
+						) : (
+							<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+						)}
+						<span>
+							<strong>{r.ok ? 'executa' : 'recusada'}</strong>
+							<small>
+								{r.cls} · {r.why}
+							</small>
+						</span>
+					</span>
+				</li>
+			))
+		}
+	</ol>
+</div>
+
+<script>
+	// Passa por cada comando em sequência, como chegariam ao gate. Sem movimento quando o sistema pede.
+	const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	for (const demo of document.querySelectorAll<HTMLElement>('[data-gate-demo]')) {
+		const rows = [...demo.querySelectorAll<HTMLElement>('.row')];
+		if (reduce) {
+			rows.forEach((r) => r.classList.add('seen'));
+			continue;
+		}
+		demo.dataset.play = '';
+		let i = 0;
+		let timer: number | undefined;
+		const step = () => {
+			rows.forEach((r, j) => r.classList.toggle('active', j === i));
+			rows[i].classList.add('seen');
+			i = (i + 1) % rows.length;
+			if (i === 0) {
+				timer = window.setTimeout(() => {
+					rows.forEach((r) => r.classList.remove('seen'));
+					step();
+				}, 2600);
+			} else timer = window.setTimeout(step, 1300);
+		};
+		const io = new IntersectionObserver(
+			([e]) => {
+				if (e.isIntersecting && timer === undefined) step();
+				if (!e.isIntersecting && timer !== undefined) {
+					window.clearTimeout(timer);
+					timer = undefined;
+				}
+			},
+			{ threshold: 0.4 },
+		);
+		io.observe(demo);
+	}
+</script>
+
+<style>
+	.gate {
+		border: 1px solid var(--aidb-line);
+		border-radius: 12px;
+		background: var(--aidb-surface);
+		padding: 1rem 1.25rem 1.25rem;
+	}
+	.legend,
+	.row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 5.5rem 12.5rem;
+		gap: 1rem;
+		align-items: center;
+	}
+	.legend {
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+		padding-bottom: 0.6rem;
+		border-bottom: 1px solid var(--aidb-line);
+	}
+	.legend span:nth-child(2) {
+		text-align: center;
+	}
+	.legend span:nth-child(3) {
+		text-align: left;
+	}
+	ol {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.row {
+		padding: 0.75rem 0;
+		border-bottom: 1px dashed var(--aidb-line);
+		transition: opacity 400ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.row:last-child {
+		border-bottom: 0;
+	}
+	code {
+		font-family: var(--__sl-font-mono);
+		font-size: 0.82rem;
+		line-height: 1.45;
+		color: var(--sl-color-white);
+		overflow-wrap: break-word;
+		background: none;
+		padding: 0;
+	}
+	.track {
+		position: relative;
+		display: flex;
+		align-items: center;
+		height: 1.5rem;
+	}
+	.in,
+	.out {
+		height: 3px;
+		border-radius: 2px;
+		flex: 1;
+		background: var(--sl-color-gray-5);
+		transform-origin: left;
+		transition: transform 500ms cubic-bezier(0.16, 1, 0.3, 1), background-color 300ms;
+	}
+	.bar {
+		width: 4px;
+		height: 1.5rem;
+		border-radius: 2px;
+		background: var(--sl-color-gray-3);
+		margin-inline: 2px;
+	}
+	/* Recusado: a linha para no gate e o trecho até o banco some. */
+	.no .out {
+		height: 0;
+		background: none;
+		border-top: 3px dotted var(--sl-color-gray-4);
+	}
+	.ok.seen .in,
+	.ok.seen .out {
+		background: var(--aidb-ok);
+	}
+	.no.seen .in {
+		background: var(--aidb-no);
+	}
+	.no.seen .bar {
+		background: var(--aidb-no);
+	}
+	.verdict {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		justify-content: flex-start;
+	}
+	.verdict svg {
+		flex: none;
+		width: 1.4rem;
+		height: 1.4rem;
+		padding: 0.2rem;
+		border-radius: 50%;
+		fill: none;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.ok .verdict svg {
+		stroke: var(--aidb-ok);
+		background: var(--aidb-ok-bg);
+	}
+	.no .verdict svg {
+		stroke: var(--aidb-no);
+		background: var(--aidb-no-bg);
+	}
+	.verdict strong {
+		display: block;
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		color: var(--sl-color-white);
+		line-height: 1.2;
+	}
+	.verdict small {
+		display: block;
+		font-size: var(--sl-text-xs);
+		color: var(--sl-color-gray-3);
+	}
+	/* Em sequência: o comando da vez fica em foco, os já vistos mantêm o resultado. */
+	@media (prefers-reduced-motion: no-preference) {
+		[data-play] .row:not(.seen) .in,
+		[data-play] .row:not(.seen) .out {
+			transform: scaleX(0.15);
+		}
+		[data-play] .row:not(.seen) .verdict {
+			opacity: 0.35;
+		}
+		[data-play] .row.active code {
+			color: var(--sl-color-accent-high);
+		}
+	}
+	@media (max-width: 40rem) {
+		.legend {
+			display: none;
+		}
+		.row {
+			grid-template-columns: minmax(0, 1fr) 8.5rem;
+		}
+		.track {
+			display: none;
+		}
+	}
+</style>

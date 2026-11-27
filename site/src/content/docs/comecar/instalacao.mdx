@@ -1,0 +1,130 @@
+---
+title: Instalação
+description: Subir o portal com Docker Compose em minutos, e os caminhos para produção com Docker ou Kubernetes.
+---
+
+import { Aside, Code, LinkCard, CardGrid, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+import { version } from '../../../generated/version.json';
+
+O AIDB tem dois papéis de instalação, e a escolha muda o que o portal aceita fazer:
+
+| Papel | Para que serve | Agente e chat |
+|---|---|---|
+| **Portal com agente** (padrão) | Criar sistemas, conversar com o agente e gerar as apps. Desenvolvimento e homologação. | sim |
+| **Portal de produção** | Rodar as versões aprovadas das apps, vindas de um repositório GitLab. | não: só implantação, sem credencial de LLM |
+
+Os dois sobem com **Docker Compose** (driver Docker, o padrão) ou com **Helm** num cluster
+**Kubernetes** (driver Kubernetes). O driver decide como cada sistema vira um container ou um Pod; o
+comportamento do produto é o mesmo.
+
+## Requisitos
+
+- Docker 24 ou mais novo, com Compose v2.
+- Porta 80 livre no host.
+- Cerca de 2 GB de RAM por sistema ativo, no padrão (ver [variáveis de ambiente](/aidb/referencia/variaveis-de-ambiente/) para os limites).
+- Kernel com **Landlock** para o confinamento completo do agente (Linux 6.7 ou mais novo para o
+  Landlock de rede). Sem ele, os sistemas sobem no modo `reduced`, com aviso.
+
+## Portal com agente, em minutos
+
+<Steps>
+
+1. Clone o repositório e suba a stack de desenvolvimento: Postgres do portal, um MySQL de teste,
+   Traefik e o portal.
+
+   ```bash
+   git clone https://github.com/alanyoshida/aidb.git
+   cd aidb/deploy
+   docker compose up -d --build
+   ```
+
+2. Construa a imagem base dos sistemas, na versão do portal:
+
+   <Code lang="bash" code={`docker build -t appaiforge/base:${version} -f ../base-image/Dockerfile ../base-image`} />
+
+3. Abra http://localhost e entre com o admin de demonstração: `admin@appaiforge.local` e senha
+   `admin123`. Ele só existe porque o compose de desenvolvimento liga
+   `APPAIFORGE_SEED_DEMO_ADMIN=1`.
+
+4. O compose sobe em **modo fake**: tudo funciona, e o agente devolve uma app de exemplo. Para
+   geração real, defina `APPAIFORGE_HARNESS_MODE=opencode` em `deploy/.env` e cadastre a chave de
+   um provedor (o padrão é GLM/Z.ai; qualquer provedor compatível com a API da OpenAI entra pela
+   interface de admin):
+
+   ```bash
+   docker compose exec portal appaiforge set-provider-key --provider glm --key 'SUA_CHAVE'
+   ```
+
+   Detalhes em [LLM e broker de inferência](/aidb/referencia/llm-e-broker/).
+
+</Steps>
+
+<Aside type="caution" title="Antes de expor o portal">
+Troque o admin de demonstração por um admin criado por CLI e remova `APPAIFORGE_SEED_DEMO_ADMIN` do compose:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec portal appaiforge create-admin --email voce@empresa.com --password 'uma-senha-forte'
+```
+
+Defina também `APPAIFORGE_SECRET_KEY` e os tokens de serviço com valores próprios. A lista completa
+está em [Variáveis de ambiente](/aidb/referencia/variaveis-de-ambiente/).
+</Aside>
+
+## Portal de produção
+
+O portal de produção só serve **sistemas só implantação**: ele recusa criar sistema com agente e
+roda as versões publicadas como tags no GitLab.
+
+<Tabs>
+<TabItem label="Docker Compose">
+
+Use um host Docker só para ele: o portal recusa subir se encontrar containers de sistema de outra
+instalação.
+
+<Code
+	lang="bash"
+	code={`docker build -t appaiforge/base:${version} -f base-image/Dockerfile base-image
+cp deploy/production.env.example deploy/production.env   # preencha os segredos
+docker compose -f deploy/docker-compose.production.yml --env-file deploy/production.env up -d postgres
+docker compose -f deploy/docker-compose.production.yml --env-file deploy/production.env run --rm --no-deps -w /app/portal portal alembic upgrade head
+docker compose -f deploy/docker-compose.production.yml --env-file deploy/production.env up -d --build`}
+/>
+
+</TabItem>
+<TabItem label="Kubernetes (Helm)">
+
+O chart instala o portal, o Postgres dele e o Traefik (subchart), com os CRDs da Gateway API. Crie
+antes o namespace e o Secret com `secretKey`, `dbGateProxyServiceToken`, `postgresPassword` e
+`breakglassPasswordHash`.
+
+<Code
+	lang="bash"
+	code={`docker build -f deploy/portal.Dockerfile -t appaiforge/portal:${version} .
+helm install aidb-prod deploy/helm/appaiforge-portal -n aidb-prod -f values-production.yaml`}
+/>
+
+O driver Kubernetes foi validado ponta a ponta num cluster `kind` local, não num cluster
+gerenciado.
+
+</TabItem>
+</Tabs>
+
+## Imagens prontas
+
+Cada versão publica no GitHub Container Registry, com a tag da versão e `latest`:
+
+<Code
+	lang="text"
+	code={`ghcr.io/alanyoshida/appaiforge/portal:${version}
+ghcr.io/alanyoshida/appaiforge/base:${version}
+ghcr.io/alanyoshida/appaiforge/claude-code:${version}`}
+/>
+
+## Passo a passo completo
+
+<CardGrid>
+	<LinkCard title="Instalar e operar em produção" href="/aidb/referencia/operacao/" description="Pré-requisitos, compose e Helm, primeiro acesso, atualização, backup e roteamento." />
+	<LinkCard title="Variáveis de ambiente" href="/aidb/referencia/variaveis-de-ambiente/" description="Todas as variáveis APPAIFORGE_*, com padrão e efeito." />
+	<LinkCard title="Chart Helm" href="/aidb/referencia/chart-helm/" description="Valores do chart, portal de produção, roteamento e observabilidade no cluster." />
+	<LinkCard title="Driver Kubernetes" href="/aidb/referencia/kubernetes/" description="Como cada sistema vira um Pod, e o roteamento por IngressRoute ou Gateway API." />
+</CardGrid>
