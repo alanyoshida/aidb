@@ -1,0 +1,67 @@
+---
+title: Visão geral
+description: O que o AIDB faz, para quem é e o caminho de um sistema, do cadastro à app no ar.
+---
+
+import { Steps, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+O AIDB é um portal **self-hosted** que cria apps administrativas sobre os seus bancos de dados a
+partir de uma conversa em português. Você cadastra um **sistema**, liga um banco (PostgreSQL, MySQL
+ou BigQuery) e pede ao agente o que precisa: "um CRUD de clientes com busca", "um painel de vendas do
+mês". O agente lê o schema real do banco, escreve uma app em Python (NiceGUI) e ela sobe sozinha em
+`/apps/<slug>`, já atrás do login do portal.
+
+O que muda em relação a dar acesso ao banco para um agente qualquer é o **confinamento**: o agente
+roda preso pelo kernel, nunca vê a senha do banco, e cada comando SQL é classificado antes de chegar
+a ele. Um `DROP` ou um `DELETE` sem `WHERE` é recusado na hora, sem depender de ninguém aprovar.
+
+## Para quem é
+
+- **Times que mantêm sistemas internos** sobre bancos de produção e querem telas de gestão sem abrir
+  um projeto de frontend para cada pedido.
+- **Quem responde pela segurança dos dados** e precisa de garantias que não dependem do bom
+  comportamento do agente.
+- **Organizações com vários times no mesmo servidor**: os sistemas não confiam uns nos outros, e o
+  confinamento é a fronteira entre eles.
+
+## O caminho de um sistema
+
+<Steps>
+
+1. **Um DB Manager cadastra a conexão** no catálogo de bancos e a autoriza para o sistema, com um
+   teto de modo de acesso. A credencial fica cifrada no portal.
+
+2. **O editor cria o sistema** e ativa a conexão autorizada, com um alias. O portal sobe um
+   container próprio para o sistema, com o agente, a app e dois sidecars: o gate de SQL e o proxy de
+   saída.
+
+3. **O editor conversa com o agente** pelo chat. O agente consulta o schema pelo MCP somente
+   leitura, escreve a app e testa. Cada execução vira um checkpoint para onde dá para voltar.
+
+4. **A app sobe em `/apps/<slug>`**. Quem tem acesso ao sistema abre a app com o próprio login do
+   portal; a app recebe a identidade do usuário e não guarda sessão própria.
+
+5. **Opcionalmente, o sistema vai para produção** por um repositório git (GitLab) e um portal de
+   produção que só implanta, sem agente.
+
+</Steps>
+
+## O que vem pronto
+
+- **Catálogo de bancos com DB Manager**: quem gere credenciais não precisa ser quem cria sistemas.
+- **Gate de SQL no caminho dos dados**, com modo `shadow` para observar antes de bloquear.
+- **Checkpoints** de cada execução e editor de arquivos somente leitura ao lado do chat.
+- **Login local ou SSO por OIDC**, com grupos do IdP dando acesso aos sistemas.
+- **Broker de inferência** (opcional) para o container nunca ver a chave do provedor de LLM.
+- **Docker Compose ou Kubernetes**, com o mesmo comportamento nos dois.
+- **Observabilidade por OpenTelemetry**, com exemplos para Elastic e Grafana.
+- **Aparência configurável**: claro, escuro ou pastel, com quatro cores de destaque.
+
+## Próximos passos
+
+<CardGrid>
+	<LinkCard title="Arquitetura" href="/aidb/comecar/arquitetura/" description="As peças e como uma requisição passa por elas." />
+	<LinkCard title="Instalação" href="/aidb/comecar/instalacao/" description="Subir o portal em minutos com Docker Compose, e os caminhos de produção." />
+	<LinkCard title="Como a segurança funciona" href="/aidb/seguranca/" description="Cada camada, onde é aplicada e o que ainda não cobre." />
+	<LinkCard title="Guia de uso" href="/aidb/referencia/guia-de-uso/" description="Criar um sistema, conversar com o agente, checkpoints e aparência." />
+</CardGrid>

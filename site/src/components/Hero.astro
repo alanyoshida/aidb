@@ -1,0 +1,175 @@
+---
+// Hero da página inicial: texto à esquerda, o chat real à direita, bancos suportados abaixo.
+import { Image, getImage } from 'astro:assets';
+import chat from '../assets/screens/chat.png';
+import chatMobile from '../assets/screens/chat-mobile.png';
+
+// Em telas estreitas, um recorte próprio, para o texto do chat continuar legível.
+const mobile = await getImage({ src: chatMobile, widths: [720, 1128], format: 'webp' });
+
+const base = import.meta.env.BASE_URL;
+---
+
+<section class="hero not-content" aria-labelledby="hero-title">
+	<div class="copy">
+		<h1 id="hero-title">Um agente que cria apps sobre o seu banco</h1>
+		<p class="lede">
+			Você pede em português e recebe a app pronta, escrita por um agente confinado pelo kernel, que
+			nunca vê a senha do banco e tem cada SQL classificada antes de chegar a ele.
+		</p>
+		<div class="actions">
+			<a class="btn primary" href={`${base}comecar/visao-geral/`}>Ver como funciona</a>
+			<a class="btn ghost" href={`${base}seguranca/`}>Como a segurança funciona</a>
+		</div>
+		<p class="meta">Self-hosted · código aberto (MIT) · Docker Compose ou Kubernetes</p>
+	</div>
+	<figure class="shot">
+		<div class="frame" aria-hidden="true"><span></span><span></span><span></span><em>localhost/systems/loja</em></div>
+		<picture>
+			<source media="(max-width: 60rem)" srcset={mobile.srcSet.attribute} sizes="100vw" width={chatMobile.width} height={chatMobile.height} />
+			<Image
+			src={chat}
+			alt="Chat do sistema Loja Exemplo: a usuária pede TRUNCATE TABLE pedidos e o agente responde que o gate recusou o comando antes de chegar ao banco e que nada mudou."
+			widths={[720, 1080, 1440]}
+			sizes="(min-width: 72rem) 44rem, 100vw"
+			loading="eager"
+			/>
+		</picture>
+	</figure>
+	<ul class="dbs" aria-label="Bancos suportados">
+		<li>PostgreSQL</li>
+		<li>MySQL</li>
+		<li>BigQuery</li>
+	</ul>
+</section>
+
+<style>
+	.hero {
+		display: grid;
+		grid-template-columns: minmax(0, 11fr) minmax(0, 13fr);
+		gap: clamp(2rem, 4vw, 4rem);
+		align-items: center;
+		padding-block: clamp(1.5rem, 5vw, 4.5rem) 1rem;
+	}
+	h1 {
+		font-size: clamp(2.25rem, 1.4rem + 1.8vw, 2.75rem);
+		line-height: 1.04;
+		letter-spacing: -0.03em;
+		font-weight: 680;
+		color: var(--sl-color-white);
+		text-wrap: balance;
+		margin: 0;
+	}
+	.lede {
+		margin: 1.25rem 0 0;
+		font-size: var(--sl-text-lg);
+		line-height: 1.6;
+		color: var(--sl-color-gray-2);
+		max-width: 34rem;
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 2rem;
+	}
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		min-height: 2.75rem;
+		padding: 0 1.15rem;
+		border-radius: 8px;
+		font-weight: 560;
+		font-size: var(--sl-text-base);
+		text-decoration: none;
+		transition:
+			background-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+			border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+			transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.btn:active {
+		transform: translateY(1px);
+	}
+	.primary {
+		background: var(--sl-color-accent);
+		color: #fff;
+	}
+	:global([data-theme='dark']) .primary {
+		color: #0c1017;
+	}
+	.primary:hover {
+		background: color-mix(in srgb, var(--sl-color-accent) 86%, var(--sl-color-white));
+	}
+	.ghost {
+		border: 1px solid var(--sl-color-gray-5);
+		color: var(--sl-color-white);
+	}
+	.ghost:hover {
+		border-color: var(--sl-color-gray-3);
+		background: color-mix(in srgb, var(--sl-color-gray-6) 70%, transparent);
+	}
+	.meta {
+		margin: 1.25rem 0 0;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.shot {
+		margin: 0;
+		border-radius: 12px;
+		overflow: hidden;
+		background: var(--aidb-surface);
+		box-shadow: var(--aidb-shadow);
+	}
+	.frame {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		height: 2.1rem;
+		padding-inline: 0.85rem;
+		border-bottom: 1px solid var(--aidb-line);
+		background: var(--sl-color-gray-6);
+	}
+	.frame span {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		background: var(--sl-color-gray-5);
+	}
+	.frame em {
+		margin-left: 0.75rem;
+		font-style: normal;
+		font-family: var(--__sl-font-mono);
+		font-size: 0.72rem;
+		color: var(--sl-color-gray-3);
+	}
+	.shot :global(img) {
+		display: block;
+		width: 100%;
+		height: auto;
+	}
+	.dbs {
+		grid-column: 1 / -1;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem 2rem;
+		list-style: none;
+		margin: 1.5rem 0 0;
+		padding: 1.1rem 0 0;
+		border-top: 1px solid var(--aidb-line);
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.dbs::before {
+		content: 'Funciona sobre';
+		color: var(--sl-color-gray-3);
+	}
+	.dbs li {
+		font-weight: 560;
+		color: var(--sl-color-gray-2);
+	}
+	@media (max-width: 60rem) {
+		.hero {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

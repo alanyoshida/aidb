@@ -1,0 +1,156 @@
+/* Tema do site do AIDB sobre o Starlight. Um índigo como única cor de ação; verde e vermelho só
+   para aprovado e recusado do gate de SQL. */
+
+:root {
+	--sl-font: 'Geist Variable';
+	--sl-font-mono: 'Geist Mono Variable';
+
+	/* Escuro */
+	--sl-color-white: #f4f6fb;
+	--sl-color-gray-1: #e2e6ef;
+	--sl-color-gray-2: #b8bfcc;
+	--sl-color-gray-3: #8790a1;
+	--sl-color-gray-4: #576073;
+	--sl-color-gray-5: #2b3241;
+	--sl-color-gray-6: #161b25;
+	--sl-color-black: #0c1017;
+
+	--sl-color-accent-low: #222657;
+	--sl-color-accent: #7f88ff;
+	--sl-color-accent-high: #c9ccff;
+
+	--aidb-ok: #4ade80;
+	--aidb-ok-bg: #0f2a1c;
+	--aidb-no: #fb7185;
+	--aidb-no-bg: #33141b;
+	--aidb-surface: #121722;
+	--aidb-line: #252c3a;
+	--aidb-shadow: 0 24px 48px -24px rgb(0 0 0 / 0.65), 0 8px 16px -8px rgb(0 0 0 / 0.4);
+
+	--sl-line-height-headings: 1.15;
+}
+
+:root[data-theme='light'] {
+	--sl-color-white: #0c1017;
+	--sl-color-gray-1: #1b2130;
+	--sl-color-gray-2: #2f3747;
+	--sl-color-gray-3: #4c5568;
+	--sl-color-gray-4: #838c9e;
+	--sl-color-gray-5: #c8cdd8;
+	--sl-color-gray-6: #eceff5;
+	--sl-color-gray-7: #f5f7fb;
+	--sl-color-black: #fcfcfd;
+
+	--sl-color-accent-low: #e2e3ff;
+	--sl-color-accent: #4f46e5;
+	--sl-color-accent-high: #2c279a;
+
+	--aidb-ok: #15803d;
+	--aidb-ok-bg: #e7f6ec;
+	--aidb-no: #be123c;
+	--aidb-no-bg: #fde8ec;
+	--aidb-surface: #ffffff;
+	--aidb-line: #e1e5ee;
+	--aidb-shadow: 0 24px 48px -24px rgb(15 23 42 / 0.28), 0 8px 16px -8px rgb(15 23 42 / 0.12);
+}
+
+/* Títulos: um grotesco só, mais firme e mais justo que o corpo. */
+.sl-markdown-content :is(h1, h2, h3, h4),
+h1#_top {
+	font-weight: 640;
+	letter-spacing: -0.022em;
+	text-wrap: balance;
+}
+.sl-markdown-content :is(h2) {
+	margin-top: 2.5em;
+}
+
+/* Superfícies do navegador também levam o tema. */
+::selection {
+	background: color-mix(in srgb, var(--sl-color-accent) 32%, transparent);
+	color: var(--sl-color-white);
+}
+:focus-visible {
+	outline: 2px solid var(--sl-color-accent);
+	outline-offset: 2px;
+}
+html {
+	scrollbar-color: var(--sl-color-gray-5) transparent;
+	caret-color: var(--sl-color-accent);
+}
+.sl-markdown-content a {
+	text-underline-offset: 0.2em;
+	text-decoration-thickness: 1px;
+}
+.sl-markdown-content :is(table) {
+	font-variant-numeric: tabular-nums;
+	font-size: var(--sl-text-sm);
+}
+.sl-markdown-content code {
+	font-size: 0.88em;
+}
+
+/* Diagramas Mermaid: centralizados e sem estourar a coluna. */
+.sl-markdown-content pre.mermaid,
+.sl-markdown-content .mermaid {
+	display: flex;
+	justify-content: center;
+	background: var(--sl-color-black) !important;
+	border: 1px solid var(--aidb-line);
+	border-radius: 12px;
+	padding: 1.25rem 0.75rem;
+	overflow-x: auto;
+}
+.sl-markdown-content .mermaid svg {
+	max-width: 100%;
+	height: auto;
+}
+
+/* Screenshots do produto dentro da documentação. */
+.aidb-shot {
+	margin-block: 1.5rem;
+}
+.aidb-shot img {
+	display: block;
+	width: 100%;
+	height: auto;
+	border-radius: 10px;
+	box-shadow: var(--aidb-shadow);
+}
+.aidb-shot figcaption {
+	margin-top: 0.6rem;
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-gray-3);
+}
+
+/* Cores dos diagramas pelo tema do site, nos dois modos. */
+.sl-markdown-content .mermaid .cluster rect {
+	fill: var(--aidb-surface) !important;
+	stroke: var(--sl-color-gray-5) !important;
+}
+.sl-markdown-content .mermaid .cluster-label,
+.sl-markdown-content .mermaid .cluster-label span {
+	color: var(--sl-color-gray-3) !important;
+	fill: var(--sl-color-gray-3) !important;
+}
+.sl-markdown-content .mermaid .node :is(rect, circle, ellipse, polygon, path.basic, .label-container) {
+	fill: var(--sl-color-black) !important;
+	stroke: color-mix(in srgb, var(--sl-color-accent) 55%, var(--sl-color-gray-5)) !important;
+}
+.sl-markdown-content .mermaid .nodeLabel,
+.sl-markdown-content .mermaid .node .label {
+	color: var(--sl-color-white) !important;
+}
+.sl-markdown-content .mermaid .edgeLabel,
+.sl-markdown-content .mermaid .edgeLabel p,
+.sl-markdown-content .mermaid .labelBkg {
+	background-color: var(--sl-color-black) !important;
+	color: var(--sl-color-gray-2) !important;
+}
+.sl-markdown-content .mermaid .flowchart-link {
+	stroke: var(--sl-color-gray-4) !important;
+}
+.sl-markdown-content .mermaid marker path {
+	fill: var(--sl-color-gray-4) !important;
+	stroke: var(--sl-color-gray-4) !important;
+}
