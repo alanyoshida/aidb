@@ -11,7 +11,7 @@
 [![Specs: OpenSpec](https://img.shields.io/badge/specs-OpenSpec-6E40C9)](openspec/specs/)
 [![Último commit](https://img.shields.io/github/last-commit/alanyoshida/aidb)](https://github.com/alanyoshida/aidb/commits/main)
 
-Portal que cria **sistemas de gestão com IA sobre seus bancos de dados**: você cadastra um sistema, conecta um banco (PostgreSQL, MySQL ou BigQuery), conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
+Portal que cria **sistemas de a partir de seus bancos de dados usando LLM**: você cadastra um sistema, conecta um banco (PostgreSQL, MySQL ou BigQuery), conversa com o agente pelo chat do portal e ele gera uma app administrativa (NiceGUI, 100% Python) que sobe automaticamente e fica acessível em `/apps/<slug>`.
 
 ## Destaques
 
